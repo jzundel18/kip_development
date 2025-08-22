@@ -1,0 +1,12 @@
+streamlit
+pandas
+requests
+openai>=1.40.0
+python-dotenv
+python-dateutil
+beautifulsoup4
+lxml
+python-docx
+sqlmodel
+sqlalchemy
+psycopg2-binary
