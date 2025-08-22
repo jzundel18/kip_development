@@ -246,8 +246,6 @@ if __name__ == "__main__":
     BID_TEMPLATE_FILE = "bid_template.txt"
     SOl_INFO_TEMPLATE = "solicitation_details_template.txt"
     OUTPUT_DIR = "proposals"
-
-    OPENAI_API_KEY = "REDACTED"
     
     df = load_csv(CSV_FILE)
     validate_supplier_and_write_proposal(df, OUTPUT_DIR, OPENAI_API_KEY, BID_TEMPLATE_FILE, SOl_INFO_TEMPLATE)
