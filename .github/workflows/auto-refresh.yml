@@ -1,0 +1,37 @@
+name: Auto Refresh SAM Feed
+
+on:
+  schedule:
+    # run every hour; script will self-gate to 3/12/19 local
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # set your local timezone here
+      LOCAL_TZ: America/New_York
+      TARGET_HOURS: "3,12,19"
+      MAX_RESULTS_REFRESH: "500"
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SAM_KEYS: ${{ secrets.SAM_KEYS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # install only what we need for the script
+          pip install sqlalchemy sqlmodel psycopg2-binary pandas
+          # if your get_relevant_solicitations module has deps, add them:
+          pip install requests
+
+      - name: Run auto refresh
+        run: |
+          python scripts/auto_refresh.py

@@ -595,27 +595,9 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 st.title("GovContract Assistant MVP")
 st.caption("Only storing required SAM fields; inserts brand-new notices only (no updates).")
 
-colR1, colR2 = st.columns([1,1])
+colR1, colR2 = st.columns([2,1])
 with colR1:
-    if st.button("🔄 Refresh today's feed"):
-        try:
-            raw = gs.get_sam_raw_v3(
-                days_back=0,
-                limit=int(max_results_refresh),
-                api_keys=SAM_KEYS,
-                filters={}
-            )
-            n = insert_new_records_only(raw)
-            st.success(f"Attempted inserts: {n} (existing notice_ids are skipped).")
-        except SamQuotaError:
-            st.warning("SAM.gov quota likely exceeded on all provided keys. Try again after daily reset or add more keys.")
-        except SamBadRequestError as e:
-            st.error(f"Bad request to SAM.gov (check date/params): {e}")
-        except SamAuthError:
-            st.error("All SAM.gov keys failed (auth/network). Double-check your keys in Secrets.")
-        except Exception as e:
-            st.exception(e)
-
+    st.info("Feed updates automatically at **3:00am**, **12:00pm**, and **7:00pm** (local time).")
 with colR2:
     try:
         with engine.connect() as conn:
