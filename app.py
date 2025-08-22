@@ -547,8 +547,8 @@ def companies_df() -> pd.DataFrame:
     with engine.connect() as conn:
         try:
             return pd.read_sql_query(
-                "SELECT id, name, description, city, state"
-                "FROM company ORDER BY name", conn
+                "SELECT id, name, description, city, state FROM company ORDER BY name",
+                conn
             )
         except Exception:
             return pd.DataFrame(columns=["id","name","description","city","state"])
@@ -746,6 +746,7 @@ with tab1:
     }
     st.subheader("Company profile (optional)")
     company_desc = st.text_area("Brief company description (for AI downselect)", value="", height=120)
+    st.session_state.company_desc = company_desc
     use_ai_downselect = st.checkbox("Use AI to downselect based on description", value=False)
     
     if st.button("Show top results", type="primary", key="btn_show_results"):
@@ -959,108 +960,85 @@ with tab3:
 with tab4:
     st.header("Partner Matches (from Top-5)")
 
-    st.markdown("##### Manage Company Database")
-    c1, c2 = st.columns([1,1])
-    with c1:
-        with st.form("add_company_form", clear_on_submit=True):
-            st.write("Add a single company")
-            name = st.text_input("Company name*", "")
-            desc = st.text_area("Company description*", height=100)
-            city = st.text_input("City", "")
-            state = st.text_input("State (e.g., VA)", "")
-            submit = st.form_submit_button("Add to database")
-            if submit:
-                if not name.strip() or not desc.strip():
-                    st.error("Name and description are required.")
-                else:
-                    try:
-                        insert_company_row({
-                            "name": name.strip(),
-                            "description": desc.strip(),
-                            "city": city.strip(),
-                            "state": state.strip(),
-                        })
-                        st.success(f"Added '{name}'.")
-                        st.cache_data.clear()  # invalidate cached embeddings
-                    except Exception as e:
-                        st.exception(e)
-
-    with c2:
-        up = st.file_uploader("Bulk upload companies (CSV)", type=["csv"], key="upload_companies")
-        if up is not None:
-            try:
-                dfc = pd.read_csv(up)
-                n = bulk_insert_companies(dfc)
-                st.success(f"Inserted {n} rows.")
-                st.cache_data.clear()
-            except Exception as e:
-                st.exception(e)
-
-    st.markdown("##### Companies in database")
+    # Load companies from DB (read-only; no manage UI)
     df_companies = companies_df()
-    st.dataframe(df_companies, use_container_width=True, height=240)
 
-    st.markdown("---")
-    st.subheader("Best Partner per Top-5 Opportunity")
-
-    # Ensure we have Top-5 from Tab 1
+    # Need Top-5 from Tab 1
     top5 = st.session_state.get("top5_df")
+
     if top5 is None or top5.empty:
         st.info("No Top-5 available. In Tab 1, run AI ranking to generate Top-5 first.")
     elif df_companies.empty:
-        st.info("Your company database is empty. Add companies above or upload a CSV.")
+        st.info("Your company database is empty. Populate the 'company' table in Supabase with: name, description, city, state.")
     else:
-        # Need your own company description (for gap analysis)
-        company_desc_global = st.text_area(
-            "Your company description (used to identify gaps)",
-            value="",
-            height=120,
-            help="This should describe *your* firm's capabilities; it will be compared against each solicitation."
+        # Reuse company description from Tab 1 if available
+        company_desc_global = st.session_state.get("company_desc", "")
+
+        if not company_desc_global:
+            st.info("No company description provided in Tab 1. Please enter one there and rerun.")
+
+        # Optional: only run partner picks for moderate–strong fits if ai_score present
+        score_threshold = st.slider(
+            "Minimum AI match score to consider (if available)",
+            min_value=0.0, max_value=1.0, value=0.20, step=0.05,
+            help="If your Top-5 carries ai_score, we’ll skip below-threshold items. If not present, all Top-5 are considered."
         )
 
-        if st.button("Find best partner for each Top-5"):
+        if st.button("Find partners for each Top-5 opportunity", type="primary"):
             if not company_desc_global.strip():
-                st.error("Please paste your company description.")
+                st.error("Please paste your company description first.")
             else:
                 try:
                     with st.spinner("Analyzing gaps and selecting partners…"):
-                        for i, row in top5.head(5).iterrows():
+                        df_top = top5.copy()
+
+                        # If ai_score column exists, keep moderate–strong matches only
+                        if "ai_score" in df_top.columns:
+                            df_top = df_top[df_top["ai_score"] >= float(score_threshold)].reset_index(drop=True)
+                            if df_top.empty:
+                                st.info("No Top-5 items meet the minimum AI match score; consider lowering the threshold.")
+                                st.stop()
+
+                        # Iterate up to 5 items (your Top-5)
+                        for i, row in df_top.head(5).iterrows():
                             title = str(row.get("title","")) or "Untitled"
                             desc  = str(row.get("description","")) or ""
                             sol_text = f"{title}\n\n{desc}"
 
-                            # 1) Capability gaps
+                            # 1) Identify our capability gaps for this solicitation
                             gaps = ai_identify_gaps(company_desc_global, sol_text, OPENAI_API_KEY)
 
-                            # 2) Best partner (embedding prefilter)
+                            # 2) Pick best partner from company DB to fill those gaps (embedding similarity)
                             best = pick_best_partner_for_gaps(gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
                             if best.empty:
-                                st.warning(f"No partner match found for: {title}")
+                                with st.expander(f"Opportunity: {title}"):
+                                    st.warning("No suitable partner found in your company database for this opportunity.")
                                 continue
+
                             partner = best.iloc[0].to_dict()
 
                             # 3) Short justification + joint-proposal sketch
                             ai = ai_partner_justification(partner, sol_text, gaps, OPENAI_API_KEY)
 
-                            # 4) Render
+                            # 4) Render result
                             with st.expander(f"Opportunity: {title}"):
-                                st.markdown("**Best Partner:**")
-                                st.write(f"{partner.get('name','')} — {partner.get('city','')}, {partner.get('state','')}")
+                                st.markdown("**Recommended Partner:**")
+                                loc = ", ".join([p for p in [partner.get("city",""), partner.get("state","")] if p])
+                                st.write(f"{partner.get('name','')}" + (f" — {loc}" if loc else ""))
 
                                 if gaps:
-                                    st.markdown("**Our capability gaps:**")
+                                    st.markdown("**Why we need a partner (our capability gaps):**")
                                     st.write(gaps)
 
-                                if ai.get("justification"):
-                                    st.markdown("**Why this partner:**")
-                                    st.info(ai["justification"])
+                                st.markdown("**Why this partner:**")
+                                st.info(ai.get("justification","(model did not return a justification)"))
 
-                                if ai.get("joint_proposal"):
+                                jp = ai.get("joint_proposal","").strip()
+                                if jp:
                                     st.markdown("**Targeted joint proposal idea:**")
-                                    st.write(ai["joint_proposal"])
+                                    st.write(jp)
 
-                    st.success("Partner suggestions generated.")
-
+                    st.success("Partner suggestions generated for the Top-5.")
                 except Exception as e:
                     st.exception(e)
 st.markdown("---")
