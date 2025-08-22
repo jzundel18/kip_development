@@ -824,8 +824,12 @@ with tab1:
 
                             # Show Top-5 as expanders: blurb first, click to see details
                             st.success(f"Top {len(top_df)} matches by company fit:")
-                            # quick lookup for reasons
+                            # quick lookup for reasons and scores
                             reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
+                            score_by_id  = {x["notice_id"]: x.get("score", 0)  for x in ranked}
+
+                            # add a fit_score column so Tab 4 can auto-filter moderate/strong matches
+                            top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
 
                             for i, row in enumerate(top_df.itertuples(index=False), start=1):
                                 hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
@@ -977,13 +981,6 @@ with tab4:
         if not company_desc_global:
             st.info("No company description provided in Tab 1. Please enter one there and rerun.")
 
-        # Optional: only run partner picks for moderate–strong fits if ai_score present
-        score_threshold = st.slider(
-            "Minimum AI match score to consider (if available)",
-            min_value=0.0, max_value=1.0, value=0.20, step=0.05,
-            help="If your Top-5 carries ai_score, we’ll skip below-threshold items. If not present, all Top-5 are considered."
-        )
-
         if st.button("Find partners for each Top-5 opportunity", type="primary"):
             if not company_desc_global.strip():
                 st.error("Please paste your company description first.")
@@ -992,11 +989,12 @@ with tab4:
                     with st.spinner("Analyzing gaps and selecting partners…"):
                         df_top = top5.copy()
 
-                        # If ai_score column exists, keep moderate–strong matches only
-                        if "ai_score" in df_top.columns:
-                            df_top = df_top[df_top["ai_score"] >= float(score_threshold)].reset_index(drop=True)
+                        # Auto-filter to moderate–strong fits if we have fit_score (0–100 scale from Tab 1)
+                        FIT_MIN = 60.0  # tweak this number if you'd like stricter/looser
+                        if "fit_score" in df_top.columns:
+                            df_top = df_top[df_top["fit_score"] >= FIT_MIN].reset_index(drop=True)
                             if df_top.empty:
-                                st.info("No Top-5 items meet the minimum AI match score; consider lowering the threshold.")
+                                st.info(f"No Top-5 items meet the automatic fit threshold (≥ {int(FIT_MIN)}).")
                                 st.stop()
 
                         # Iterate up to 5 items (your Top-5)
