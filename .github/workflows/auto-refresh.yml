@@ -1,11 +1,9 @@
 name: Auto Refresh SAM Feed
 
 on:
-  push:
-    branches: [ main ]   # lets you see a run right after you push
-  workflow_dispatch:      # lets you trigger manually
+  workflow_dispatch:      # allow manual trigger
   schedule:
-    - cron: "0 * * * *"   # runner wakes hourly; script checks your local-time windows
+    - cron: "0 * * * *"   # run hourly; script checks whether it's 3a/12p/7p MT
 
 jobs:
   refresh:
@@ -24,11 +22,11 @@ jobs:
           pip install -r requirements.txt || true
           pip install sqlalchemy sqlmodel pandas psycopg2-binary
 
-      - name: Run scheduled refresh
+      - name: Run auto refresh
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SAM_KEYS: ${{ secrets.SAM_KEYS }}
           MAX_RESULTS_REFRESH: "500"
-          LOCAL_TZ: "America/New_York"   # change to your local TZ
+          LOCAL_TZ: "America/Denver"   # mountain time zone
         run: |
           python scripts/auto_refresh.py
