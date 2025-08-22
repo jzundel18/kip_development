@@ -299,8 +299,17 @@ def ai_partner_justification(company_row: dict, solicitation_text: str, gap_text
     Returns {"justification": "...", "joint_proposal": "..."} short blurbs.
     """
     client = OpenAI(api_key=api_key)
-    sys = "You are a federal contracts strategist. Be concise, concrete, and persuasive."
-    user = {
+    sys = (
+        "You are a federal contracts strategist. Be concise, concrete, and persuasive. "
+        "You MUST reply with a single JSON object only."
+    )
+    # IMPORTANT: include the word "JSON" and the exact shape
+    instructions = (
+        'Return ONLY a JSON object of the form: '
+        '{"justification":"one short sentence", "joint_proposal":"one short sentence"} '
+        '— no markdown, no extra text.'
+    )
+    user_payload = {
         "partner_company": {
             "name": company_row.get("name",""),
             "capabilities": company_row.get("description",""),
@@ -308,25 +317,27 @@ def ai_partner_justification(company_row: dict, solicitation_text: str, gap_text
         },
         "our_capability_gaps": gap_text,
         "solicitation": solicitation_text[:6000],
-        "instructions": "1) One short sentence justifying why this partner fills our gaps. 2) One short sentence describing a targeted joint proposal split of responsibilities."
+        "instructions": instructions,
     }
+
     try:
         r = client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type":"json_object"},
+            response_format={"type": "json_object"},
             messages=[
-                {"role":"system","content":sys},
-                {"role":"user","content":json.dumps(user)}
+                {"role": "system", "content": sys},
+                # include "JSON" in the user message content as well
+                {"role": "user", "content": json.dumps(user_payload)},
             ],
-            temperature=0.2
+            temperature=0.2,
         )
-        data = json.loads(r.choices[0].message.content or "{}")
+        content = (r.choices[0].message.content or "").strip()
+        data = json.loads(content or "{}")
         j = str(data.get("justification","")).strip()
         jp = str(data.get("joint_proposal","")).strip()
-        if not j or not jp:
-            # fallback simple text
-            text = (r.choices[0].message.content or "").strip()
-            return {"justification": text[:300], "joint_proposal": ""}
+        if not j and not jp:
+            # graceful fallback
+            return {"justification": "No justification returned.", "joint_proposal": ""}
         return {"justification": j, "joint_proposal": jp}
     except Exception as e:
         return {"justification": f"Justification unavailable ({e})", "joint_proposal": ""}
@@ -851,7 +862,9 @@ with tab1:
                             st.session_state.top5_df = top_df.reset_index(drop=True)
                             # Remember for downstream tabs / downloads
                             st.session_state.sol_df = top_df.copy()
-
+                            # Invalidate any old partner matches (Tab 4 will auto-rebuild)
+                            st.session_state.partner_matches = None
+                            st.session_state.top5_stamp = datetime.utcnow().isoformat()
                             # Optional: let user download just the Top-5 rows
                             st.download_button(
                                 "Download Top-5 (AI-ranked) as CSV",
@@ -975,69 +988,95 @@ with tab4:
     elif df_companies.empty:
         st.info("Your company database is empty. Populate the 'company' table in Supabase with: name, description, city, state.")
     else:
-        # Reuse company description from Tab 1 if available
-        company_desc_global = st.session_state.get("company_desc", "")
-
+        # Reuse company description from Tab 1 (stored there)
+        company_desc_global = (st.session_state.get("company_desc") or "").strip()
         if not company_desc_global:
             st.info("No company description provided in Tab 1. Please enter one there and rerun.")
+        else:
+            # Auto-compute matches when Top-5 changes or cache is empty
+            need_recompute = (
+                st.session_state.get("partner_matches") is None or
+                st.session_state.get("partner_matches_stamp") != st.session_state.get("top5_stamp")
+            )
 
-        if st.button("Find partners for each Top-5 opportunity", type="primary"):
-            if not company_desc_global.strip():
-                st.error("Please paste your company description first.")
+            if need_recompute:
+                with st.spinner("Analyzing gaps and selecting partners for Top-5…"):
+                    matches = []
+                    for _, row in top5.head(5).iterrows():
+                        title = str(row.get("title", "")) or "Untitled"
+                        blurb = str(row.get("blurb", "")).strip()
+                        desc  = str(row.get("description", "")) or ""
+                        sol_text = f"{title}\n\n{desc}"
+
+                        # 1) Identify our capability gaps for this solicitation
+                        gaps = ai_identify_gaps(company_desc_global, sol_text, OPENAI_API_KEY)
+
+                        # 2) Pick best partner from company DB to fill those gaps
+                        best = pick_best_partner_for_gaps(gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
+                        if best.empty:
+                            matches.append({
+                                "title": title,
+                                "blurb": blurb,
+                                "partner": None,
+                                "gaps": gaps,
+                                "ai": {"justification": "No suitable partner found.", "joint_proposal": ""}
+                            })
+                            continue
+
+                        partner = best.iloc[0].to_dict()
+
+                        # 3) Short justification + joint-proposal sketch (JSON-safe)
+                        ai = ai_partner_justification(partner, sol_text, gaps, OPENAI_API_KEY)
+
+                        matches.append({
+                            "title": title,
+                            "blurb": blurb,
+                            "partner": partner,
+                            "gaps": gaps,
+                            "ai": ai
+                        })
+
+                # Cache results with a stamp tied to the Top-5
+                st.session_state.partner_matches = matches
+                st.session_state.partner_matches_stamp = st.session_state.get("top5_stamp")
+
+            # Render cached matches
+            matches = st.session_state.get("partner_matches", [])
+            if not matches:
+                st.info("No partner matches computed yet.")
             else:
-                try:
-                    with st.spinner("Analyzing gaps and selecting partners…"):
-                        df_top = top5.copy()
+                for m in matches:
+                    hdr = (m.get("blurb") or m.get("title") or "Untitled").strip()
+                    partner_name = (m.get("partner") or {}).get("name", "")
+                    exp_title = f"Opportunity: {hdr}"
+                    if partner_name:
+                        exp_title += f" — Partner: {partner_name}"
 
-                        # Auto-filter to moderate–strong fits if we have fit_score (0–100 scale from Tab 1)
-                        FIT_MIN = 60.0  # tweak this number if you'd like stricter/looser
-                        if "fit_score" in df_top.columns:
-                            df_top = df_top[df_top["fit_score"] >= FIT_MIN].reset_index(drop=True)
-                            if df_top.empty:
-                                st.info(f"No Top-5 items meet the automatic fit threshold (≥ {int(FIT_MIN)}).")
-                                st.stop()
+                    with st.expander(exp_title):
+                        # Partner block
+                        if m.get("partner"):
+                            p = m["partner"]
+                            loc = ", ".join([x for x in [p.get("city",""), p.get("state","")] if x])
+                            st.markdown("**Recommended Partner:**")
+                            st.write(f"{p.get('name','')}" + (f" — {loc}" if loc else ""))
+                        else:
+                            st.warning("No suitable partner found for this opportunity.")
 
-                        # Iterate up to 5 items (your Top-5)
-                        for i, row in df_top.head(5).iterrows():
-                            title = str(row.get("title","")) or "Untitled"
-                            desc  = str(row.get("description","")) or ""
-                            sol_text = f"{title}\n\n{desc}"
+                        # Gaps
+                        if m.get("gaps"):
+                            st.markdown("**Why we need a partner (our capability gaps):**")
+                            st.write(m["gaps"])
 
-                            # 1) Identify our capability gaps for this solicitation
-                            gaps = ai_identify_gaps(company_desc_global, sol_text, OPENAI_API_KEY)
+                        # Why this partner
+                        just = (m.get("ai", {}) or {}).get("justification", "")
+                        if just:
+                            st.markdown("**Why this partner:**")
+                            st.info(just)
 
-                            # 2) Pick best partner from company DB to fill those gaps (embedding similarity)
-                            best = pick_best_partner_for_gaps(gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
-                            if best.empty:
-                                with st.expander(f"Opportunity: {title}"):
-                                    st.warning("No suitable partner found in your company database for this opportunity.")
-                                continue
-
-                            partner = best.iloc[0].to_dict()
-
-                            # 3) Short justification + joint-proposal sketch
-                            ai = ai_partner_justification(partner, sol_text, gaps, OPENAI_API_KEY)
-
-                            # 4) Render result
-                            with st.expander(f"Opportunity: {title}"):
-                                st.markdown("**Recommended Partner:**")
-                                loc = ", ".join([p for p in [partner.get("city",""), partner.get("state","")] if p])
-                                st.write(f"{partner.get('name','')}" + (f" — {loc}" if loc else ""))
-
-                                if gaps:
-                                    st.markdown("**Why we need a partner (our capability gaps):**")
-                                    st.write(gaps)
-
-                                st.markdown("**Why this partner:**")
-                                st.info(ai.get("justification","(model did not return a justification)"))
-
-                                jp = ai.get("joint_proposal","").strip()
-                                if jp:
-                                    st.markdown("**Targeted joint proposal idea:**")
-                                    st.write(jp)
-
-                    st.success("Partner suggestions generated for the Top-5.")
-                except Exception as e:
-                    st.exception(e)
+                        # Joint proposal idea
+                        jp = (m.get("ai", {}) or {}).get("joint_proposal", "").strip()
+                        if jp:
+                            st.markdown("**Targeted joint proposal idea:**")
+                            st.write(jp)
 st.markdown("---")
 st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
