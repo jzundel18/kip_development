@@ -13,6 +13,13 @@ from datetime import date, datetime, timezone
 from sqlmodel import SQLModel, Field, create_engine
 import numpy as np
 from openai import OpenAI
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import get_relevant_solicitations as gs
+from get_relevant_solicitations import SamQuotaError, SamAuthError, SamBadRequestError
+
+import find_relevant_suppliers as fs
+import generate_proposal as gp
 
 # =========================
 # Streamlit page
@@ -168,14 +175,39 @@ try:
 except Exception as e:
     st.warning(f"Migration note: {e}")
 
-# =========================
-# Import your modules
-# =========================
-import get_relevant_solicitations as gs
-from get_relevant_solicitations import SamQuotaError, SamAuthError, SamBadRequestError
+# ---------------------------
+# Company directory (new table)
+# ---------------------------
+class Company(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
 
-import find_relevant_suppliers as fs
-import generate_proposal as gp
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = Field(default=None, index=True)
+
+# Create (or update) tables
+SQLModel.metadata.create_all(engine)
+
+# Lightweight migration for Companies (safe if already exists)
+try:
+    insp = inspect(engine)
+    if "company" in [t.lower() for t in insp.get_table_names()]:
+        existing_cols = {c["name"] for c in insp.get_columns("company")}
+        REQUIRED_COMPANY_COLS = {
+            "name": "TEXT",
+            "description": "TEXT",
+            "city": "TEXT",
+            "state": "TEXT",
+        }
+        missing_cols = [c for c in REQUIRED_COMPANY_COLS if c not in existing_cols]
+        if missing_cols:
+            with engine.begin() as conn:
+                for col in missing_cols:
+                    conn.execute(sa.text(f'ALTER TABLE company ADD COLUMN "{col}" {REQUIRED_COMPANY_COLS[col]}'))
+except Exception as e:
+    st.warning(f"Company table migration note: {e}")
 
 # =========================
 # Sidebar controls
@@ -197,6 +229,108 @@ with st.sidebar:
 # =========================
 # AI helpers
 # =========================
+
+def _embed_texts(texts: list[str], api_key: str) -> np.ndarray:
+    client = OpenAI(api_key=api_key)
+    resp = client.embeddings.create(model="text-embedding-3-small", input=texts)
+    X = np.array([d.embedding for d in resp.data], dtype=np.float32)
+    # L2 normalize
+    X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
+    return X
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def cached_company_embeddings(_companies: pd.DataFrame, api_key: str) -> dict:
+    """
+    Returns {"df": companies_df, "X": normalized embeddings (np.ndarray)}.
+    Cache invalidates if companies data changes (we use df contents as key).
+    """
+    if _companies.empty:
+        return {"df": _companies, "X": np.zeros((0, 1536), dtype=np.float32)}
+    texts = _companies["description"].fillna("").astype(str).tolist()
+    X = _embed_texts(texts, api_key)
+    return {"df": _companies.copy(), "X": X}
+
+def ai_identify_gaps(company_desc: str, solicitation_text: str, api_key: str) -> str:
+    """
+    Ask the model to identify key capability gaps we'd need to fill to bid solo.
+    Returns a short paragraph (1–3 sentences).
+    """
+    client = OpenAI(api_key=api_key)
+    sys = "You are a federal contracting expert. Be concise and specific."
+    user = (
+        "Company description:\n"
+        f"{company_desc}\n\n"
+        "Solicitation (title+description):\n"
+        f"{solicitation_text[:6000]}\n\n"
+        "List the biggest capability gaps this company would need to fill to bid competitively. "
+        "Return a short paragraph (no bullets)."
+    )
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role":"system","content":sys},{"role":"user","content":user}],
+            temperature=0.2
+        )
+        return (r.choices[0].message.content or "").strip()
+    except Exception as e:
+        st.warning(f"Gap identification unavailable ({e}).")
+        return ""
+
+def pick_best_partner_for_gaps(gap_text: str, companies: pd.DataFrame, api_key: str, top_n: int = 1) -> pd.DataFrame:
+    """
+    Use embeddings to match companies to the gap text. Returns top_n rows from `companies`.
+    """
+    if companies.empty or not gap_text.strip():
+        return companies.head(0)
+    # Embed gap_text
+    q = _embed_texts([gap_text], api_key)[0]  # normalized
+    # Embed companies (cached)
+    emb = cached_company_embeddings(companies, api_key)
+    dfc, X = emb["df"], emb["X"]
+    if X.shape[0] == 0:
+        return dfc.head(0)
+    sims = X @ q  # cosine similarity
+    dfc = dfc.copy()
+    dfc["score"] = sims
+    return dfc.sort_values("score", ascending=False).head(top_n)
+
+def ai_partner_justification(company_row: dict, solicitation_text: str, gap_text: str, api_key: str) -> dict:
+    """
+    Returns {"justification": "...", "joint_proposal": "..."} short blurbs.
+    """
+    client = OpenAI(api_key=api_key)
+    sys = "You are a federal contracts strategist. Be concise, concrete, and persuasive."
+    user = {
+        "partner_company": {
+            "name": company_row.get("name",""),
+            "capabilities": company_row.get("description",""),
+            "location": f'{company_row.get("city","")}, {company_row.get("state","")}'.strip(", "),
+        },
+        "our_capability_gaps": gap_text,
+        "solicitation": solicitation_text[:6000],
+        "instructions": "1) One short sentence justifying why this partner fills our gaps. 2) One short sentence describing a targeted joint proposal split of responsibilities."
+    }
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type":"json_object"},
+            messages=[
+                {"role":"system","content":sys},
+                {"role":"user","content":json.dumps(user)}
+            ],
+            temperature=0.2
+        )
+        data = json.loads(r.choices[0].message.content or "{}")
+        j = str(data.get("justification","")).strip()
+        jp = str(data.get("joint_proposal","")).strip()
+        if not j or not jp:
+            # fallback simple text
+            text = (r.choices[0].message.content or "").strip()
+            return {"justification": text[:300], "joint_proposal": ""}
+        return {"justification": j, "joint_proposal": jp}
+    except Exception as e:
+        return {"justification": f"Justification unavailable ({e})", "joint_proposal": ""}
+    
 def ai_downselect_df(company_desc: str, df: pd.DataFrame, api_key: str,
                      threshold: float = 0.20, top_k: int | None = None) -> pd.DataFrame:
     """
@@ -409,6 +543,37 @@ def query_filtered_df(filters: dict) -> pd.DataFrame:
 
     return df.reset_index(drop=True)
 
+def companies_df() -> pd.DataFrame:
+    with engine.connect() as conn:
+        try:
+            return pd.read_sql_query(
+                "SELECT id, name, description, city, state"
+                "FROM company ORDER BY name", conn
+            )
+        except Exception:
+            return pd.DataFrame(columns=["id","name","description","city","state"])
+
+def insert_company_row(row: dict) -> None:
+    sql = sa.text("""
+        INSERT INTO company (name, description, city, state)
+        VALUES (:name, :description, :city, :state)
+    """)
+    row = {k: (row.get(k) or "") for k in ["name","description","city","state"]}
+    row["created_at"] = datetime.utcnow().isoformat()
+    with engine.begin() as conn:
+        conn.execute(sql, row)
+
+def bulk_insert_companies(df: pd.DataFrame) -> int:
+    needed = ["name","description","city","state"]
+    for c in needed:
+        if c not in df.columns:
+            df[c] = ""
+    rows = df[needed].fillna("").to_dict(orient="records")
+    for r in rows:
+        insert_company_row(r)
+    return len(rows)
+
+
 
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     # UI should not show these two columns
@@ -543,8 +708,12 @@ def ai_rank_solicitations_by_fit(
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3 = st.tabs(["1) Fetch Solicitations", "2) Supplier Suggestions", "3) Proposal Draft"])
-
+tab1, tab2, tab3, tab4 = st.tabs([
+    "1) Fetch Solicitations",
+    "2) Supplier Suggestions",
+    "3) Proposal Draft",
+    "4) Partner Matches"
+])
 # ---- Tab 1
 with tab1:
     st.header("Filter Solicitations")
@@ -673,6 +842,8 @@ with tab1:
                                         st.markdown("**Why this matched (AI):**")
                                         st.info(reason)
 
+                            # Save the Top-5 dataframe itself for Tab 4
+                            st.session_state.top5_df = top_df.reset_index(drop=True)
                             # Remember for downstream tabs / downloads
                             st.session_state.sol_df = top_df.copy()
 
@@ -784,6 +955,113 @@ with tab3:
                 st.success(f"Drafted proposals to {out_dir}.")
             except Exception as e:
                 st.exception(e)
+# ---- Tab 4
+with tab4:
+    st.header("Partner Matches (from Top-5)")
 
+    st.markdown("##### Manage Company Database")
+    c1, c2 = st.columns([1,1])
+    with c1:
+        with st.form("add_company_form", clear_on_submit=True):
+            st.write("Add a single company")
+            name = st.text_input("Company name*", "")
+            desc = st.text_area("Company description*", height=100)
+            city = st.text_input("City", "")
+            state = st.text_input("State (e.g., VA)", "")
+            submit = st.form_submit_button("Add to database")
+            if submit:
+                if not name.strip() or not desc.strip():
+                    st.error("Name and description are required.")
+                else:
+                    try:
+                        insert_company_row({
+                            "name": name.strip(),
+                            "description": desc.strip(),
+                            "city": city.strip(),
+                            "state": state.strip(),
+                        })
+                        st.success(f"Added '{name}'.")
+                        st.cache_data.clear()  # invalidate cached embeddings
+                    except Exception as e:
+                        st.exception(e)
+
+    with c2:
+        up = st.file_uploader("Bulk upload companies (CSV)", type=["csv"], key="upload_companies")
+        if up is not None:
+            try:
+                dfc = pd.read_csv(up)
+                n = bulk_insert_companies(dfc)
+                st.success(f"Inserted {n} rows.")
+                st.cache_data.clear()
+            except Exception as e:
+                st.exception(e)
+
+    st.markdown("##### Companies in database")
+    df_companies = companies_df()
+    st.dataframe(df_companies, use_container_width=True, height=240)
+
+    st.markdown("---")
+    st.subheader("Best Partner per Top-5 Opportunity")
+
+    # Ensure we have Top-5 from Tab 1
+    top5 = st.session_state.get("top5_df")
+    if top5 is None or top5.empty:
+        st.info("No Top-5 available. In Tab 1, run AI ranking to generate Top-5 first.")
+    elif df_companies.empty:
+        st.info("Your company database is empty. Add companies above or upload a CSV.")
+    else:
+        # Need your own company description (for gap analysis)
+        company_desc_global = st.text_area(
+            "Your company description (used to identify gaps)",
+            value="",
+            height=120,
+            help="This should describe *your* firm's capabilities; it will be compared against each solicitation."
+        )
+
+        if st.button("Find best partner for each Top-5"):
+            if not company_desc_global.strip():
+                st.error("Please paste your company description.")
+            else:
+                try:
+                    with st.spinner("Analyzing gaps and selecting partners…"):
+                        for i, row in top5.head(5).iterrows():
+                            title = str(row.get("title","")) or "Untitled"
+                            desc  = str(row.get("description","")) or ""
+                            sol_text = f"{title}\n\n{desc}"
+
+                            # 1) Capability gaps
+                            gaps = ai_identify_gaps(company_desc_global, sol_text, OPENAI_API_KEY)
+
+                            # 2) Best partner (embedding prefilter)
+                            best = pick_best_partner_for_gaps(gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
+                            if best.empty:
+                                st.warning(f"No partner match found for: {title}")
+                                continue
+                            partner = best.iloc[0].to_dict()
+
+                            # 3) Short justification + joint-proposal sketch
+                            ai = ai_partner_justification(partner, sol_text, gaps, OPENAI_API_KEY)
+
+                            # 4) Render
+                            with st.expander(f"Opportunity: {title}"):
+                                st.markdown("**Best Partner:**")
+                                st.write(f"{partner.get('name','')} — {partner.get('city','')}, {partner.get('state','')}")
+
+                                if gaps:
+                                    st.markdown("**Our capability gaps:**")
+                                    st.write(gaps)
+
+                                if ai.get("justification"):
+                                    st.markdown("**Why this partner:**")
+                                    st.info(ai["justification"])
+
+                                if ai.get("joint_proposal"):
+                                    st.markdown("**Targeted joint proposal idea:**")
+                                    st.write(ai["joint_proposal"])
+
+                    st.success("Partner suggestions generated.")
+
+                except Exception as e:
+                    st.exception(e)
 st.markdown("---")
 st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
