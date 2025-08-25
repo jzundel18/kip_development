@@ -1,26 +1,39 @@
-name: Auto refresh SAM.gov feed
+name: Auto Refresh SAM.gov
 
 on:
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Bypass hour gate (run now)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
   schedule:
-    # 3am MT
-    - cron: '0 9 * * *'   # MDT (UTC-6)
-    - cron: '0 10 * * *'  # MST (UTC-7)
-    # 12pm (noon) MT
-    - cron: '0 18 * * *'  # MDT
-    - cron: '0 19 * * *'  # MST
-    # 7pm MT  (next-day UTC for MDT/MST)
-    - cron: '0 1 * * *'   # MDT
-    - cron: '0 2 * * *'   # MST
-  workflow_dispatch: {}
+    # MDT (UTC-6):  03:00 → 09:00, 12:00 → 18:00, 19:00 → 01:00 next day
+    - cron: "0 9 * * *"   # 03:00 MT when DST is ON
+    - cron: "0 18 * * *"  # 12:00 MT when DST is ON
+    - cron: "0 1 * * *"   # 19:00 MT when DST is ON (previous day UTC+1)
+    # MST (UTC-7):  03:00 → 10:00, 12:00 → 19:00, 19:00 → 02:00 next day
+    - cron: "0 10 * * *"  # 03:00 MT when DST is OFF
+    - cron: "0 19 * * *"  # 12:00 MT when DST is OFF
+    - cron: "0 2 * * *"   # 19:00 MT when DST is OFF (previous day UTC+2)
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     env:
-      PYTHONPATH: ${{ github.workspace }}
+      # Secrets for your script
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      SAM_KEYS: ${{ secrets.SAM_KEYS }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SAM_KEYS:        ${{ secrets.SAM_KEYS }}
+      # Make local modules importable
+      PYTHONPATH: ${{ github.workspace }}
+      # Optional: make logs show Mountain time
+      TZ: America/Denver
+      # Manual bypass of time gate
+      FORCE_RUN: ${{ inputs.force_run == 'true' && '1' || '' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,14 +41,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install sqlalchemy sqlmodel pandas numpy requests pytz
+          fi
 
       - name: Run auto refresh
-        working-directory: ${{ github.workspace }}
         run: |
-          python scripts/auto_refresh.py
+          echo "FORCE_RUN=$FORCE_RUN"
+          python -u scripts/auto_refresh.py
