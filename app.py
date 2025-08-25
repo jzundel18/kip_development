@@ -15,8 +15,6 @@ import numpy as np
 from openai import OpenAI
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import get_relevant_solicitations as gs
-from get_relevant_solicitations import SamQuotaError, SamAuthError, SamBadRequestError
 
 import find_relevant_suppliers as fs
 import generate_proposal as gp
@@ -209,22 +207,10 @@ try:
 except Exception as e:
     st.warning(f"Company table migration note: {e}")
 
-# =========================
-# Sidebar controls
-# =========================
 with st.sidebar:
     st.success("✅ API keys loaded from Secrets")
+    st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
-    st.markdown("### Feed Settings")
-    max_results_refresh = st.number_input(
-        "Max results when refreshing feed",
-        min_value=1, max_value=2000, value=500, step=50,
-        help="How many solicitations to pull from SAM.gov when you click Refresh."
-    )
-    st.markdown("---")
-    st.subheader("Tips")
-    st.write("• Refresh writes only brand-new notice_ids to the DB (no updates).")
-    st.write("• Filters below hit your DB only (no extra SAM calls).")
 
 # =========================
 # AI helpers
@@ -597,7 +583,7 @@ st.caption("Only storing required SAM fields; inserts brand-new notices only (no
 
 colR1, colR2 = st.columns([2,1])
 with colR1:
-    st.info("Feed updates automatically at **3:00am**, **12:00pm**, and **7:00pm** (local time).")
+    st.info("Feed updates automatically every hour.")
 with colR2:
     try:
         with engine.connect() as conn:
