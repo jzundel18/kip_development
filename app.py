@@ -282,6 +282,8 @@ with st.sidebar:
 # =========================
 with st.sidebar:
     st.markdown("### Account")
+
+    # ensure keys exist
     if "user" not in st.session_state:
         st.session_state.user = None
     if "profile" not in st.session_state:
@@ -290,29 +292,30 @@ with st.sidebar:
     if st.session_state.user is None:
         tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
 
-    if st.session_state.get("user") is None:
-        st.warning("Please log in to use the app.")
-        st.stop()
-
+        # ---- Login tab
         with tab_login:
             le = st.text_input("Email", key="login_email")
             lp = st.text_input("Password", type="password", key="login_password")
-            if st.button("Log in"):
+            if st.button("Log in", key="btn_login"):
                 u = get_user_by_email(le or "")
-                if not u or not _check_password(lp or "", u["password_hash"]):
-                    st.error("Invalid email or password.")
+                if not u:
+                    st.error("No account found with that email.")
+                elif not _check_password(lp or "", u["password_hash"]):
+                    st.error("Invalid password.")
                 else:
                     st.session_state.user = {"id": u["id"], "email": u["email"]}
                     st.session_state.profile = get_profile(u["id"])
-                    st.rerun()
+                    st.success("Logged in.")
+                    st.experimental_rerun()
 
+        # ---- Sign-up tab
         with tab_signup:
             se = st.text_input("Email", key="signup_email")
             sp = st.text_input("Password", type="password", key="signup_password")
             sp2 = st.text_input("Confirm password", type="password", key="signup_password2")
-            if st.button("Create account"):
+            if st.button("Create account", key="btn_signup"):
                 if not se or not sp:
-                    st.error("Email and password required.")
+                    st.error("Email and password are required.")
                 elif sp != sp2:
                     st.error("Passwords do not match.")
                 elif get_user_by_email(se):
@@ -320,16 +323,17 @@ with st.sidebar:
                 else:
                     uid = create_user(se, sp)
                     if uid:
-                        st.success("Account created. Please log in.")
+                        st.success("Account created. Please log in on the Login tab.")
                     else:
-                        st.error("Could not create account. Check logs.")
+                        st.error("Could not create account. Check server logs.")
 
     else:
+        # Logged-in state
         st.write(f"Signed in as **{st.session_state.user['email']}**")
-        if st.button("Sign out"):
+        if st.button("Sign out", key="btn_signout"):
             st.session_state.user = None
             st.session_state.profile = None
-            st.rerun()
+            st.experimental_rerun()
 
         st.markdown("---")
         st.markdown("### Company Profile")
@@ -340,14 +344,20 @@ with st.sidebar:
         city         = st.text_input("City", value=prof.get("city", "") or "")
         state        = st.text_input("State", value=prof.get("state", "") or "")
 
-        if st.button("Save profile"):
+        if st.button("Save profile", key="btn_save_profile"):
             if not company_name.strip() or not description.strip():
                 st.error("Company name and description are required.")
             else:
-                upsert_profile(st.session_state.user["id"], company_name.strip(), description.strip(), city.strip(), state.strip())
+                upsert_profile(
+                    st.session_state.user["id"],
+                    company_name.strip(),
+                    description.strip(),
+                    city.strip(),
+                    state.strip()
+                )
                 st.session_state.profile = get_profile(st.session_state.user["id"])
                 st.success("Profile saved.")
-
+                
 # =========================
 # AI helpers
 # =========================
