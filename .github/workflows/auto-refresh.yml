@@ -1,39 +1,41 @@
-name: Auto Refresh SAM Feed
+name: Auto refresh SAM.gov feed
 
 on:
-  # Keep hourly so we can be DST-safe; the script will gate off-hours
   schedule:
-    - cron: "0 * * * *"   # every hour, UTC
-  workflow_dispatch:      # allow manual run
+    # 3am MT
+    - cron: '0 9 * * *'   # MDT (UTC-6)
+    - cron: '0 10 * * *'  # MST (UTC-7)
+    # 12pm (noon) MT
+    - cron: '0 18 * * *'  # MDT
+    - cron: '0 19 * * *'  # MST
+    # 7pm MT  (next-day UTC for MDT/MST)
+    - cron: '0 1 * * *'   # MDT
+    - cron: '0 2 * * *'   # MST
+  workflow_dispatch: {}
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
     env:
+      PYTHONPATH: ${{ github.workspace }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      SAM_KEYS:        ${{ secrets.SAM_KEYS }}
-      OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
-      LOCAL_TZ:        America/Denver   # Mountain Time w/ DST
-      # FORCE_RUN: "1"                  # uncomment for a one-off manual test
-
+      SAM_KEYS: ${{ secrets.SAM_KEYS }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
-      - name: Check out
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # Min deps if requirements.txt missing
-          pip install sqlalchemy sqlmodel psycopg2-binary requests pytz openai pandas
 
-      - name: Run auto refresh (gated by local time)
+      - name: Run auto refresh
+        working-directory: ${{ github.workspace }}
         run: |
           python scripts/auto_refresh.py
