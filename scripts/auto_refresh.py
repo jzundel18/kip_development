@@ -78,24 +78,13 @@ def insert_new_records_only(records) -> int:
 
 # ---------- Main ----------
 def main():
-    raw = gs.get_sam_raw_v3(
-        days_back=0,
-        limit=50,
-        api_keys=SAM_KEYS,
-        filters={}
-    )
-    n = insert_new_records_only(raw)
-    print(f"Inserted (attempted): {n}")
-
-# ---------- Main ----------
-def main():
     print("Starting auto-refresh job...")
 
     try:
         print("Fetching solicitations from SAM.gov...")
         raw = gs.get_sam_raw_v3(
             days_back=0,
-            limit=800,  # adjust if needed
+            limit=50,  # adjust if needed
             api_keys=SAM_KEYS,
             filters={}
         )
