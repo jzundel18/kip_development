@@ -1,14 +1,9 @@
 name: Auto Refresh SAM.gov
 
 on:
-  workflow_dispatch:
-    inputs:
-      force_run:
-        description: 'Force run regardless of local hour'
-        type: boolean
-        default: false
+  workflow_dispatch: {}
   schedule:
-    # Run every hour; your script will skip unless it's 3/12/19 MT (or forced)
+    # Run every hour; auto_refresh pulls metadata only, backfill fills in missing descriptions
     - cron: '0 * * * *'
 
 jobs:
@@ -38,25 +33,21 @@ jobs:
             pip install sqlalchemy sqlmodel pandas numpy requests pytz
           fi
 
-      - name: Preflight & run auto refresh (verbose)
+      - name: Run auto refresh (hourly, fast)
         env:
-          # Pass the checkbox straight through as "true"/"false";
-          # your script normalizes FORCE_RUN internally.
-          FORCE_RUN:       ${{ github.event.inputs.force_run }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SAM_KEYS:        ${{ secrets.SAM_KEYS }}
           DAYS_BACK:       '1'
           PYTHONUNBUFFERED: '1'
         run: |
           set -euo pipefail
-          echo "=== Preflight ==="
+          echo "=== Auto refresh start ==="
           date
-          echo "FORCE_RUN=${FORCE_RUN}"
-          echo "DAYS_BACK=${DAYS_BACK}"
-          echo "PWD=$(pwd)"
-          ls -la
-          echo "Python:"
-          python -V
-          echo "Path check:"
-          python -c "import sys,os; print('sys.path0=',sys.path[0]); print('has scripts/auto_refresh.py=', os.path.exists('scripts/auto_refresh.py')); print('has get_relevant_solicitations.py=', os.path.exists('get_relevant_solicitations.py'))"
-          echo "=== Running script (12m timeout) ==="
           timeout 12m python -u scripts/auto_refresh.py
-          echo "=== Script finished ==="
+          echo "=== Auto refresh done ==="
+
+      - name: Run backfill descriptions
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SAM_KEYS:        ${{ secrets.SAM_KEYS }}
+        run: python -u scripts/backfill_descriptions.py
