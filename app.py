@@ -1,23 +1,16 @@
-# app.py
-
-import os
-import re
-import json
+import os, re, json, bcrypt
 from typing import Optional, List, Dict, Any
-from sqlalchemy import inspect
-import pandas as pd
-import sqlalchemy as sa
-from sqlalchemy import text
-import streamlit as st
 from datetime import date, datetime, timezone
-from sqlmodel import SQLModel, Field, create_engine
+import pandas as pd
 import numpy as np
+import sqlalchemy as sa
+from sqlalchemy import text, inspect
+from sqlmodel import SQLModel, Field, create_engine
+import streamlit as st
 from openai import OpenAI
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 import find_relevant_suppliers as fs
 import generate_proposal as gp
+import get_relevant_solicitations as gs
 
 # =========================
 # Streamlit page
@@ -35,23 +28,6 @@ def normalize_naics_input(text_in: str) -> list[str]:
 
 def parse_keywords_or(text_in: str) -> list[str]:
     return [k.strip() for k in text_in.split(",") if k.strip()]
-
-# =========================
-# Password gate
-# =========================
-APP_PW = st.secrets.get("APP_PASSWORD", "")
-def gate():
-    if not APP_PW:
-        return True
-    if st.session_state.get("auth_ok"):
-        return True
-    pw = st.text_input("Enter access password", type="password")
-    if pw and pw.strip() == APP_PW.strip():
-        st.session_state.auth_ok = True
-        st.rerun()
-    st.stop()
-if not gate():
-    st.stop()
 
 # =========================
 # Secrets
@@ -140,6 +116,95 @@ class SolicitationRaw(SQLModel, table=True):
 # Create table
 SQLModel.metadata.create_all(engine)
 
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True, unique=True, nullable=False)
+    password_hash: str = Field(nullable=False)
+    created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+class CompanyProfile(SQLModel, table=True):
+    __tablename__ = "company_profile"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, nullable=False)
+    company_name: str = Field(nullable=False)
+    description: str = Field(nullable=False)
+    city: Optional[str] = None
+    state: Optional[str] = None
+    created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+# Create/ensure new tables
+SQLModel.metadata.create_all(engine)
+
+# Lightweight migration: unique index on users.email and one-profile-per-user constraint
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email);
+        """))
+        conn.execute(sa.text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_company_profile_user ON company_profile (user_id);
+        """))
+except Exception as e:
+    st.warning(f"User/profile table migration note: {e}")
+
+def _hash_password(pw: str) -> str:
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(pw.encode("utf-8"), salt).decode("utf-8")
+
+def _check_password(pw: str, pw_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), pw_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+def get_user_by_email(email: str):
+    with engine.connect() as conn:
+        sql = sa.text("SELECT id, email, password_hash FROM users WHERE email = :e")
+        row = conn.execute(sql, {"e": email.strip().lower()}).mappings().first()
+        return dict(row) if row else None
+
+def create_user(email: str, password: str) -> Optional[int]:
+    email = email.strip().lower()
+    pw_hash = _hash_password(password)
+    with engine.begin() as conn:
+        try:
+            sql = sa.text("""
+                INSERT INTO users (email, password_hash, created_at)
+                VALUES (:email, :ph, :ts)
+                RETURNING id
+            """)
+            new_id = conn.execute(sql, {"email": email, "ph": pw_hash, "ts": datetime.utcnow().isoformat()}).scalar_one()
+            return int(new_id)
+        except Exception as e:
+            st.error(f"Could not create user: {e}")
+            return None
+
+def get_profile(user_id: int) -> Optional[dict]:
+    with engine.connect() as conn:
+        sql = sa.text("""
+            SELECT id, user_id, company_name, description, city, state, created_at, updated_at
+            FROM company_profile WHERE user_id = :uid
+        """)
+        row = conn.execute(sql, {"uid": user_id}).mappings().first()
+        return dict(row) if row else None
+
+def upsert_profile(user_id: int, company_name: str, description: str, city: str, state: str) -> None:
+    with engine.begin() as conn:
+        now = datetime.utcnow().isoformat()
+        # Try update first
+        upd = conn.execute(sa.text("""
+            UPDATE company_profile
+            SET company_name = :cn, description = :d, city = :c, state = :s, updated_at = :ts
+            WHERE user_id = :uid
+        """), {"cn": company_name, "d": description, "c": city, "s": state, "uid": user_id, "ts": now})
+        if upd.rowcount == 0:
+            conn.execute(sa.text("""
+                INSERT INTO company_profile (user_id, company_name, description, city, state, created_at, updated_at)
+                VALUES (:uid, :cn, :d, :c, :s, :ts, :ts)
+            """), {"uid": user_id, "cn": company_name, "d": description, "c": city, "s": state, "ts": now})
+
 # Lightweight migration: ensure columns & unique index
 REQUIRED_COLS = {
     "pulled_at": "TEXT",
@@ -211,6 +276,77 @@ with st.sidebar:
     st.success("✅ API keys loaded from Secrets")
     st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
+
+# =========================
+# Sidebar: Auth & Account
+# =========================
+with st.sidebar:
+    st.markdown("### Account")
+    if "user" not in st.session_state:
+        st.session_state.user = None
+    if "profile" not in st.session_state:
+        st.session_state.profile = None
+
+    if st.session_state.user is None:
+        tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
+
+    if st.session_state.get("user") is None:
+        st.warning("Please log in to use the app.")
+        st.stop()
+
+        with tab_login:
+            le = st.text_input("Email", key="login_email")
+            lp = st.text_input("Password", type="password", key="login_password")
+            if st.button("Log in"):
+                u = get_user_by_email(le or "")
+                if not u or not _check_password(lp or "", u["password_hash"]):
+                    st.error("Invalid email or password.")
+                else:
+                    st.session_state.user = {"id": u["id"], "email": u["email"]}
+                    st.session_state.profile = get_profile(u["id"])
+                    st.rerun()
+
+        with tab_signup:
+            se = st.text_input("Email", key="signup_email")
+            sp = st.text_input("Password", type="password", key="signup_password")
+            sp2 = st.text_input("Confirm password", type="password", key="signup_password2")
+            if st.button("Create account"):
+                if not se or not sp:
+                    st.error("Email and password required.")
+                elif sp != sp2:
+                    st.error("Passwords do not match.")
+                elif get_user_by_email(se):
+                    st.error("An account with that email already exists.")
+                else:
+                    uid = create_user(se, sp)
+                    if uid:
+                        st.success("Account created. Please log in.")
+                    else:
+                        st.error("Could not create account. Check logs.")
+
+    else:
+        st.write(f"Signed in as **{st.session_state.user['email']}**")
+        if st.button("Sign out"):
+            st.session_state.user = None
+            st.session_state.profile = None
+            st.rerun()
+
+        st.markdown("---")
+        st.markdown("### Company Profile")
+
+        prof = st.session_state.profile or {}
+        company_name = st.text_input("Company name", value=prof.get("company_name", ""))
+        description  = st.text_area("Company description", value=prof.get("description", ""), height=140)
+        city         = st.text_input("City", value=prof.get("city", "") or "")
+        state        = st.text_input("State", value=prof.get("state", "") or "")
+
+        if st.button("Save profile"):
+            if not company_name.strip() or not description.strip():
+                st.error("Company name and description are required.")
+            else:
+                upsert_profile(st.session_state.user["id"], company_name.strip(), description.strip(), city.strip(), state.strip())
+                st.session_state.profile = get_profile(st.session_state.user["id"])
+                st.success("Profile saved.")
 
 # =========================
 # AI helpers
@@ -723,9 +859,18 @@ with tab1:
         "due_before": (due_before.isoformat() if isinstance(due_before, date) else None),
         "notice_types": notice_types,
     }
-    st.subheader("Company profile (optional)")
-    company_desc = st.text_area("Brief company description (for AI downselect)", value="", height=120)
-    st.session_state.company_desc = company_desc
+    st.subheader("Company profile for matching")
+    saved_desc = (st.session_state.get("profile") or {}).get("description", "")
+    use_saved = st.checkbox("Use saved company profile", value=bool(saved_desc))
+    if use_saved and saved_desc:
+        st.info("Using your saved company profile description.")
+        company_desc = saved_desc
+        # show as read-only preview
+        st.text_area("Company description (from Account → Company Profile)", value=saved_desc, height=120, disabled=True)
+    else:
+        company_desc = st.text_area("Brief company description (temporary)", value="", height=120)
+
+    st.session_state.company_desc = company_desc or ""
     use_ai_downselect = st.checkbox("Use AI to downselect based on description", value=False)
     
     if st.button("Show top results", type="primary", key="btn_show_results"):

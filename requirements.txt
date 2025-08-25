@@ -11,3 +11,4 @@ sqlmodel
 sqlalchemy
 psycopg2-binary
 pytz
+bcrypt>=4.1.2
