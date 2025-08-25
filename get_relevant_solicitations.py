@@ -251,7 +251,7 @@ def fetch_notice_description(notice_id: str, api_keys: List[str]) -> str:
     Get full description text using two strategies:
       1) v2 detail (if it includes description/synopsis/long text)
       2) v1 noticedesc (HTML/plain -> normalized text)
-    Returns 'None' if both fail.
+    Returns an empty string if both fail.
     """
     # 1) try v2 detail
     detail = fetch_notice_detail_v2(notice_id, api_keys)
@@ -267,7 +267,8 @@ def fetch_notice_description(notice_id: str, api_keys: List[str]) -> str:
         try:
             r = _http_get(SAM_DESC_URL_V1, {"noticeid": notice_id}, key)
             if r.status_code == 429:
-                time.sleep(1.0); continue
+                time.sleep(1.0)
+                continue
             r.raise_for_status()
             text = r.text or ""
             text = html.unescape(text)
@@ -278,7 +279,9 @@ def fetch_notice_description(notice_id: str, api_keys: List[str]) -> str:
         except Exception:
             time.sleep(0.5)
             continue
-    return "None"
+
+    # No description found → return empty string so DB sees it as "missing"
+    return ""
 
 
 # --- deep search helpers for nested payloads ---
