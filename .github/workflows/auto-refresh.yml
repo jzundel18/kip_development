@@ -8,7 +8,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '0 * * * *'   # runs hourly; script will skip except 3/12/19 MT unless forced
+    # run every hour; your script will skip unless it's 3/12/19 MT (or forced)
+    - cron: '0 * * * *'
 
 jobs:
   refresh:
@@ -37,18 +38,32 @@ jobs:
             pip install sqlalchemy sqlmodel pandas numpy requests pytz
           fi
 
-      - name: Run auto refresh
+      - name: Preflight & run auto refresh (verbose)
+        shell: bash
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SAM_KEYS:        ${{ secrets.SAM_KEYS }}
+          # convert the checkbox string ("true"/"false") into 1/empty
           FORCE_RUN:       ${{ github.event.inputs.force_run == 'true' && '1' || '' }}
           DAYS_BACK:       1
-          PYTHONUNBUFFERED: '1'
-          TZ: America/Denver
-        run: 
+          PYTHONUNBUFFERED: "1"
+        run: |
           set -xeuo pipefail
+          echo "=== Preflight ==="
           date
           echo "FORCE_RUN=${FORCE_RUN}"
           echo "DAYS_BACK=${DAYS_BACK}"
-          python -u -c "print('preflight ok', flush=True)"
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "Python:"
+          python -V
+          echo "Path check:"
+          python - <<'PY'
+import sys, os
+print("sys.path[:3] =", sys.path[:3])
+print("has scripts/auto_refresh.py:", os.path.exists("scripts/auto_refresh.py"))
+print("has get_relevant_solicitations.py:", os.path.exists("get_relevant_solicitations.py"))
+PY
+          echo "=== Running script (12m timeout) ==="
           timeout 12m python -u scripts/auto_refresh.py
+          echo "=== Script finished ==="
