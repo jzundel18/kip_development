@@ -80,16 +80,33 @@ def insert_new_records_only(records) -> int:
 def main():
     raw = gs.get_sam_raw_v3(
         days_back=0,
-        limit=800,
+        limit=50,
         api_keys=SAM_KEYS,
         filters={}
     )
     n = insert_new_records_only(raw)
     print(f"Inserted (attempted): {n}")
 
-if __name__ == "__main__":
+# ---------- Main ----------
+def main():
+    print("Starting auto-refresh job...")
+
     try:
-        main()
+        print("Fetching solicitations from SAM.gov...")
+        raw = gs.get_sam_raw_v3(
+            days_back=0,
+            limit=800,  # adjust if needed
+            api_keys=SAM_KEYS,
+            filters={}
+        )
+        print(f"Fetched {len(raw)} records from SAM.gov")
+
+        n = insert_new_records_only(raw)
+        print(f"Inserted (attempted): {n}")
+
+        print("Auto-refresh job completed successfully.")
+
     except Exception as e:
+        # Print a helpful error for Actions logs
         print("Auto refresh failed:", repr(e))
         sys.exit(1)
