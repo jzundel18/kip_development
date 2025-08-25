@@ -278,10 +278,31 @@ try:
 except Exception as e:
     st.warning(f"Company table migration note: {e}")
 
+def render_sidebar_header():
+    """Sidebar header: company name, signed-in email, and settings button."""
+    with st.sidebar:
+        st.markdown("---")
+        if st.session_state.user:
+            prof = st.session_state.profile or {}
+            company_name = (prof.get("company_name") or "").strip() or "Your Company"
+            st.markdown(f"### {company_name}")
+            st.caption(f"Signed in as {st.session_state.user['email']}")
+            if st.button("⚙️ Account Settings", key="sb_go_settings", use_container_width=True):
+                st.session_state.view = "account"
+                st.rerun()
+        else:
+            st.info("Not signed in")
+            if st.button("Log in / Sign up", key="sb_go_login", use_container_width=True):
+                st.session_state.view = "auth"
+                st.rerun()
+        st.markdown("---")
+
 with st.sidebar:
     st.success("✅ API keys loaded from Secrets")
     st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
+
+render_sidebar_header()
 
 # =========================
 # AI helpers
@@ -734,27 +755,6 @@ def render_account_settings():
             st.session_state.view = "main"
             st.rerun()
 
-
-def render_top_header_with_company_chip():
-    """
-    Shows company name (from saved profile or placeholder), 
-    plus a small gear button to go to Account Settings.
-    """
-    if st.session_state.user is None:
-        return  # no chip until logged in
-
-    prof = st.session_state.profile or {}
-    company_name = (prof.get("company_name") or "").strip() or "Your Company"
-
-    left, right = st.columns([4,1])
-    with left:
-        st.markdown(f"### {company_name}")
-        st.caption(f"Signed in as {st.session_state.user['email']}")
-    with right:
-        if st.button("⚙️ Account Settings", key="btn_go_settings", use_container_width=True):
-            st.session_state.view = "account"
-            st.rerun()
-
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     # UI should not show these two columns
     return df.drop(columns=[c for c in ["notice_id", "description"] if c in df.columns], errors="ignore")
@@ -782,8 +782,7 @@ with colR2:
     except Exception:
         st.metric("Rows in DB", 0)
 
-# Company chip + gear to settings
-render_top_header_with_company_chip()
+
 # =========================
 # Session state
 # =========================
@@ -875,17 +874,6 @@ def ai_rank_solicitations_by_fit(
             out.append(x)
     out.sort(key=lambda x: x["score"], reverse=True)
     return out[:top_k]
-
-# ====== ROUTER ======
-if st.session_state.view == "auth":
-    render_auth_screen()
-    st.stop()
-
-elif st.session_state.view == "account":
-    render_account_settings()
-    st.stop()
-
-# else: "main" → continue into the app
 
 # =========================
 # Tabs
