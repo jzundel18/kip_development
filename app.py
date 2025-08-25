@@ -11,7 +11,8 @@ from openai import OpenAI
 import find_relevant_suppliers as fs
 import generate_proposal as gp
 import get_relevant_solicitations as gs
-
+from sqlmodel import SQLModel
+SQLModel.metadata.clear()
 # =========================
 # Streamlit page
 # =========================
@@ -118,6 +119,7 @@ SQLModel.metadata.create_all(engine)
 
 class User(SQLModel, table=True):
     __tablename__ = "users"
+    __table_args__ = {"extend_existing": True}   # <-- add this
     id: Optional[int] = Field(default=None, primary_key=True)
     email: str = Field(index=True, unique=True, nullable=False)
     password_hash: str = Field(nullable=False)
@@ -125,6 +127,7 @@ class User(SQLModel, table=True):
 
 class CompanyProfile(SQLModel, table=True):
     __tablename__ = "company_profile"
+    __table_args__ = {"extend_existing": True}   # <-- add this
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(index=True, nullable=False)
     company_name: str = Field(nullable=False)
@@ -357,7 +360,7 @@ with st.sidebar:
                 )
                 st.session_state.profile = get_profile(st.session_state.user["id"])
                 st.success("Profile saved.")
-                
+
 # =========================
 # AI helpers
 # =========================
