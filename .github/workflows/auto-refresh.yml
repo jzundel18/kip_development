@@ -41,8 +41,14 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SAM_KEYS:        ${{ secrets.SAM_KEYS }}
-          # Pass FORCE_RUN based on the checkbox (string "true"/"false")
           FORCE_RUN:       ${{ github.event.inputs.force_run == 'true' && '1' || '' }}
-        run: |
+          DAYS_BACK:       1
+          PYTHONUNBUFFERED: '1'
+          TZ: America/Denver
+        run: 
+          set -xeuo pipefail
+          date
           echo "FORCE_RUN=${FORCE_RUN}"
-          python scripts/auto_refresh.py
+          echo "DAYS_BACK=${DAYS_BACK}"
+          python -u -c "print('preflight ok', flush=True)"
+          timeout 12m python -u scripts/auto_refresh.py

@@ -22,44 +22,63 @@ except Exception:
     ZoneInfo = None
 
 ALLOWED_LOCAL_HOURS = {3, 12, 19}  # 3am, 12pm, 7pm Mountain
-FORCE_RUN = str(os.environ.get("FORCE_RUN", "")).strip().lower() in ("1","true","yes","on")
+FORCE_RUN = str(os.environ.get("FORCE_RUN", "")).strip().lower() in ("1", "true", "yes", "on")
 
 if ZoneInfo is not None:
     now_local = datetime.now(ZoneInfo("America/Denver"))
     if now_local.hour not in ALLOWED_LOCAL_HOURS and not FORCE_RUN:
-        print(f"[skip] It's {now_local} MT; not an allowed hour {sorted(ALLOWED_LOCAL_HOURS)}. FORCE_RUN={FORCE_RUN}")
+        print(f"[skip] It's {now_local} MT; not an allowed hour {sorted(ALLOWED_LOCAL_HOURS)}. FORCE_RUN={FORCE_RUN}", flush=True)
         sys.exit(0)
     elif FORCE_RUN:
-        print(f"[bypass] FORCE_RUN set; running at {now_local} MT (hour {now_local.hour}).")
+        print(f"[bypass] FORCE_RUN set; running at {now_local} MT (hour {now_local.hour}).", flush=True)
 else:
     if not FORCE_RUN:
-        print("[skip] ZoneInfo unavailable and FORCE_RUN not set.")
+        print("[skip] ZoneInfo unavailable and FORCE_RUN not set.", flush=True)
         sys.exit(0)
     else:
-        print("[bypass] FORCE_RUN set and ZoneInfo unavailable; running anyway.")
+        print("[bypass] FORCE_RUN set and ZoneInfo unavailable; running anyway.", flush=True)
 
 # ---------- Env / secrets ----------
 DB_URL = os.environ.get("SUPABASE_DB_URL", "sqlite:///app.db")
 
 # Handle SAM_KEYS as comma OR newline separated
 _raw_keys = os.environ.get("SAM_KEYS", "")
-SAM_KEYS = []
+SAM_KEYS: list[str] = []
 if _raw_keys:
     parts = []
-    for line in _raw_keys.replace("\r","").split("\n"):
+    for line in _raw_keys.replace("\r", "").split("\n"):
         parts.extend([p.strip() for p in line.split(",")])
     SAM_KEYS = [p for p in parts if p]
-print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)")
+
+# >>> Added logging here <<<
+print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)", flush=True)
+if SAM_KEYS:
+    masked = [ (k[:6] + "…") if len(k) > 6 else "…" for k in SAM_KEYS ]
+    print("SAM_KEYS prefixes (masked):", ", ".join(masked), flush=True)
 
 # Days back – default to 1 to cover last 24h reliably
 try:
     DAYS_BACK = int(os.environ.get("DAYS_BACK", "1"))
 except ValueError:
     DAYS_BACK = 1
-print(f"DAYS_BACK = {DAYS_BACK}")
+print(f"DAYS_BACK = {DAYS_BACK}", flush=True)
 
-# ---------- DB engine ----------
-engine = create_engine(DB_URL, pool_pre_ping=True)
+# --- DB (add connect timeout for Postgres) ---
+pg_opts = {}
+if DB_URL.startswith("postgresql"):
+    pg_opts["connect_args"] = {"connect_timeout": 10}  # seconds
+
+engine = create_engine(DB_URL, pool_pre_ping=True, **pg_opts)
+print("auto_refresh.py: engine created", flush=True)
+
+# Quick DB ping so we can see if we hang here
+try:
+    with engine.connect() as conn:
+        conn.execute(sa.text("SELECT 1"))
+    print("auto_refresh.py: DB ping OK", flush=True)
+except Exception as e:
+    print("auto_refresh.py: DB ping FAILED:", repr(e), flush=True)
+    sys.exit(2)
 
 # ---------- Insert helper ----------
 COLS_TO_SAVE = [
@@ -86,7 +105,7 @@ def insert_new_records_only(records) -> int:
         rows.append(row)
 
     if not rows:
-        print("No new rows to insert after filtering/mapping.")
+        print("No new rows to insert after filtering/mapping.", flush=True)
         return 0
 
     cols = ["pulled_at"] + COLS_TO_SAVE
@@ -107,64 +126,64 @@ def db_counts():
             max_pulled = conn.execute(sqltext("SELECT MAX(pulled_at) FROM solicitationraw")).scalar_one()
         return int(total or 0), str(max_pulled or "")
     except Exception as e:
-        print("db_counts() failed:", repr(e))
+        print("db_counts() failed:", repr(e), flush=True)
         return None, None
 
 # ---------- Main ----------
 def main():
-    print("Starting auto-refresh job...")
+    print("auto_refresh.py: entered main()", flush=True)
+    print("Starting auto-refresh job...", flush=True)
     total_before, last_pulled = db_counts()
     if total_before is not None:
-        print(f"DB before: {total_before} rows; last pulled_at: {last_pulled}")
+        print(f"DB before: {total_before} rows; last pulled_at: {last_pulled}", flush=True)
 
     try:
-        print("Fetching solicitations from SAM.gov...")
+        print("Fetching solicitations from SAM.gov...", flush=True)
         raw = gs.get_sam_raw_v3(
             days_back=DAYS_BACK,
-            limit=800,
+            limit=20,  # adjust as needed
             api_keys=SAM_KEYS,
             filters={}
         )
-        print(f"Fetched {len(raw)} raw records from SAM.gov")
+        print(f"Fetched {len(raw)} raw records from SAM.gov", flush=True)
 
         # Show a couple examples to confirm fields present
         for i, rec in enumerate(raw[:3]):
             try:
                 m = gs.map_record_allowed_fields(rec, api_keys=SAM_KEYS, fetch_desc=False)
-                print(f" sample[{i}]: notice_id={m.get('notice_id')} title={m.get('title')!r} posted_date={m.get('posted_date')}")
+                print(f" sample[{i}]: notice_id={m.get('notice_id')} title={m.get('title')!r} posted_date={m.get('posted_date')}", flush=True)
             except Exception as e:
-                print(f" sample[{i}] map error:", repr(e))
+                print(f" sample[{i}] map error:", repr(e), flush=True)
 
         n = insert_new_records_only(raw)
-        print(f"Inserted (attempted): {n}")
+        print(f"Inserted (attempted): {n}", flush=True)
 
         total_after, last_pulled2 = db_counts()
         if total_after is not None:
-            print(f"DB after: {total_after} rows; last pulled_at: {last_pulled2}")
+            print(f"DB after: {total_after} rows; last pulled_at: {last_pulled2}", flush=True)
 
-        # Helpful summary when no inserts
         if n == 0:
             if len(raw) == 0:
-                print("DEBUG: SAM.gov returned 0 items. Possible reasons:")
-                print(" - No new postings within DAYS_BACK window")
-                print(" - Filters inside gs.get_sam_raw_v3 are too narrow")
-                print(" - Quota or auth errors being swallowed (enable debugging in that module)")
+                print("DEBUG: SAM.gov returned 0 items. Possible reasons:", flush=True)
+                print(" - No new postings within DAYS_BACK window", flush=True)
+                print(" - Filters inside gs.get_sam_raw_v3 are too narrow", flush=True)
+                print(" - Quota or auth errors being swallowed (enable debugging in that module)", flush=True)
             else:
-                print("DEBUG: All fetched items appear to be duplicates (conflict on notice_id) or filtered out (Justification).")
+                print("DEBUG: All fetched items appear to be duplicates (conflict on notice_id) or filtered out (Justification).", flush=True)
 
-        print("Auto-refresh job completed.")
+        print("Auto-refresh job completed.", flush=True)
 
     except SamQuotaError:
-        print("ERROR: SAM.gov quota likely exceeded on all provided keys.")
+        print("ERROR: SAM.gov quota likely exceeded on all provided keys.", flush=True)
         sys.exit(2)
     except SamAuthError:
-        print("ERROR: SAM.gov auth failed for all keys. Check SAM_KEYS secret.")
+        print("ERROR: SAM.gov auth failed for all keys. Check SAM_KEYS secret.", flush=True)
         sys.exit(2)
     except SamBadRequestError as e:
-        print(f"ERROR: Bad request to SAM.gov: {e}")
+        print(f"ERROR: Bad request to SAM.gov: {e}", flush=True)
         sys.exit(2)
     except Exception as e:
-        print("Auto refresh failed:", repr(e))
+        print("Auto refresh failed:", repr(e), flush=True)
         sys.exit(1)
 
 if __name__ == "__main__":
