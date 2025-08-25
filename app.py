@@ -663,7 +663,7 @@ def render_auth_screen():
                 st.session_state.profile = get_profile(u["id"])
                 st.session_state.view = "main"
                 st.success("Logged in.")
-                st.experimental_rerun()
+                st.rerun()
 
     # ---- Sign up
     with c2:
@@ -695,7 +695,7 @@ def render_account_settings():
         st.info("Please log in first.")
         if st.button("Go to Login / Sign up"):
             st.session_state.view = "auth"
-            st.experimental_rerun()
+            st.rerun()
         st.stop()
 
     st.write(f"Signed in as **{st.session_state.user['email']}**")
@@ -703,7 +703,7 @@ def render_account_settings():
         st.session_state.user = None
         st.session_state.profile = None
         st.session_state.view = "auth"
-        st.experimental_rerun()
+        st.rerun()
 
     st.markdown("---")
     st.subheader("Company Profile")
@@ -732,7 +732,7 @@ def render_account_settings():
     with cols[1]:
         if st.button("Back to app", key="btn_back_to_app"):
             st.session_state.view = "main"
-            st.experimental_rerun()
+            st.rerun()
 
 
 def render_top_header_with_company_chip():
@@ -753,7 +753,7 @@ def render_top_header_with_company_chip():
     with right:
         if st.button("⚙️ Account Settings", key="btn_go_settings", use_container_width=True):
             st.session_state.view = "account"
-            st.experimental_rerun()
+            st.rerun()
 
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     # UI should not show these two columns
