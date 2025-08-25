@@ -11,7 +11,6 @@ from openai import OpenAI
 import find_relevant_suppliers as fs
 import generate_proposal as gp
 import get_relevant_solicitations as gs
-from sqlmodel import SQLModel
 SQLModel.metadata.clear()
 # =========================
 # Streamlit page
@@ -114,9 +113,6 @@ class SolicitationRaw(SQLModel, table=True):
     description: Optional[str] = None
     link: Optional[str] = None
 
-# Create table
-SQLModel.metadata.create_all(engine)
-
 class User(SQLModel, table=True):
     __tablename__ = "users"
     __table_args__ = {"extend_existing": True}   # <-- add this
@@ -136,9 +132,6 @@ class CompanyProfile(SQLModel, table=True):
     state: Optional[str] = None
     created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
-
-# Create/ensure new tables
-SQLModel.metadata.create_all(engine)
 
 # Lightweight migration: unique index on users.email and one-profile-per-user constraint
 try:
@@ -208,6 +201,21 @@ def upsert_profile(user_id: int, company_name: str, description: str, city: str,
                 VALUES (:uid, :cn, :d, :c, :s, :ts, :ts)
             """), {"uid": user_id, "cn": company_name, "d": description, "c": city, "s": state, "ts": now})
 
+# ---------------------------
+# Company directory (new table)
+# ---------------------------
+class Company(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = Field(default=None, index=True)
+
+# Create (or update) tables
+SQLModel.metadata.create_all(engine)
+
 # Lightweight migration: ensure columns & unique index
 REQUIRED_COLS = {
     "pulled_at": "TEXT",
@@ -240,21 +248,6 @@ try:
         """))
 except Exception as e:
     st.warning(f"Migration note: {e}")
-
-# ---------------------------
-# Company directory (new table)
-# ---------------------------
-class Company(SQLModel, table=True):
-    __table_args__ = {"extend_existing": True}
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True)
-    description: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = Field(default=None, index=True)
-
-# Create (or update) tables
-SQLModel.metadata.create_all(engine)
 
 # Lightweight migration for Companies (safe if already exists)
 try:
