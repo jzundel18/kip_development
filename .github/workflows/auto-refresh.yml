@@ -1,15 +1,25 @@
 name: Auto Refresh SAM Feed
 
 on:
-  workflow_dispatch:      # allow manual trigger
+  # Keep hourly so we can be DST-safe; the script will gate off-hours
   schedule:
-    - cron: "0 * * * *"   # run hourly; script checks whether it's 3a/12p/7p MT
+    - cron: "0 * * * *"   # every hour, UTC
+  workflow_dispatch:      # allow manual run
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SAM_KEYS:        ${{ secrets.SAM_KEYS }}
+      OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
+      LOCAL_TZ:        America/Denver   # Mountain Time w/ DST
+      # FORCE_RUN: "1"                  # uncomment for a one-off manual test
+
     steps:
-      - name: Checkout repo
+      - name: Check out
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -19,14 +29,11 @@ jobs:
 
       - name: Install deps
         run: |
-          pip install -r requirements.txt || true
-          pip install sqlalchemy sqlmodel pandas psycopg2-binary
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Min deps if requirements.txt missing
+          pip install sqlalchemy sqlmodel psycopg2-binary requests pytz openai pandas
 
-      - name: Run auto refresh
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          SAM_KEYS: ${{ secrets.SAM_KEYS }}
-          MAX_RESULTS_REFRESH: "500"
-          LOCAL_TZ: "America/Denver"   # mountain time zone
+      - name: Run auto refresh (gated by local time)
         run: |
           python scripts/auto_refresh.py
