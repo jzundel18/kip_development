@@ -146,6 +146,11 @@ def get_sam_raw_v3(
         "postedTo": posted_to,      # MM/dd/YYYY
     }
 
+    # NEW: if caller provides a specific notice_id, pass it through
+    if filters.get("notice_id"):
+        params["noticeid"] = str(filters["notice_id"]).strip()
+        params["limit"] = 1  # fetching a specific record
+
     data = _request_sam(params, api_keys)
     raw_records = data.get("opportunitiesData") or data.get("data") or []
     if not raw_records:
@@ -153,6 +158,12 @@ def get_sam_raw_v3(
 
     # ---------- filter helper ----------
     def _match(rec: Dict[str, Any]) -> bool:
+        # NEW: enforce notice_id match if supplied
+        if filters.get("notice_id"):
+            rid = str(rec.get("noticeId") or rec.get("id") or "").strip()
+            if rid != str(filters["notice_id"]).strip():
+                return False
+
         r_type_raw = str(rec.get("noticeType") or rec.get("type") or "")
         if r_type_raw.strip().lower() == "justification":
             return False
