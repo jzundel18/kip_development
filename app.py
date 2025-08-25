@@ -272,12 +272,9 @@ with st.sidebar:
     st.success("✅ API keys loaded from Secrets")
     st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
-
-# =========================
-# Sidebar: Auth & Account
-# =========================
-with st.sidebar:
-    st.markdown("### Account")
+# ---- Tab 5: Account Settings ----
+with tab5:
+    st.header("Account Settings")
 
     # ensure keys exist
     if "user" not in st.session_state:
@@ -286,13 +283,15 @@ with st.sidebar:
         st.session_state.profile = None
 
     if st.session_state.user is None:
-        tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
+        # Two columns for auth forms
+        c1, c2 = st.columns(2)
 
-        # ---- Login tab
-        with tab_login:
-            le = st.text_input("Email", key="login_email")
-            lp = st.text_input("Password", type="password", key="login_password")
-            if st.button("Log in", key="btn_login"):
+        # ---- Login
+        with c1:
+            st.subheader("Log in")
+            le = st.text_input("Email", key="login_email_tab")
+            lp = st.text_input("Password", type="password", key="login_password_tab")
+            if st.button("Log in", key="btn_login_tab"):
                 u = get_user_by_email(le or "")
                 if not u:
                     st.error("No account found with that email.")
@@ -304,12 +303,13 @@ with st.sidebar:
                     st.success("Logged in.")
                     st.experimental_rerun()
 
-        # ---- Sign-up tab
-        with tab_signup:
-            se = st.text_input("Email", key="signup_email")
-            sp = st.text_input("Password", type="password", key="signup_password")
-            sp2 = st.text_input("Confirm password", type="password", key="signup_password2")
-            if st.button("Create account", key="btn_signup"):
+        # ---- Sign up
+        with c2:
+            st.subheader("Sign up")
+            se = st.text_input("Email", key="signup_email_tab")
+            sp = st.text_input("Password", type="password", key="signup_password_tab")
+            sp2 = st.text_input("Confirm password", type="password", key="signup_password2_tab")
+            if st.button("Create account", key="btn_signup_tab"):
                 if not se or not sp:
                     st.error("Email and password are required.")
                 elif sp != sp2:
@@ -319,20 +319,21 @@ with st.sidebar:
                 else:
                     uid = create_user(se, sp)
                     if uid:
-                        st.success("Account created. Please log in on the Login tab.")
+                        # optionally auto-create a blank profile record
+                        upsert_profile(uid, company_name="", description="", city="", state="")
+                        st.success("Account created. You can now log in on the left.")
                     else:
                         st.error("Could not create account. Check server logs.")
-
     else:
-        # Logged-in state
+        # Logged-in state: profile editor
         st.write(f"Signed in as **{st.session_state.user['email']}**")
-        if st.button("Sign out", key="btn_signout"):
+        if st.button("Sign out", key="btn_signout_tab"):
             st.session_state.user = None
             st.session_state.profile = None
             st.experimental_rerun()
 
         st.markdown("---")
-        st.markdown("### Company Profile")
+        st.subheader("Company Profile")
 
         prof = st.session_state.profile or {}
         company_name = st.text_input("Company name", value=prof.get("company_name", ""))
@@ -340,7 +341,7 @@ with st.sidebar:
         city         = st.text_input("City", value=prof.get("city", "") or "")
         state        = st.text_input("State", value=prof.get("state", "") or "")
 
-        if st.button("Save profile", key="btn_save_profile"):
+        if st.button("Save profile", key="btn_save_profile_tab"):
             if not company_name.strip() or not description.strip():
                 st.error("Company name and description are required.")
             else:
@@ -353,7 +354,6 @@ with st.sidebar:
                 )
                 st.session_state.profile = get_profile(st.session_state.user["id"])
                 st.success("Profile saved.")
-
 # =========================
 # AI helpers
 # =========================
@@ -722,7 +722,12 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 st.title("GovContract Assistant MVP")
 st.caption("Only storing required SAM fields; inserts brand-new notices only (no updates).")
-
+# --- Logged-in indicator (goes right after st.title / metrics) ---
+u = st.session_state.get("user")
+if u:
+    st.success(f"Signed in as **{u['email']}**")
+else:
+    st.info("You’re not signed in. Use the **Account Settings** tab to log in or create an account.")
 colR1, colR2 = st.columns([2,1])
 with colR1:
     st.info("Feed updates automatically every hour.")
@@ -829,11 +834,12 @@ def ai_rank_solicitations_by_fit(
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1) Fetch Solicitations",
     "2) Supplier Suggestions",
     "3) Proposal Draft",
-    "4) Partner Matches"
+    "4) Partner Matches",
+    "Account Settings"
 ])
 # ---- Tab 1
 with tab1:
