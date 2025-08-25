@@ -3,36 +3,21 @@ name: Auto Refresh SAM.gov
 on:
   workflow_dispatch:
     inputs:
-      force_run:
-        description: "Bypass hour gate (run now)"
-        required: false
-        default: "false"
-        type: choice
-        options: ["false", "true"]
-
+      force:
+        description: 'Force run regardless of local hour'
+        type: boolean
+        default: false
   schedule:
-    # MDT (UTC-6):  03:00 → 09:00, 12:00 → 18:00, 19:00 → 01:00 next day
-    - cron: "0 9 * * *"   # 03:00 MT when DST is ON
-    - cron: "0 18 * * *"  # 12:00 MT when DST is ON
-    - cron: "0 1 * * *"   # 19:00 MT when DST is ON (previous day UTC+1)
-    # MST (UTC-7):  03:00 → 10:00, 12:00 → 19:00, 19:00 → 02:00 next day
-    - cron: "0 10 * * *"  # 03:00 MT when DST is OFF
-    - cron: "0 19 * * *"  # 12:00 MT when DST is OFF
-    - cron: "0 2 * * *"   # 19:00 MT when DST is OFF (previous day UTC+2)
+    - cron: '0 * * * *'   # runs hourly; script will skip except 3/12/19 MT unless forced
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     env:
-      # Secrets for your script
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       SAM_KEYS:        ${{ secrets.SAM_KEYS }}
-      # Make local modules importable
-      PYTHONPATH: ${{ github.workspace }}
-      # Optional: make logs show Mountain time
-      TZ: America/Denver
-      # Manual bypass of time gate
-      FORCE_RUN: ${{ inputs.force_run == 'true' && '1' || '' }}
+      PYTHONPATH:      ${{ github.workspace }}
+      TZ:              America/Denver
 
     steps:
       - name: Checkout
@@ -53,6 +38,9 @@ jobs:
           fi
 
       - name: Run auto refresh
-        run: |
-          echo "FORCE_RUN=$FORCE_RUN"
-          python -u scripts/auto_refresh.py
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SAM_KEYS:        ${{ secrets.SAM_KEYS }}
+          # 👇 Pass FORCE_RUN based on the checkbox in "Run workflow"
+          FORCE_RUN:       ${{ github.event.inputs.force && '1' || '' }}
+        run: python scripts/auto_refresh.py

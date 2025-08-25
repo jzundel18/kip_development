@@ -20,11 +20,25 @@ except Exception:
     ZoneInfo = None
 
 ALLOWED_LOCAL_HOURS = {3, 12, 19}  # 3am, 12pm, 7pm Mountain Time
+
+# Normalize FORCE_RUN from env (accepts 1/true/yes/on)
+FORCE_RUN = str(os.environ.get("FORCE_RUN", "")).strip().lower() in ("1", "true", "yes", "on")
+
 if ZoneInfo is not None:
     now_local = datetime.now(ZoneInfo("America/Denver"))
-    if now_local.hour not in ALLOWED_LOCAL_HOURS:
-        print(f"[skip] It's {now_local} MT; not an allowed hour {sorted(ALLOWED_LOCAL_HOURS)}.")
+    if now_local.hour not in ALLOWED_LOCAL_HOURS and not FORCE_RUN:
+        print(f"[skip] It's {now_local} MT; not an allowed hour {sorted(ALLOWED_LOCAL_HOURS)}. "
+              f"FORCE_RUN={os.environ.get('FORCE_RUN')!r}")
         sys.exit(0)
+    elif FORCE_RUN:
+        print(f"[bypass] FORCE_RUN is set; running anyway at {now_local} MT (hour {now_local.hour}).")
+else:
+    # If ZoneInfo isn’t available, only skip when FORCE_RUN is NOT set
+    if not FORCE_RUN:
+        print("[skip] ZoneInfo unavailable and FORCE_RUN not set.")
+        sys.exit(0)
+    else:
+        print("[bypass] FORCE_RUN set and ZoneInfo unavailable; running anyway.")
 
 # ---------- Env / secrets ----------
 DB_URL = os.environ.get("SUPABASE_DB_URL", "sqlite:///app.db")
