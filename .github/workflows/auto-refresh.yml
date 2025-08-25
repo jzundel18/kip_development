@@ -41,6 +41,8 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SAM_KEYS:        ${{ secrets.SAM_KEYS }}
-          # 👇 Pass FORCE_RUN based on the checkbox in "Run workflow"
-          FORCE_RUN:       ${{ github.event.inputs.force && '1' || '' }}
-        run: python scripts/auto_refresh.py
+          # Pass FORCE_RUN based on the checkbox (string "true"/"false")
+          FORCE_RUN:       ${{ github.event.inputs.force_run == 'true' && '1' || '' }}
+        run: |
+          echo "FORCE_RUN=${FORCE_RUN}"
+          python scripts/auto_refresh.py
