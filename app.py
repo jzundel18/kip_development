@@ -12,10 +12,20 @@ import find_relevant_suppliers as fs
 import generate_proposal as gp
 import get_relevant_solicitations as gs
 SQLModel.metadata.clear()
+
 # =========================
 # Streamlit page
 # =========================
 st.set_page_config(page_title="GovContract Assistant MVP", layout="wide")
+
+# --- Simple view router ---
+# views: "auth", "main", "account"
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "profile" not in st.session_state:
+    st.session_state.profile = None
+if "view" not in st.session_state:
+    st.session_state.view = "main" if st.session_state.user else "auth"
 
 # =========================
 # Small helpers
@@ -272,88 +282,7 @@ with st.sidebar:
     st.success("✅ API keys loaded from Secrets")
     st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
-# ---- Tab 5: Account Settings ----
-with tab5:
-    st.header("Account Settings")
 
-    # ensure keys exist
-    if "user" not in st.session_state:
-        st.session_state.user = None
-    if "profile" not in st.session_state:
-        st.session_state.profile = None
-
-    if st.session_state.user is None:
-        # Two columns for auth forms
-        c1, c2 = st.columns(2)
-
-        # ---- Login
-        with c1:
-            st.subheader("Log in")
-            le = st.text_input("Email", key="login_email_tab")
-            lp = st.text_input("Password", type="password", key="login_password_tab")
-            if st.button("Log in", key="btn_login_tab"):
-                u = get_user_by_email(le or "")
-                if not u:
-                    st.error("No account found with that email.")
-                elif not _check_password(lp or "", u["password_hash"]):
-                    st.error("Invalid password.")
-                else:
-                    st.session_state.user = {"id": u["id"], "email": u["email"]}
-                    st.session_state.profile = get_profile(u["id"])
-                    st.success("Logged in.")
-                    st.experimental_rerun()
-
-        # ---- Sign up
-        with c2:
-            st.subheader("Sign up")
-            se = st.text_input("Email", key="signup_email_tab")
-            sp = st.text_input("Password", type="password", key="signup_password_tab")
-            sp2 = st.text_input("Confirm password", type="password", key="signup_password2_tab")
-            if st.button("Create account", key="btn_signup_tab"):
-                if not se or not sp:
-                    st.error("Email and password are required.")
-                elif sp != sp2:
-                    st.error("Passwords do not match.")
-                elif get_user_by_email(se):
-                    st.error("An account with that email already exists.")
-                else:
-                    uid = create_user(se, sp)
-                    if uid:
-                        # optionally auto-create a blank profile record
-                        upsert_profile(uid, company_name="", description="", city="", state="")
-                        st.success("Account created. You can now log in on the left.")
-                    else:
-                        st.error("Could not create account. Check server logs.")
-    else:
-        # Logged-in state: profile editor
-        st.write(f"Signed in as **{st.session_state.user['email']}**")
-        if st.button("Sign out", key="btn_signout_tab"):
-            st.session_state.user = None
-            st.session_state.profile = None
-            st.experimental_rerun()
-
-        st.markdown("---")
-        st.subheader("Company Profile")
-
-        prof = st.session_state.profile or {}
-        company_name = st.text_input("Company name", value=prof.get("company_name", ""))
-        description  = st.text_area("Company description", value=prof.get("description", ""), height=140)
-        city         = st.text_input("City", value=prof.get("city", "") or "")
-        state        = st.text_input("State", value=prof.get("state", "") or "")
-
-        if st.button("Save profile", key="btn_save_profile_tab"):
-            if not company_name.strip() or not description.strip():
-                st.error("Company name and description are required.")
-            else:
-                upsert_profile(
-                    st.session_state.user["id"],
-                    company_name.strip(),
-                    description.strip(),
-                    city.strip(),
-                    state.strip()
-                )
-                st.session_state.profile = get_profile(st.session_state.user["id"])
-                st.success("Profile saved.")
 # =========================
 # AI helpers
 # =========================
@@ -712,22 +641,136 @@ def bulk_insert_companies(df: pd.DataFrame) -> int:
         insert_company_row(r)
     return len(rows)
 
+def render_auth_screen():
+    st.title("Welcome to GovContract Assistant")
+    st.caption("Sign in or create an account to continue.")
 
+    c1, c2 = st.columns(2)
+
+    # ---- Login
+    with c1:
+        st.subheader("Log in")
+        le = st.text_input("Email", key="login_email_full")
+        lp = st.text_input("Password", type="password", key="login_password_full")
+        if st.button("Log in", key="btn_login_full", use_container_width=True):
+            u = get_user_by_email(le or "")
+            if not u:
+                st.error("No account found with that email.")
+            elif not _check_password(lp or "", u["password_hash"]):
+                st.error("Invalid password.")
+            else:
+                st.session_state.user = {"id": u["id"], "email": u["email"]}
+                st.session_state.profile = get_profile(u["id"])
+                st.session_state.view = "main"
+                st.success("Logged in.")
+                st.experimental_rerun()
+
+    # ---- Sign up
+    with c2:
+        st.subheader("Sign up")
+        se = st.text_input("Email", key="signup_email_full")
+        sp = st.text_input("Password", type="password", key="signup_password_full")
+        sp2 = st.text_input("Confirm password", type="password", key="signup_password2_full")
+        if st.button("Create account", key="btn_signup_full", type="primary", use_container_width=True):
+            if not se or not sp:
+                st.error("Email and password are required.")
+            elif sp != sp2:
+                st.error("Passwords do not match.")
+            elif get_user_by_email(se):
+                st.error("An account with that email already exists.")
+            else:
+                uid = create_user(se, sp)
+                if uid:
+                    # create an empty profile so settings page has something to edit
+                    upsert_profile(uid, company_name="", description="", city="", state="")
+                    st.success("Account created. Please log in on the left.")
+                else:
+                    st.error("Could not create account. Check server logs.")
+
+
+def render_account_settings():
+    st.title("Account Settings")
+
+    if st.session_state.user is None:
+        st.info("Please log in first.")
+        if st.button("Go to Login / Sign up"):
+            st.session_state.view = "auth"
+            st.experimental_rerun()
+        st.stop()
+
+    st.write(f"Signed in as **{st.session_state.user['email']}**")
+    if st.button("Sign out", key="btn_signout_settings"):
+        st.session_state.user = None
+        st.session_state.profile = None
+        st.session_state.view = "auth"
+        st.experimental_rerun()
+
+    st.markdown("---")
+    st.subheader("Company Profile")
+
+    prof = st.session_state.profile or {}
+    company_name = st.text_input("Company name", value=prof.get("company_name", ""))
+    description  = st.text_area("Company description", value=prof.get("description", ""), height=140)
+    city         = st.text_input("City", value=prof.get("city", "") or "")
+    state        = st.text_input("State", value=prof.get("state", "") or "")
+
+    cols = st.columns([1,1,3])
+    with cols[0]:
+        if st.button("Save profile", key="btn_save_profile_settings"):
+            if not company_name.strip() or not description.strip():
+                st.error("Company name and description are required.")
+            else:
+                upsert_profile(
+                    st.session_state.user["id"],
+                    company_name.strip(),
+                    description.strip(),
+                    city.strip(),
+                    state.strip()
+                )
+                st.session_state.profile = get_profile(st.session_state.user["id"])
+                st.success("Profile saved.")
+    with cols[1]:
+        if st.button("Back to app", key="btn_back_to_app"):
+            st.session_state.view = "main"
+            st.experimental_rerun()
+
+
+def render_top_header_with_company_chip():
+    """
+    Shows company name (from saved profile or placeholder), 
+    plus a small gear button to go to Account Settings.
+    """
+    if st.session_state.user is None:
+        return  # no chip until logged in
+
+    prof = st.session_state.profile or {}
+    company_name = (prof.get("company_name") or "").strip() or "Your Company"
+
+    left, right = st.columns([4,1])
+    with left:
+        st.markdown(f"### {company_name}")
+        st.caption(f"Signed in as {st.session_state.user['email']}")
+    with right:
+        if st.button("⚙️ Account Settings", key="btn_go_settings", use_container_width=True):
+            st.session_state.view = "account"
+            st.experimental_rerun()
 
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     # UI should not show these two columns
     return df.drop(columns=[c for c in ["notice_id", "description"] if c in df.columns], errors="ignore")
-# =========================
-# Header & top controls
-# =========================
+
+# ====== ROUTER ======
+if st.session_state.view == "auth":
+    render_auth_screen()
+    st.stop()
+elif st.session_state.view == "account":
+    render_account_settings()
+    st.stop()
+
+# ====== MAIN APP HEADER (only when in "main") ======
 st.title("GovContract Assistant MVP")
 st.caption("Only storing required SAM fields; inserts brand-new notices only (no updates).")
-# --- Logged-in indicator (goes right after st.title / metrics) ---
-u = st.session_state.get("user")
-if u:
-    st.success(f"Signed in as **{u['email']}**")
-else:
-    st.info("You’re not signed in. Use the **Account Settings** tab to log in or create an account.")
+
 colR1, colR2 = st.columns([2,1])
 with colR1:
     st.info("Feed updates automatically every hour.")
@@ -739,6 +782,8 @@ with colR2:
     except Exception:
         st.metric("Rows in DB", 0)
 
+# Company chip + gear to settings
+render_top_header_with_company_chip()
 # =========================
 # Session state
 # =========================
@@ -831,15 +876,25 @@ def ai_rank_solicitations_by_fit(
     out.sort(key=lambda x: x["score"], reverse=True)
     return out[:top_k]
 
+# ====== ROUTER ======
+if st.session_state.view == "auth":
+    render_auth_screen()
+    st.stop()
+
+elif st.session_state.view == "account":
+    render_account_settings()
+    st.stop()
+
+# else: "main" → continue into the app
+
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "1) Fetch Solicitations",
     "2) Supplier Suggestions",
     "3) Proposal Draft",
-    "4) Partner Matches",
-    "Account Settings"
+    "4) Partner Matches"
 ])
 # ---- Tab 1
 with tab1:
