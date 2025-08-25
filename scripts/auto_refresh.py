@@ -24,7 +24,7 @@ if ZoneInfo is not None:
     now_local = datetime.now(ZoneInfo("America/Denver"))
     if now_local.hour not in ALLOWED_LOCAL_HOURS:
         print(f"[skip] It's {now_local} MT; not an allowed hour {sorted(ALLOWED_LOCAL_HOURS)}.")
-        sys.exit(0)
+        #sys.exit(0)
 
 # ---------- Env / secrets ----------
 DB_URL = os.environ.get("SUPABASE_DB_URL", "sqlite:///app.db")
