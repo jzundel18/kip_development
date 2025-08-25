@@ -3,7 +3,7 @@ name: Auto Refresh SAM.gov
 on:
   workflow_dispatch:
     inputs:
-      force:
+      force_run:
         description: 'Force run regardless of local hour'
         type: boolean
         default: false
