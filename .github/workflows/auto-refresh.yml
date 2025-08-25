@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
   schedule:
-    # run every hour; your script will skip unless it's 3/12/19 MT (or forced)
+    # Run every hour; your script will skip unless it's 3/12/19 MT (or forced)
     - cron: '0 * * * *'
 
 jobs:
@@ -27,7 +27,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install deps
         run: |
@@ -39,16 +39,14 @@ jobs:
           fi
 
       - name: Preflight & run auto refresh (verbose)
-        shell: bash
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          SAM_KEYS:        ${{ secrets.SAM_KEYS }}
-          # convert the checkbox string ("true"/"false") into 1/empty
-          FORCE_RUN:       ${{ github.event.inputs.force_run == 'true' && '1' || '' }}
-          DAYS_BACK:       1
-          PYTHONUNBUFFERED: "1"
+          # Pass the checkbox straight through as "true"/"false";
+          # your script normalizes FORCE_RUN internally.
+          FORCE_RUN:       ${{ github.event.inputs.force_run }}
+          DAYS_BACK:       '1'
+          PYTHONUNBUFFERED: '1'
         run: |
-          set -xeuo pipefail
+          set -euo pipefail
           echo "=== Preflight ==="
           date
           echo "FORCE_RUN=${FORCE_RUN}"
@@ -58,12 +56,7 @@ jobs:
           echo "Python:"
           python -V
           echo "Path check:"
-          python - <<'PY'
-import sys, os
-print("sys.path[:3] =", sys.path[:3])
-print("has scripts/auto_refresh.py:", os.path.exists("scripts/auto_refresh.py"))
-print("has get_relevant_solicitations.py:", os.path.exists("get_relevant_solicitations.py"))
-PY
+          python -c "import sys,os; print('sys.path0=',sys.path[0]); print('has scripts/auto_refresh.py=', os.path.exists('scripts/auto_refresh.py')); print('has get_relevant_solicitations.py=', os.path.exists('get_relevant_solicitations.py'))"
           echo "=== Running script (12m timeout) ==="
           timeout 12m python -u scripts/auto_refresh.py
           echo "=== Script finished ==="
