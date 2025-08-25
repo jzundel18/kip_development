@@ -395,7 +395,7 @@ def map_record_allowed_fields(
     # response_date: prefer SAM's dueDate (via _pick_response_date)
     response_date = _pick_response_date(rec, detail)
 
-    # description: prefer inline; if missing/URL, use detail, then noticedesc
+        # description: prefer inline; if missing/URL, use detail, then noticedesc
     description = _first_nonempty(rec, "description", "synopsis", default="")
 
     def _looks_like_placeholder_or_url(t: str) -> bool:
@@ -414,7 +414,13 @@ def map_record_allowed_fields(
                     break
         if not detail_text and fetch_desc and api_keys and notice_id != "None":
             detail_text = fetch_notice_description(notice_id, api_keys)
-        description = detail_text if detail_text else "None"
+
+        # ⬇️ IMPORTANT: if still nothing, make it an empty string (not "None")
+        description = detail_text if detail_text else ""
+
+    # Final safety: normalize placeholders that may have slipped through
+    if description and description.strip().lower() in ("none", "n/a", "na"):
+        description = ""
 
     return {
         "notice_id":            notice_id,
