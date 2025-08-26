@@ -16,7 +16,7 @@ SQLModel.metadata.clear()
 # =========================
 # Streamlit page
 # =========================
-st.set_page_config(page_title="GovContract Assistant MVP", layout="wide")
+st.set_page_config(page_title="KIP", layout="wide")
 
 # --- Simple view router ---
 # views: "auth", "main", "account"
@@ -664,7 +664,7 @@ def bulk_insert_companies(df: pd.DataFrame) -> int:
     return len(rows)
 
 def render_auth_screen():
-    st.title("Welcome to GovContract Assistant")
+    st.title("Welcome to KIP")
     st.caption("Sign in or create an account to continue.")
 
     c1, c2 = st.columns(2)
