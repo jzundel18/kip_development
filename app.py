@@ -1003,7 +1003,11 @@ if "vendor_suggestions" not in st.session_state:
     st.session_state.vendor_suggestions = {}  # { notice_id: DataFrame }
 # track which Internal Use expanders are open (per notice)
 if "expander_open" not in st.session_state:
-    st.session_state.expander_open = {}  # { notice_id: bool }
+    st.session_state.expander_open = {}
+# debug: per-solicitation serp/raw
+if "vendor_debug" not in st.session_state:
+    st.session_state.vendor_debug = {}
+  # { notice_id: bool }
 if "iu_results" not in st.session_state:
     st.session_state.iu_results = None    # {"top_df": DataFrame, "reason_by_id": dict}
 if "iu_key_salt" not in st.session_state:
