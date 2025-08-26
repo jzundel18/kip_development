@@ -1552,7 +1552,10 @@ with tab5:
                 nid = str(getattr(row, "notice_id", ""))
 
                 # NOTE: st.expander does NOT support key= — do NOT pass a key here
-                with st.expander(f"{idx}. {hdr}", expanded=False):
+                with st.expander(
+                    f"{idx}. {hdr}",
+                    expanded=st.session_state.get("expander_open", {}).get(nid, False)
+                ):                    
                     # Create a two-column layout so the vendors can sit next to the button
                     left, right = st.columns([2, 1])
 
@@ -1585,6 +1588,11 @@ with tab5:
                             }
                             vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
                             st.session_state.vendor_suggestions[nid] = vendors_df  # cache per-notice
+
+                            # keep this solicitation's expander open after rerun
+                            if "expander_open" not in st.session_state:
+                                st.session_state.expander_open = {}
+                            st.session_state.expander_open[nid] = True
 
                     with right:
                         vend_df = st.session_state.vendor_suggestions.get(nid)
