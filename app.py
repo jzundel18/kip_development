@@ -908,6 +908,9 @@ if "sol_df" not in st.session_state:
     st.session_state.sol_df = None
 if "sup_df" not in st.session_state:
     st.session_state.sup_df = None
+# cache: per-solicitation vendor suggestions (Internal Use tab)
+if "vendor_suggestions" not in st.session_state:
+    st.session_state.vendor_suggestions = {}  # { notice_id: DataFrame }
 
 # =========================
 # AI ranker (used for the expander section)
@@ -1418,6 +1421,62 @@ with tab5:
     with c2:
         run_services = st.button("Solicitations for Services", type="primary", use_container_width=True)
 
+    def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
+        """
+        Uses SerpAPI via find_relevant_suppliers.get_suppliers to find vendors
+        for a SINGLE solicitation (sol dict). Returns a DataFrame with up to top_n rows.
+        We try to surface: name, website, location, justification/reason.
+        """
+        try:
+            results = fs.get_suppliers(
+                solicitations=[sol],                    # single-item list
+                our_recommended_suppliers=[],          # none for this quick lookup
+                our_not_recommended_suppliers=[],      # none for this quick lookup
+                Max_Google_Results=int(max_google),
+                OpenAi_API_Key=OPENAI_API_KEY,
+                Serp_API_Key=SERP_API_KEY
+            )
+            df = pd.DataFrame(results)
+
+            if df.empty:
+                return df
+
+            # If there's a score column, sort by it; otherwise leave as-is
+            score_col = None
+            for cand in ["score", "ai_score", "relevance", "confidence"]:
+                if cand in df.columns:
+                    score_col = cand
+                    break
+            if score_col:
+                df = df.sort_values(score_col, ascending=False)
+
+            # Normalize some common columns so the renderer is robust
+            # (fallbacks cover a few likely names that get_suppliers might emit)
+            def pick(d, *names, default=""):
+                for n in names:
+                    if n in d and pd.notna(d[n]):
+                        return str(d[n]).strip()
+                return default
+
+            # Build a cleaned view with standard columns we’ll display
+            cleaned = []
+            for _, r in df.head(top_n).iterrows():
+                rd = r.to_dict()
+                cleaned.append({
+                    "name":       pick(rd, "supplier_name", "name", "vendor", "company"),
+                    "website":    pick(rd, "website", "url", "link"),
+                    "location":   ", ".join([x for x in [
+                                    pick(rd, "city", "supplier_city", "location_city"),
+                                    pick(rd, "state", "supplier_state", "location_state")
+                                    ] if x]),
+                    "reason":     pick(rd, "reason", "why_matched", "justification", "notes"),
+                })
+            return pd.DataFrame(cleaned)
+
+        except Exception as e:
+            st.warning(f"Vendor lookup failed: {e}")
+            return pd.DataFrame(columns=["name","website","location","reason"])
+
     # Helper to run preset search
     def _run_internal_preset(preset_desc: str, negative_hint: str = ""):
         try:
@@ -1493,6 +1552,49 @@ with tab5:
                     if reason:
                         st.markdown("**Why this matched (AI):**")
                         st.info(reason)
+
+                    # --- Vendor finder button (SerpAPI) ---
+                    nid = str(getattr(row, "notice_id", ""))
+                    btn_key = f"find_vendors_{nid}"
+                    if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                        # Build a solicitation dict to send to the supplier finder
+                        sol_dict = {
+                            "notice_id": nid,
+                            "title": getattr(row, "title", ""),
+                            "description": getattr(row, "description", ""),
+                            "naics_code": getattr(row, "naics_code", ""),
+                            "set_aside_code": getattr(row, "set_aside_code", ""),
+                            "response_date": getattr(row, "response_date", ""),
+                            "posted_date": getattr(row, "posted_date", ""),
+                            "link": getattr(row, "link", ""),
+                        }
+                        vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
+                        st.session_state.vendor_suggestions[nid] = vendors_df  # cache it
+
+                    # If we have cached vendors for this notice, render them
+                    vend_df = st.session_state.vendor_suggestions.get(nid)
+                    if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                        st.markdown("**Top vendor candidates (via SerpAPI):**")
+                        for j, v in vend_df.iterrows():
+                            name = (v.get("name") or "").strip() or "Unnamed vendor"
+                            website = (v.get("website") or "").strip()
+                            location = (v.get("location") or "").strip()
+                            reason_txt = (v.get("reason") or "").strip()
+
+                            # Name + Website
+                            if website:
+                                st.markdown(f"- **[{name}]({website})**")
+                            else:
+                                st.markdown(f"- **{name}**")
+
+                            # Location
+                            if location:
+                                st.caption(location)
+
+                            # Brief justification
+                            if reason_txt:
+                                st.write(reason_txt)
+
 
             # Make these results available to the Supplier Suggestions tab if desired
             st.session_state.sol_df = top_df.copy()
