@@ -30,6 +30,7 @@ if "view" not in st.session_state:
 # =========================
 # Small helpers
 # =========================
+
 def normalize_naics_input(text_in: str) -> list[str]:
     if not text_in:
         return []
@@ -540,7 +541,6 @@ COLS_TO_SAVE = [
 ]
 
 DISPLAY_COLS = [
-    # For UI we will *exclude* notice_id and description, but they remain selectable below
     "pulled_at",
     "solicitation_number",
     "notice_type",
@@ -548,8 +548,7 @@ DISPLAY_COLS = [
     "response_date",
     "naics_code",
     "set_aside_code",
-    "link",
-    # (notice_id and description are intentionally not shown in UI, but exist in the DF).
+    "sam_url",   # swapped in for link
 ]
 
 def insert_new_records_only(records) -> int:
@@ -570,6 +569,8 @@ def insert_new_records_only(records) -> int:
             continue
         row = {k: (m.get(k) or "") for k in COLS_TO_SAVE}
         row["pulled_at"] = now_iso
+        # Normalize link to a human-facing URL
+        row["link"] = make_sam_public_url(row["notice_id"], row.get("link"))
         rows.append(row)
 
     if not rows:
@@ -757,7 +758,18 @@ def render_account_settings():
 
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     # UI should not show these two columns
-    return df.drop(columns=[c for c in ["notice_id", "description"] if c in df.columns], errors="ignore")
+    return df.drop(columns=[c for c in ["notice_id", "description", "link"] if c in df.columns], errors="ignore")
+
+def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
+    """
+    Return a human-viewable SAM.gov URL for this notice.
+    If the saved link is already a public web URL (not the API), keep it.
+    Otherwise build https://sam.gov/opp/<notice_id>/view
+    """
+    if link and isinstance(link, str) and "api.sam.gov" not in link:
+        return link
+    nid = (notice_id or "").strip()
+    return f"https://sam.gov/opp/{nid}/view" if nid else "https://sam.gov/"
 
 # ====== ROUTER ======
 if st.session_state.view == "auth":
@@ -953,6 +965,14 @@ with tab1:
                         show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"].fillna(""))
                         st.session_state.sol_df = show_df
                         st.subheader(f"Solicitations ({len(show_df)})")
+
+                        # Add normalized public SAM.gov URL
+                        show_df = show_df.copy()
+                        show_df["sam_url"] = show_df.apply(
+                            lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")),
+                            axis=1
+                        )
+
                         st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
                         st.download_button(
                             "Download filtered as CSV",
@@ -982,6 +1002,14 @@ with tab1:
                             show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"].fillna(""))
                             st.session_state.sol_df = show_df
                             st.subheader(f"Solicitations ({len(show_df)})")
+
+                            # Add normalized public SAM.gov URL
+                            show_df = show_df.copy()
+                            show_df["sam_url"] = show_df.apply(
+                                lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")),
+                                axis=1
+                            )
+
                             st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
                             st.download_button(
                                 "Download filtered as CSV",
@@ -1018,9 +1046,8 @@ with tab1:
                                     st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
                                     st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
                                     st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                                    link = getattr(row, "link", "")
-                                    if link:
-                                        st.write(f"**Link:** {link}")
+                                    link = make_sam_public_url(str(getattr(row, "notice_id", "")), getattr(row, "link", ""))
+                                    st.write(f"[Open on SAM.gov]({link})")
                                     reason = reason_by_id.get(str(getattr(row, "notice_id", "")), "")
                                     if reason:
                                         st.markdown("**Why this matched (AI):**")
@@ -1052,6 +1079,14 @@ with tab1:
 
                     st.session_state.sol_df = show_df
                     st.subheader(f"Solicitations ({len(show_df)})")
+
+                    # Add normalized public SAM.gov URL
+                    show_df = show_df.copy()
+                    show_df["sam_url"] = show_df.apply(
+                        lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")),
+                        axis=1
+                    )
+
                     st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
                     st.download_button(
                         "Download filtered as CSV",

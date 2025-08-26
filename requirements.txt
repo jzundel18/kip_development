@@ -12,3 +12,4 @@ sqlalchemy
 psycopg2-binary
 pytz
 bcrypt>=4.1.2
+streamlit-cookies-manager>=0.2.0
