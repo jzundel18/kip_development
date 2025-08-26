@@ -1547,101 +1547,66 @@ with tab5:
             top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
 
             st.success(f"Top {len(top_df)} matches by relevance:")
-            for i, row in enumerate(top_df.itertuples(index=False), start=1):
+            for idx, row in enumerate(top_df.itertuples(index=False), start=1):
                 hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
-                with st.expander(f"{i}. {hdr}"):
-                    st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
-                    st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                    st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
-                    st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                    st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                    link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
-                    st.write(f"[Open on SAM.gov]({link})")
-                    reason = reason_by_id.get(str(getattr(row, "notice_id", "")), "")
-                    if reason:
-                        st.markdown("**Why this matched (AI):**")
-                        st.info(reason)
+                nid = str(getattr(row, "notice_id", ""))
 
-                    for i, row in enumerate(top_df.itertuples(index=False), start=1):
-                        hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
-                        nid = str(getattr(row, "notice_id", ""))
+                # NOTE: st.expander does NOT support key= — do NOT pass a key here
+                with st.expander(f"{idx}. {hdr}", expanded=False):
+                    # Create a two-column layout so the vendors can sit next to the button
+                    left, right = st.columns([2, 1])
 
-                        # unique keys per run/preset
-                        exp_key = f"iu_exp_{nid}_{i}_{key_salt}"
-                        with st.expander(f"{i}. {hdr}", expanded=False, key=exp_key):
-                            st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
-                            st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                            st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
-                            st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                            st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                            link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
-                            st.write(f"[Open on SAM.gov]({link})")
-                            reason = reason_by_id.get(str(getattr(row, "notice_id", "")), "")
-                            if reason:
-                                st.markdown("**Why this matched (AI):**")
-                                st.info(reason)
+                    with left:
+                        st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                        st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
+                        st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                        st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
+                        st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+                        link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                        st.write(f"[Open on SAM.gov]({link})")
 
-                            # --- Vendor finder button (SerpAPI) ---
-                            btn_key = f"iu_find_vendors_{nid}_{i}_{key_salt}"  # <-- salt added here
-                            if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                                sol_dict = {
-                                    "notice_id": nid,
-                                    "title": getattr(row, "title", ""),
-                                    "description": getattr(row, "description", ""),
-                                    "naics_code": getattr(row, "naics_code", ""),
-                                    "set_aside_code": getattr(row, "set_aside_code", ""),
-                                    "response_date": getattr(row, "response_date", ""),
-                                    "posted_date": getattr(row, "posted_date", ""),
-                                    "link": getattr(row, "link", ""),
-                                }
-                                vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
-                                st.session_state.vendor_suggestions[nid] = vendors_df  # cache it
+                        reason = reason_by_id.get(nid, "")
+                        if reason:
+                            st.markdown("**Why this matched (AI):**")
+                            st.info(reason)
 
-                            vend_df = st.session_state.vendor_suggestions.get(nid)
-                            if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
-                                st.markdown("**Top vendor candidates (via SerpAPI):**")
-                                for j, v in vend_df.iterrows():
-                                    name = (v.get("name") or "").strip() or "Unnamed vendor"
-                                    website = (v.get("website") or "").strip()
-                                    location = (v.get("location") or "").strip()
-                                    reason_txt = (v.get("reason") or "").strip()
+                        # --- Vendor finder button (SerpAPI) ---
+                        btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"  # unique per notice + run
+                        if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                            sol_dict = {
+                                "notice_id": nid,
+                                "title": getattr(row, "title", ""),
+                                "description": getattr(row, "description", ""),
+                                "naics_code": getattr(row, "naics_code", ""),
+                                "set_aside_code": getattr(row, "set_aside_code", ""),
+                                "response_date": getattr(row, "response_date", ""),
+                                "posted_date": getattr(row, "posted_date", ""),
+                                "link": getattr(row, "link", ""),
+                            }
+                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
+                            st.session_state.vendor_suggestions[nid] = vendors_df  # cache per-notice
 
-                                    if website:
-                                        st.markdown(f"- **[{name}]({website})**")
-                                    else:
-                                        st.markdown(f"- **{name}**")
+                    with right:
+                        vend_df = st.session_state.vendor_suggestions.get(nid)
+                        if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                            st.markdown("**Vendor candidates**")
+                            for j, v in vend_df.iterrows():
+                                name = (v.get("name") or "").strip() or "Unnamed vendor"
+                                website = (v.get("website") or "").strip()
+                                location = (v.get("location") or "").strip()
+                                reason_txt = (v.get("reason") or "").strip()
 
-                                    if location:
-                                        st.caption(location)
-                                    if reason_txt:
-                                        st.write(reason_txt)
-
-                            with right:
-                                vend_df = st.session_state.vendor_suggestions.get(nid)
-                                if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
-                                    st.markdown("**Vendor candidates**")
-                                    for j, v in vend_df.iterrows():
-                                        name = (v.get("name") or "").strip() or "Unnamed vendor"
-                                        website = (v.get("website") or "").strip()
-                                        location = (v.get("location") or "").strip()
-                                        reason_txt = (v.get("reason") or "").strip()
-
-                                        # Name + Website (as a single bullet)
-                                        if website:
-                                            st.markdown(f"- **[{name}]({website})**")
-                                        else:
-                                            st.markdown(f"- **{name}**")
-
-                                        # Location
-                                        if location:
-                                            st.caption(location)
-
-                                        # Brief justification
-                                        if reason_txt:
-                                            st.write(reason_txt)
+                                if website:
+                                    st.markdown(f"- **[{name}]({website})**")
                                 else:
-                                    st.caption("No vendors yet. Click the button to fetch.")
+                                    st.markdown(f"- **{name}**")
 
+                                if location:
+                                    st.caption(location)
+                                if reason_txt:
+                                    st.write(reason_txt)
+                        else:
+                            st.caption("No vendors yet. Click the button to fetch.")
             # Make these results available to the Supplier Suggestions tab if desired
             st.session_state.sol_df = top_df.copy()
 
