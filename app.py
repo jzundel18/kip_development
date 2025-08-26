@@ -1104,82 +1104,82 @@ with tab1:
 
 # ---- Tab 2
 with tab2:
-    st.header("Find Supplier Suggestions")
-    st.write("This uses your solicitation rows + Google results (via SerpAPI) to propose suppliers and rough quotes.")
-    our_rec = st.text_input("Favored suppliers (comma-separated)", value="")
-    our_not = st.text_input("Do-not-use suppliers (comma-separated)", value="")
-    max_google = st.number_input("Max Google results per item", min_value=1, max_value=20, value=5)
+    st.header("This feature is in development...")
+    # st.write("This uses your solicitation rows + Google results (via SerpAPI) to propose suppliers and rough quotes.")
+    # our_rec = st.text_input("Favored suppliers (comma-separated)", value="")
+    # our_not = st.text_input("Do-not-use suppliers (comma-separated)", value="")
+    # max_google = st.number_input("Max Google results per item", min_value=1, max_value=20, value=5)
 
-    if st.button("Run supplier suggestion", type="primary"):
-        if st.session_state.sol_df is None:
-            st.error("Load or fetch solicitations in Tab 1 first.")
-        else:
-            sol_dicts = st.session_state.sol_df.to_dict(orient="records")
-            favored = [x.strip() for x in our_rec.split(",") if x.strip()]
-            not_favored = [x.strip() for x in our_not.split(",") if x.strip()]
-            try:
-                results = fs.get_suppliers(
-                    solicitations=sol_dicts,
-                    our_recommended_suppliers=favored,
-                    our_not_recommended_suppliers=not_favored,
-                    Max_Google_Results=int(max_google),
-                    OpenAi_API_Key=OPENAI_API_KEY,
-                    Serp_API_Key=SERP_API_KEY
-                )
-                sup_df = pd.DataFrame(results)
-                st.session_state.sup_df = sup_df
-                st.success(f"Generated {len(sup_df)} supplier rows.")
-            except Exception as e:
-                st.exception(e)
+    # if st.button("Run supplier suggestion", type="primary"):
+    #     if st.session_state.sol_df is None:
+    #         st.error("Load or fetch solicitations in Tab 1 first.")
+    #     else:
+    #         sol_dicts = st.session_state.sol_df.to_dict(orient="records")
+    #         favored = [x.strip() for x in our_rec.split(",") if x.strip()]
+    #         not_favored = [x.strip() for x in our_not.split(",") if x.strip()]
+    #         try:
+    #             results = fs.get_suppliers(
+    #                 solicitations=sol_dicts,
+    #                 our_recommended_suppliers=favored,
+    #                 our_not_recommended_suppliers=not_favored,
+    #                 Max_Google_Results=int(max_google),
+    #                 OpenAi_API_Key=OPENAI_API_KEY,
+    #                 Serp_API_Key=SERP_API_KEY
+    #             )
+    #             sup_df = pd.DataFrame(results)
+    #             st.session_state.sup_df = sup_df
+    #             st.success(f"Generated {len(sup_df)} supplier rows.")
+    #         except Exception as e:
+    #             st.exception(e)
 
-    if st.session_state.sup_df is not None:
-        st.subheader("Supplier suggestions")
-        st.dataframe(st.session_state.sup_df, use_container_width=True)
-        st.download_button(
-            "Download as CSV",
-            st.session_state.sup_df.to_csv(index=False).encode("utf-8"),
-            file_name="supplier_suggestions.csv",
-            mime="text/csv"
-        )
+    # if st.session_state.sup_df is not None:
+    #     st.subheader("Supplier suggestions")
+    #     st.dataframe(st.session_state.sup_df, use_container_width=True)
+    #     st.download_button(
+    #         "Download as CSV",
+    #         st.session_state.sup_df.to_csv(index=False).encode("utf-8"),
+    #         file_name="supplier_suggestions.csv",
+    #         mime="text/csv"
+        # )
 
 # ---- Tab 3
 with tab3:
-    st.header("Generate Proposal Draft")
-    st.write("Select one or more supplier-suggestion rows and generate a proposal draft using your templates.")
-    bid_template = st.text_input("Bid template file path (DOCX or TXT)", value="/mnt/data/BID_TEMPLATE.docx")
-    solinfo_template = st.text_input("Solicitation info template (DOCX or TXT)", value="/mnt/data/SOLICITATION_INFO_TEMPLATE.docx")
-    out_dir = st.text_input("Output directory", value="/mnt/data/proposals")
+    st.header("This feature is in development...")
+    # st.write("Select one or more supplier-suggestion rows and generate a proposal draft using your templates.")
+    # bid_template = st.text_input("Bid template file path (DOCX or TXT)", value="/mnt/data/BID_TEMPLATE.docx")
+    # solinfo_template = st.text_input("Solicitation info template (DOCX or TXT)", value="/mnt/data/SOLICITATION_INFO_TEMPLATE.docx")
+    # out_dir = st.text_input("Output directory", value="/mnt/data/proposals")
 
-    uploaded_sup2 = st.file_uploader("Or upload supplier_suggestions.csv here", type=["csv"], key="sup_upload2")
-    if uploaded_sup2 is not None:
-        try:
-            df_upload = pd.read_csv(uploaded_sup2)
-            st.session_state.sup_df = df_upload
-            st.success(f"Loaded {len(df_upload)} supplier suggestions from upload.")
-        except Exception as e:
-            st.error(f"Failed to read CSV: {e}")
+    # uploaded_sup2 = st.file_uploader("Or upload supplier_suggestions.csv here", type=["csv"], key="sup_upload2")
+    # if uploaded_sup2 is not None:
+    #     try:
+    #         df_upload = pd.read_csv(uploaded_sup2)
+    #         st.session_state.sup_df = df_upload
+    #         st.success(f"Loaded {len(df_upload)} supplier suggestions from upload.")
+    #     except Exception as e:
+    #         st.error(f"Failed to read CSV: {e}")
 
-    if st.session_state.sup_df is not None:
-        st.dataframe(st.session_state.sup_df, use_container_width=True)
-        idxs = st.multiselect(
-            "Pick rows to draft",
-            options=list(range(len(st.session_state.sup_df))),
-            help="Leave empty to draft all"
-        )
-        if st.button("Generate proposal(s)", type="primary"):
-            os.makedirs(out_dir, exist_ok=True)
-            try:
-                df_sel = st.session_state.sup_df.iloc[idxs] if idxs else st.session_state.sup_df
-                gp.validate_supplier_and_write_proposal(
-                    df=df_sel,
-                    output_directory=out_dir,
-                    Open_AI_API_Key=OPENAI_API_KEY,
-                    BID_TEMPLATE_FILE=bid_template,
-                    SOl_INFO_TEMPLATE=solinfo_template
-                )
-                st.success(f"Drafted proposals to {out_dir}.")
-            except Exception as e:
-                st.exception(e)
+    # if st.session_state.sup_df is not None:
+    #     st.dataframe(st.session_state.sup_df, use_container_width=True)
+    #     idxs = st.multiselect(
+    #         "Pick rows to draft",
+    #         options=list(range(len(st.session_state.sup_df))),
+    #         help="Leave empty to draft all"
+    #     )
+    #     if st.button("Generate proposal(s)", type="primary"):
+    #         os.makedirs(out_dir, exist_ok=True)
+    #         try:
+    #             df_sel = st.session_state.sup_df.iloc[idxs] if idxs else st.session_state.sup_df
+    #             gp.validate_supplier_and_write_proposal(
+    #                 df=df_sel,
+    #                 output_directory=out_dir,
+    #                 Open_AI_API_Key=OPENAI_API_KEY,
+    #                 BID_TEMPLATE_FILE=bid_template,
+    #                 SOl_INFO_TEMPLATE=solinfo_template
+    #             )
+    #             st.success(f"Drafted proposals to {out_dir}.")
+    #         except Exception as e:
+    #             st.exception(e)
 # ---- Tab 4
 with tab4:
     st.header("Partner Matches (from AI-ranked results)")
