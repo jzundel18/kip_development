@@ -19,6 +19,8 @@ from datetime import timedelta
 from streamlit_cookies_manager import EncryptedCookieManager
 import warnings
 from sqlalchemy.exc import SAWarning
+import requests
+from urllib.parse import urlparse
 
 warnings.filterwarnings(
     "ignore",
@@ -66,6 +68,81 @@ def _s(v) -> str:
     except Exception:
         pass
     return "" if v is None else str(v)
+
+AGGREGATOR_HOST_DENYLIST = {
+    "sam.gov","beta.sam.gov","govinfo.gov","grants.gov","login.gov",
+    "linkedin.com","facebook.com","twitter.com","x.com","instagram.com",
+    "youtube.com","bloomberg.com","wikipedia.org","indeed.com","glassdoor.com",
+    "dnb.com","opencorporates.com","zoominfo.com","rocketreach.co","crunchbase.com"
+}
+
+def _host(u: str) -> str:
+    try:
+        h = urlparse(u).netloc.lower()
+        # strip common prefixes
+        for p in ("www.", "m.", "en.", "amp."):
+            if h.startswith(p): 
+                h = h[len(p):]
+        return h
+    except Exception:
+        return ""
+
+def _companyish_name_from_result(title: str, link: str) -> str:
+    """Cheap heuristic: prefer title; fall back to domain-based name."""
+    t = (title or "").strip()
+    if t:
+        # trim long SEO tails
+        t = re.split(r"[\|\-–·•»]+", t, maxsplit=1)[0].strip()
+    if t:
+        return t[:80]
+    h = _host(link)
+    if not h:
+        return "Unknown company"
+    base = h.split(":")[0].split(".")
+    if len(base) >= 2:
+        core = base[-2]  # example: acme from acme.com
+    else:
+        core = base[0]
+    return core.capitalize()[:80]
+
+def _fallback_serpapi_fetch(query: str, serp_key: str, max_results: int = 10) -> list[dict]:
+    """
+    Minimal SerpAPI call: returns list of {title, link, snippet}.
+    We filter obvious aggregator/non-vendor domains.
+    """
+    url = "https://serpapi.com/search.json"
+    params = {
+        "engine": "google",
+        "q": query,
+        "num": max_results,
+        "api_key": serp_key,
+    }
+    r = requests.get(url, params=params, timeout=25)
+    r.raise_for_status()
+    data = r.json() if r.content else {}
+    items = []
+    for row in (data.get("organic_results") or []):
+        title = (row.get("title") or "").strip()
+        link  = (row.get("link") or "").strip()
+        if not link:
+            continue
+        h = _host(link)
+        if not h or any(h.endswith(bad) or h == bad for bad in AGGREGATOR_HOST_DENYLIST):
+            continue
+        items.append({
+            "title": title,
+            "link": link,
+            "snippet": (row.get("snippet") or "").strip(),
+            "host": h,
+        })
+    # de-dupe by host
+    seen, uniq = set(), []
+    for it in items:
+        if it["host"] in seen:
+            continue
+        seen.add(it["host"])
+        uniq.append(it)
+    return uniq
 
 def normalize_naics_input(text_in: str) -> list[str]:
     if not text_in:
@@ -1427,11 +1504,11 @@ with tab5:
 
     def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
         """
-        Uses SerpAPI via find_relevant_suppliers.get_suppliers to find vendors
-        for a SINGLE solicitation (sol dict). Returns a DataFrame with up to top_n rows.
-        Columns: name, website, location, reason.
+        1) Try your original helper (fs.get_suppliers)
+        2) If it throws (e.g., 'Parser must be a string...' from dateutil), fallback to a direct SerpAPI query we control.
+        Returns DataFrame with columns: name, website, location, reason
         """
-        # normalize all fields to strings before sending to fs.get_suppliers
+        # ---- normalize all inputs to safe strings
         sol_norm = {
             "notice_id":     _s(sol.get("notice_id")),
             "title":         _s(sol.get("title")),
@@ -1443,11 +1520,12 @@ with tab5:
             "link":          _s(sol.get("link")),
         }
 
-        # Minimal requirement: give the search something to latch onto
+        # guard: need some text to search
         if not sol_norm["title"] and not sol_norm["description"]:
             st.warning("This solicitation has no title/description text to search; skipping vendor lookup.")
             return pd.DataFrame(columns=["name","website","location","reason"])
 
+        # ---- 1) TRY your original helper
         try:
             results = fs.get_suppliers(
                 solicitations=[sol_norm],
@@ -1457,52 +1535,82 @@ with tab5:
                 OpenAi_API_Key=OPENAI_API_KEY,
                 Serp_API_Key=SERP_API_KEY,
             )
+            df = pd.DataFrame(results) if isinstance(results, (list, tuple)) else pd.DataFrame()
+            if not df.empty:
+                score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
+                if score_col:
+                    df = df.sort_values(score_col, ascending=False)
+
+                def pick(d, *names, default=""):
+                    for n in names:
+                        if n in d and pd.notna(d[n]) and str(d[n]).strip():
+                            return str(d[n]).strip()
+                    return default
+
+                cleaned = []
+                for _, r in df.head(top_n).iterrows():
+                    rd = r.to_dict()
+                    name     = pick(rd, "supplier_name", "name", "vendor", "company")
+                    website  = pick(rd, "website", "url", "link")
+                    location = ", ".join([x for x in [
+                        pick(rd, "city", "supplier_city", "location_city"),
+                        pick(rd, "state", "supplier_state", "location_state"),
+                    ] if x])
+                    reason   = pick(rd, "reason", "why_matched", "justification", "notes")
+                    if not reason and name:
+                        reason = _ai_vendor_why(
+                            vendor_name=name,
+                            solicitation_title=sol_norm["title"],
+                            solicitation_desc=sol_norm["description"],
+                            api_key=OPENAI_API_KEY,
+                        )
+                    cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
+                if cleaned:
+                    return pd.DataFrame(cleaned)
+
         except Exception as e:
-            # Surface the *first* bad value to help debugging
-            st.warning(
-                f"Vendor lookup failed: {e}. "
-                f"(title='{sol_norm['title'][:60]}', response_date='{sol_norm['response_date']}')"
+            # NOTE: This is the path you're currently hitting
+            st.info(f"Primary supplier finder failed; using direct SerpAPI fallback. ({e})")
+
+        # ---- 2) FALLBACK: direct SerpAPI (no fragile date parsing)
+        query_bits = [sol_norm["title"]]
+        if sol_norm["naics_code"]:
+            query_bits.append(f"NAICS {sol_norm['naics_code']}")
+        # steer the search a bit toward vendors
+        query_bits.append("manufacturer supplier vendor")
+        q = " ".join([b for b in query_bits if b]).strip()
+
+        try:
+            raw = _fallback_serpapi_fetch(q, SERP_API_KEY, max_results=max(10, top_n*3))
+        except Exception as e:
+            st.warning(f"SerpAPI fallback failed: {e}")
+            return pd.DataFrame(columns=["name","website","location","reason"])
+
+        rows = []
+        for it in raw[: max(10, top_n*3)]:  # look at a few; we’ll prune to top_n later
+            website = it["link"]
+            name = _companyish_name_from_result(it["title"], website)
+            # 1-sentence reason
+            reason = _ai_vendor_why(
+                vendor_name=name,
+                solicitation_title=sol_norm["title"],
+                solicitation_desc=sol_norm["description"],
+                api_key=OPENAI_API_KEY,
             )
-            return pd.DataFrame(columns=["name","website","location","reason"])
+            rows.append({"name": name, "website": website, "location": "", "reason": reason})
 
-        df = pd.DataFrame(results) if isinstance(results, (list, tuple)) else pd.DataFrame()
-        if df.empty:
-            return pd.DataFrame(columns=["name","website","location","reason"])
+        # de-dupe by website host, keep first 3
+        out, seen = [], set()
+        for r in rows:
+            h = _host(r["website"])
+            if not h or h in seen:
+                continue
+            seen.add(h)
+            out.append(r)
+            if len(out) >= top_n:
+                break
 
-        # Sort by any score-like column if present
-        score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
-        if score_col:
-            df = df.sort_values(score_col, ascending=False)
-
-        def pick(d, *names, default=""):
-            for n in names:
-                if n in d and pd.notna(d[n]) and str(d[n]).strip():
-                    return str(d[n]).strip()
-            return default
-
-        cleaned = []
-        for _, r in df.head(top_n).iterrows():
-            rd = r.to_dict()
-            name     = pick(rd, "supplier_name", "name", "vendor", "company")
-            website  = pick(rd, "website", "url", "link")
-            location = ", ".join([x for x in [
-                pick(rd, "city", "supplier_city", "location_city"),
-                pick(rd, "state", "supplier_state", "location_state"),
-            ] if x])
-            reason   = pick(rd, "reason", "why_matched", "justification", "notes")
-
-            # Fallback: quick AI sentence if tool didn’t return a reason
-            if not reason and name:
-                reason = _ai_vendor_why(
-                    vendor_name=name,
-                    solicitation_title=sol_norm["title"],
-                    solicitation_desc=sol_norm["description"],
-                    api_key=OPENAI_API_KEY,
-                )
-
-            cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
-
-        return pd.DataFrame(cleaned)
+        return pd.DataFrame(out, columns=["name","website","location","reason"])
 
     def _compute_internal_results(preset_desc: str, negative_hint: str = "") -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
