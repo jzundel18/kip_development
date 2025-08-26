@@ -17,7 +17,15 @@ import hashlib
 import models
 from datetime import timedelta
 from streamlit_cookies_manager import EncryptedCookieManager
+import warnings
+from sqlalchemy.exc import SAWarning
 
+warnings.filterwarnings(
+    "ignore",
+    message="This declarative base already contains a class with the same class name and module name",
+    category=SAWarning,
+)
+SQLModel.metadata.clear()
 # =========================
 # Streamlit page
 # =========================
@@ -294,7 +302,7 @@ def _issue_remember_me_token(user_id: int, days: int = None) -> str:
     days = days or int(get_secret("COOKIE_DAYS", 30))
     raw = pysecrets.token_urlsafe(32)
     tok_hash = _hash_token(raw)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     exp = now + timedelta(days=days)
     with engine.begin() as conn:
         conn.execute(sa.text("""
@@ -323,7 +331,11 @@ def _validate_remember_me_token(raw: str) -> Optional[int]:
     if not row:
         return None
     try:
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        exp = datetime.fromisoformat(row["expires_at"])
+        # normalize to aware UTC if stored naive
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
             return None
     except Exception:
         return None

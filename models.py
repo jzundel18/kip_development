@@ -3,6 +3,7 @@ from typing import Optional
 from sqlmodel import SQLModel, Field
 
 class SolicitationRaw(SQLModel, table=True):
+    __tablename__ = "solicitationraw"
     __table_args__ = {"extend_existing": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     pulled_at: Optional[str] = Field(default=None, index=True)
@@ -39,6 +40,7 @@ class CompanyProfile(SQLModel, table=True):
     updated_at: Optional[str] = Field(default=None)
 
 class Company(SQLModel, table=True):
+    __tablename__ = "company"
     __table_args__ = {"extend_existing": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
