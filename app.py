@@ -70,75 +70,115 @@ def _s(v) -> str:
     return "" if v is None else str(v)
 
 AGGREGATOR_HOST_DENYLIST = {
-    "sam.gov","beta.sam.gov","govinfo.gov","grants.gov","login.gov",
-    "linkedin.com","facebook.com","twitter.com","x.com","instagram.com",
-    "youtube.com","bloomberg.com","wikipedia.org","indeed.com","glassdoor.com",
-    "dnb.com","opencorporates.com","zoominfo.com","rocketreach.co","crunchbase.com"
+    # government/portals
+    "sam.gov","beta.sam.gov","grants.gov","govinfo.gov","login.gov","acquisition.gov","fbo.gov",
+    # aggregator/bid reposting portals
+    "bidnet.com","bidnetdirect.com","govtribe.com","govwin.com","bidprime.com","opengov.com",
+    "procureport.com","tenders.gov.au","tenders.gov","merx.com","bidsync.com","periscopeholdings.com",
+    "publicpurchase.com","findrfp.com","rfpdb.com","onvia.com","epipeline.com","vendorportal.ecms",
+    # social/info
+    "linkedin.com","facebook.com","twitter.com","x.com","instagram.com","youtube.com",
+    # company directories / data brokers (low-signal for vendor page)
+    "dnb.com","opencorporates.com","zoominfo.com","rocketreach.co","crunchbase.com","bloomberg.com","wikipedia.org",
+}
+# Words that indicate the page is a solicitation/notice (not a vendor product page)
+REPOST_KEYWORD_BLOCKLIST = {
+    "solicitation","sources sought","rfp","rfq","rfi","bid","bidding","tender","notice",
+    "contract opportunity","opportunity","sam.gov","naics","set-aside","psc code","due date",
+    "response date","amendment","award","procurement","acquisition","synopsis","posting","reference number",
+}
+
+# Words that usually appear on real vendor/product pages
+VENDORISH_ALLOW_KEYWORDS = {
+    "manufacturer","supplier","distributor","fabrication","capabilities","products",
+    "services","catalog","industries","machining","cnc","milling","turning","weld",
+    "inventory","stock","rfq form","request a quote","contact sales"
 }
 
 def _host(u: str) -> str:
     try:
         h = urlparse(u).netloc.lower()
-        # strip common prefixes
         for p in ("www.", "m.", "en.", "amp."):
-            if h.startswith(p): 
+            if h.startswith(p):
                 h = h[len(p):]
         return h
     except Exception:
         return ""
 
 def _companyish_name_from_result(title: str, link: str) -> str:
-    """Cheap heuristic: prefer title; fall back to domain-based name."""
     t = (title or "").strip()
     if t:
-        # trim long SEO tails
         t = re.split(r"[\|\-–·•»]+", t, maxsplit=1)[0].strip()
-    if t:
-        return t[:80]
+        if t:
+            return t[:80]
     h = _host(link)
     if not h:
         return "Unknown company"
-    base = h.split(":")[0].split(".")
-    if len(base) >= 2:
-        core = base[-2]  # example: acme from acme.com
-    else:
-        core = base[0]
+    parts = h.split(".")
+    core = parts[-2] if len(parts) >= 2 else parts[0]
     return core.capitalize()[:80]
 
-def _fallback_serpapi_fetch(query: str, serp_key: str, max_results: int = 10) -> list[dict]:
+def _looks_like_repost(title: str, snippet: str, link: str) -> bool:
+    t = (title or "").lower()
+    s = (snippet or "").lower()
+    h = _host(link)
+    # block .gov/.mil domains entirely (they're notices, not vendors)
+    if h.endswith(".gov") or h.endswith(".mil"):
+        return True
+    if h in AGGREGATOR_HOST_DENYLIST:
+        return True
+    text = f"{t} {s}"
+    return any(k in text for k in REPOST_KEYWORD_BLOCKLIST)
+
+def _looks_vendorish(title: str, snippet: str) -> bool:
+    text = f"{(title or '').lower()} {(snippet or '').lower()}"
+    return any(k in text for k in VENDORISH_ALLOW_KEYWORDS)
+
+def _fallback_serpapi_fetch(query: str, serp_key: str, max_results: int = 15) -> list[dict]:
     """
-    Minimal SerpAPI call: returns list of {title, link, snippet}.
-    We filter obvious aggregator/non-vendor domains.
+    SerpAPI Google search with negative site filters + post-filtering:
+    - push toward vendor/manufacturer pages
+    - drop solicitations/reposts/aggregators
     """
     url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google",
-        "q": query,
-        "num": max_results,
-        "api_key": serp_key,
-    }
+
+    # steer query: force vendor-ish results, suppress portals/reposts
+    q = (
+        f'{query} manufacturer OR supplier OR distributor '
+        '-site:sam.gov -site:beta.sam.gov -site:govtribe.com -site:govwin.com '
+        '-site:bidnet.com -site:bidnetdirect.com -site:grants.gov -site:*.gov -site:*.mil'
+    )
+
+    params = {"engine": "google", "q": q, "num": max_results, "api_key": serp_key}
     r = requests.get(url, params=params, timeout=25)
     r.raise_for_status()
     data = r.json() if r.content else {}
+
     items = []
     for row in (data.get("organic_results") or []):
         title = (row.get("title") or "").strip()
         link  = (row.get("link") or "").strip()
+        snippet = (row.get("snippet") or "").strip()
         if not link:
             continue
-        h = _host(link)
-        if not h or any(h.endswith(bad) or h == bad for bad in AGGREGATOR_HOST_DENYLIST):
+        if _looks_like_repost(title, snippet, link):
             continue
+        if not _looks_vendorish(title, snippet):
+            # allow through if the domain looks like a company (simple heuristic):
+            h = _host(link)
+            if not h or h in AGGREGATOR_HOST_DENYLIST or h.endswith(".gov") or h.endswith(".mil"):
+                continue
         items.append({
             "title": title,
             "link": link,
-            "snippet": (row.get("snippet") or "").strip(),
-            "host": h,
+            "snippet": snippet,
+            "host": _host(link),
         })
+
     # de-dupe by host
     seen, uniq = set(), []
     for it in items:
-        if it["host"] in seen:
+        if it["host"] in seen or not it["host"]:
             continue
         seen.add(it["host"])
         uniq.append(it)
