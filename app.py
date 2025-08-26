@@ -967,6 +967,36 @@ def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
     nid = (notice_id or "").strip()
     return f"https://sam.gov/opp/{nid}/view" if nid else "https://sam.gov/"
 
+# --- helper: derive a decent display name from URL if name is missing ---
+from urllib.parse import urlparse
+
+def _company_name_from_url(url: str) -> str:
+    """
+    Turns https://www.acme-mfg.com/some/path -> 'Acme Mfg'
+    Used only when the SERP result didn't give us a clean name.
+    """
+    if not url:
+        return ""
+    try:
+        host = urlparse(url).hostname or ""
+    except Exception:
+        host = ""
+    if not host:
+        return ""
+    # strip www. and TLD
+    host = host.lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    # take first label before the dot
+    base = host.split(".")[0]
+    # replace dashes/underscores with spaces and title-case
+    base = base.replace("-", " ").replace("_", " ").strip()
+    # short common suffix normalization
+    base = base.replace("mfg", "mfg").replace("llc", "LLC").replace("inc", "Inc")
+    # Title-case words
+    base = " ".join(w.upper() if len(w) <= 4 and w.isalpha() and w.isupper() else w.title() for w in base.split())
+    return base
+
 # ====== ROUTER ======
 if st.session_state.view == "auth":
     render_auth_screen()
@@ -1772,15 +1802,19 @@ with tab5:
                     if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
                         st.markdown("**Vendor candidates**")
                         for j, v in vend_df.iterrows():
-                            name = (v.get("name") or "").strip() or "Unnamed vendor"
-                            website = (v.get("website") or "").strip()
-                            location = (v.get("location") or "").strip()
+                            raw_name   = (v.get("name") or "").strip()
+                            website    = (v.get("website") or "").strip()
+                            location   = (v.get("location") or "").strip()
                             reason_txt = (v.get("reason") or "").strip()
 
+                            # Ensure the link text is the company name; derive from URL if missing
+                            display_name = raw_name or _company_name_from_url(website) or "Unnamed Vendor"
+
+                            # Show as a bold link (or bold text if no URL)
                             if website:
-                                st.markdown(f"- **[{name}]({website})**")
+                                st.markdown(f"- **[{display_name}]({website})**")
                             else:
-                                st.markdown(f"- **{name}**")
+                                st.markdown(f"- **{display_name}**")
 
                             if location:
                                 st.caption(location)
