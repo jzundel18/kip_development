@@ -780,8 +780,8 @@ elif st.session_state.view == "account":
     st.stop()
 
 # ====== MAIN APP HEADER (only when in "main") ======
-st.title("GovContract Assistant MVP")
-st.caption("Only storing required SAM fields; inserts brand-new notices only (no updates).")
+st.title("KIP")
+st.caption("Don't be jealous that I've been chatting online with babes *all day*.")
 
 colR1, colR2 = st.columns([2,1])
 with colR1:
