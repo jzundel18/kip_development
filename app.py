@@ -777,12 +777,9 @@ def render_auth_screen():
                 # If "remember me", issue token + set encrypted cookie
                 if remember_me:
                     raw_token = _issue_remember_me_token(u["id"], days=int(get_secret("COOKIE_DAYS", 30)))
-                    cookies.set(
-                        get_secret("COOKIE_NAME", "kip_auth"),
-                        raw_token,
-                        expires_at=(datetime.utcnow() + timedelta(days=int(get_secret("COOKIE_DAYS", 30))))
-                    )
-                    cookies.save()  # persist cookie to browser
+                    cookie_name = get_secret("COOKIE_NAME", "kip_auth")
+                    cookies[cookie_name] = raw_token
+                    cookies.save()
 
                 st.rerun()
 
@@ -816,7 +813,11 @@ def render_account_settings():
         # Revoke tokens and clear cookie
         if st.session_state.user:
             _revoke_all_tokens_for_user(st.session_state.user["id"])
-        cookies.delete(get_secret("COOKIE_NAME", "kip_auth"))
+        cookie_name = get_secret("COOKIE_NAME", "kip_auth")
+        try:
+            del cookies[cookie_name]
+        except KeyError:
+            pass
         cookies.save()
 
         st.session_state.user = None
