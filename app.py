@@ -911,7 +911,9 @@ if "sup_df" not in st.session_state:
 # cache: per-solicitation vendor suggestions (Internal Use tab)
 if "vendor_suggestions" not in st.session_state:
     st.session_state.vendor_suggestions = {}  # { notice_id: DataFrame }
-
+# track which Internal Use expanders are open (per notice)
+if "expander_open" not in st.session_state:
+    st.session_state.expander_open = {}  # { notice_id: bool }
 # =========================
 # AI ranker (used for the expander section)
 # =========================
@@ -1000,7 +1002,7 @@ def ai_rank_solicitations_by_fit(
 # Tabs
 # =========================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "1) Fetch Solicitations",
+    "1) Solicitation Match",
     "2) Supplier Suggestions",
     "3) Proposal Draft",
     "4) Partner Matches",
@@ -1553,48 +1555,80 @@ with tab5:
                         st.markdown("**Why this matched (AI):**")
                         st.info(reason)
 
-                    # --- Vendor finder button (SerpAPI) ---
-                    nid = str(getattr(row, "notice_id", ""))
-                    btn_key = f"find_vendors_{nid}"
-                    if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                        # Build a solicitation dict to send to the supplier finder
-                        sol_dict = {
-                            "notice_id": nid,
-                            "title": getattr(row, "title", ""),
-                            "description": getattr(row, "description", ""),
-                            "naics_code": getattr(row, "naics_code", ""),
-                            "set_aside_code": getattr(row, "set_aside_code", ""),
-                            "response_date": getattr(row, "response_date", ""),
-                            "posted_date": getattr(row, "posted_date", ""),
-                            "link": getattr(row, "link", ""),
-                        }
-                        vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
-                        st.session_state.vendor_suggestions[nid] = vendors_df  # cache it
+                    for i, row in enumerate(top_df.itertuples(index=False), start=1):
+                        nid = str(getattr(row, "notice_id", ""))
+                        hdr = (getattr(row, "blurb", None) or getattr(
+                            row, "title", None) or "Untitled")
 
-                    # If we have cached vendors for this notice, render them
-                    vend_df = st.session_state.vendor_suggestions.get(nid)
-                    if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
-                        st.markdown("**Top vendor candidates (via SerpAPI):**")
-                        for j, v in vend_df.iterrows():
-                            name = (v.get("name") or "").strip() or "Unnamed vendor"
-                            website = (v.get("website") or "").strip()
-                            location = (v.get("location") or "").strip()
-                            reason_txt = (v.get("reason") or "").strip()
+                        # keep this expander open if we've already opened it (e.g., after clicking the button)
+                        exp_open = st.session_state.expander_open.get(nid, False)
 
-                            # Name + Website
-                            if website:
-                                st.markdown(f"- **[{name}]({website})**")
-                            else:
-                                st.markdown(f"- **{name}**")
+                        with st.expander(f"{i}. {hdr}", expanded=exp_open):
+                            # two columns: left = solicitation details + button, right = vendors
+                            left, right = st.columns([2, 1])
 
-                            # Location
-                            if location:
-                                st.caption(location)
+                            with left:
+                                st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                                st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
+                                st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                                st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
+                                st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+                                link = make_sam_public_url(
+                                    str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                                st.write(f"[Open on SAM.gov]({link})")
+                                reason = reason_by_id.get(nid, "")
+                                if reason:
+                                    st.markdown("**Why this matched (AI):**")
+                                    st.info(reason)
 
-                            # Brief justification
-                            if reason_txt:
-                                st.write(reason_txt)
+                                # --- Find vendors button (SerpAPI) ---
+                                btn_key = f"find_vendors_{nid}"
+                                if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                                    # Build a solicitation dict to send to the supplier finder
+                                    sol_dict = {
+                                        "notice_id": nid,
+                                        "title": getattr(row, "title", ""),
+                                        "description": getattr(row, "description", ""),
+                                        "naics_code": getattr(row, "naics_code", ""),
+                                        "set_aside_code": getattr(row, "set_aside_code", ""),
+                                        "response_date": getattr(row, "response_date", ""),
+                                        "posted_date": getattr(row, "posted_date", ""),
+                                        "link": getattr(row, "link", ""),
+                                    }
+                                    vendors_df = _find_vendors_for_opportunity(
+                                        sol_dict, max_google=5, top_n=3)
+                                    # cache it
+                                    st.session_state.vendor_suggestions[nid] = vendors_df
 
+                                    # keep THIS expander open on the rerun
+                                    st.session_state.expander_open[nid] = True
+                                    st.rerun()
+
+                            with right:
+                                vend_df = st.session_state.vendor_suggestions.get(nid)
+                                if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                                    st.markdown("**Vendor candidates**")
+                                    for j, v in vend_df.iterrows():
+                                        name = (v.get("name") or "").strip() or "Unnamed vendor"
+                                        website = (v.get("website") or "").strip()
+                                        location = (v.get("location") or "").strip()
+                                        reason_txt = (v.get("reason") or "").strip()
+
+                                        # Name + Website (as a single bullet)
+                                        if website:
+                                            st.markdown(f"- **[{name}]({website})**")
+                                        else:
+                                            st.markdown(f"- **{name}**")
+
+                                        # Location
+                                        if location:
+                                            st.caption(location)
+
+                                        # Brief justification
+                                        if reason_txt:
+                                            st.write(reason_txt)
+                                else:
+                                    st.caption("No vendors yet. Click the button to fetch.")
 
             # Make these results available to the Supplier Suggestions tab if desired
             st.session_state.sol_df = top_df.copy()
