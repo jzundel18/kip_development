@@ -57,6 +57,16 @@ if "view" not in st.session_state:
 # Small helpers
 # =========================
 
+def _s(v) -> str:
+    """Return a safe string for downstream parsers (handles None/NaN/NaT)."""
+    try:
+        # catches NaN and NaT
+        if pd.isna(v):
+            return ""
+    except Exception:
+        pass
+    return "" if v is None else str(v)
+
 def normalize_naics_input(text_in: str) -> list[str]:
     if not text_in:
         return []
@@ -1421,54 +1431,78 @@ with tab5:
         for a SINGLE solicitation (sol dict). Returns a DataFrame with up to top_n rows.
         Columns: name, website, location, reason.
         """
+        # normalize all fields to strings before sending to fs.get_suppliers
+        sol_norm = {
+            "notice_id":     _s(sol.get("notice_id")),
+            "title":         _s(sol.get("title")),
+            "description":   _s(sol.get("description")),
+            "naics_code":    _s(sol.get("naics_code")),
+            "set_aside_code":_s(sol.get("set_aside_code")),
+            "response_date": _s(sol.get("response_date")),
+            "posted_date":   _s(sol.get("posted_date")),
+            "link":          _s(sol.get("link")),
+        }
+
+        # Minimal requirement: give the search something to latch onto
+        if not sol_norm["title"] and not sol_norm["description"]:
+            st.warning("This solicitation has no title/description text to search; skipping vendor lookup.")
+            return pd.DataFrame(columns=["name","website","location","reason"])
+
         try:
             results = fs.get_suppliers(
-                solicitations=[sol],
+                solicitations=[sol_norm],
                 our_recommended_suppliers=[],
                 our_not_recommended_suppliers=[],
                 Max_Google_Results=int(max_google),
                 OpenAi_API_Key=OPENAI_API_KEY,
                 Serp_API_Key=SERP_API_KEY,
             )
-            df = pd.DataFrame(results)
-            if df.empty:
-                return pd.DataFrame(columns=["name","website","location","reason"])
-
-            score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
-            if score_col:
-                df = df.sort_values(score_col, ascending=False)
-
-            def pick(d, *names, default=""):
-                for n in names:
-                    if n in d and pd.notna(d[n]) and str(d[n]).strip():
-                        return str(d[n]).strip()
-                return default
-
-            cleaned = []
-            for _, r in df.head(top_n).iterrows():
-                rd = r.to_dict()
-                name     = pick(rd, "supplier_name", "name", "vendor", "company")
-                website  = pick(rd, "website", "url", "link")
-                location = ", ".join([x for x in [
-                    pick(rd, "city", "supplier_city", "location_city"),
-                    pick(rd, "state", "supplier_state", "location_state"),
-                ] if x])
-                reason   = pick(rd, "reason", "why_matched", "justification", "notes")
-
-                if not reason and name:
-                    reason = _ai_vendor_why(
-                        vendor_name=name,
-                        solicitation_title=sol.get("title",""),
-                        solicitation_desc=sol.get("description",""),
-                        api_key=OPENAI_API_KEY,
-                    )
-                cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
-
-            return pd.DataFrame(cleaned)
-
         except Exception as e:
-            st.warning(f"Vendor lookup failed: {e}")
+            # Surface the *first* bad value to help debugging
+            st.warning(
+                f"Vendor lookup failed: {e}. "
+                f"(title='{sol_norm['title'][:60]}', response_date='{sol_norm['response_date']}')"
+            )
             return pd.DataFrame(columns=["name","website","location","reason"])
+
+        df = pd.DataFrame(results) if isinstance(results, (list, tuple)) else pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame(columns=["name","website","location","reason"])
+
+        # Sort by any score-like column if present
+        score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
+        if score_col:
+            df = df.sort_values(score_col, ascending=False)
+
+        def pick(d, *names, default=""):
+            for n in names:
+                if n in d and pd.notna(d[n]) and str(d[n]).strip():
+                    return str(d[n]).strip()
+            return default
+
+        cleaned = []
+        for _, r in df.head(top_n).iterrows():
+            rd = r.to_dict()
+            name     = pick(rd, "supplier_name", "name", "vendor", "company")
+            website  = pick(rd, "website", "url", "link")
+            location = ", ".join([x for x in [
+                pick(rd, "city", "supplier_city", "location_city"),
+                pick(rd, "state", "supplier_state", "location_state"),
+            ] if x])
+            reason   = pick(rd, "reason", "why_matched", "justification", "notes")
+
+            # Fallback: quick AI sentence if tool didn’t return a reason
+            if not reason and name:
+                reason = _ai_vendor_why(
+                    vendor_name=name,
+                    solicitation_title=sol_norm["title"],
+                    solicitation_desc=sol_norm["description"],
+                    api_key=OPENAI_API_KEY,
+                )
+
+            cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
+
+        return pd.DataFrame(cleaned)
 
     def _compute_internal_results(preset_desc: str, negative_hint: str = "") -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
@@ -1567,15 +1601,15 @@ with tab5:
                     btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
                     if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
                         sol_dict = {
-                            "notice_id": nid,
-                            "title": getattr(row, "title", ""),
-                            "description": getattr(row, "description", ""),
-                            "naics_code": getattr(row, "naics_code", ""),
-                            "set_aside_code": getattr(row, "set_aside_code", ""),
-                            "response_date": getattr(row, "response_date", ""),
-                            "posted_date": getattr(row, "posted_date", ""),
-                            "link": getattr(row, "link", ""),
-                        }
+                            "notice_id":     _s(nid),
+                            "title":         _s(getattr(row, "title", "")),
+                            "description":   _s(getattr(row, "description", "")),
+                            "naics_code":    _s(getattr(row, "naics_code", "")),
+                            "set_aside_code":_s(getattr(row, "set_aside_code", "")),
+                            "response_date": _s(getattr(row, "response_date", "")),
+                            "posted_date":   _s(getattr(row, "posted_date", "")),
+                            "link":          _s(getattr(row, "link", "")),
+}
                         vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
                         st.session_state.vendor_suggestions[nid] = vendors_df  # cache per-notice
                         st.session_state.iu_open_nid = nid
