@@ -890,11 +890,12 @@ def ai_rank_solicitations_by_fit(
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1) Fetch Solicitations",
     "2) Supplier Suggestions",
     "3) Proposal Draft",
-    "4) Partner Matches"
+    "4) Partner Matches",
+    "5) Internal Use"
 ])
 # ---- Tab 1
 with tab1:
@@ -1282,5 +1283,150 @@ with tab4:
                         if jp:
                             st.markdown("**Targeted joint proposal idea:**")
                             st.write(jp)
+
+# ---- Tab 5
+with tab5:
+    st.header("Internal Use")
+
+    st.caption(
+        "Quick presets that filter/rank solicitations with AI. "
+        "Results appear below in relevance order with short blurbs."
+    )
+
+    # let internal users choose how many AI-ranked results they want
+    internal_top_k = st.number_input(
+        "How many AI-ranked matches?",
+        min_value=1, max_value=50, value=5, step=1
+    )
+
+    # optionally let them cap how many DB rows to consider before AI (keeps it fast)
+    max_candidates_cap = st.number_input(
+        "Max candidates to consider before AI ranking",
+        min_value=20, max_value=1000, value=300, step=20,
+        help="We first pre-trim with embeddings, then rank with the LLM."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        run_machine_shop = st.button("Solicitations for Machine Shop", type="primary", use_container_width=True)
+    with c2:
+        run_services = st.button("Solicitations for Services", type="secondary", use_container_width=True)
+
+    # Helper to run preset search
+    def _run_internal_preset(preset_desc: str, negative_hint: str = ""):
+        try:
+            # pull everything; we'll let AI do the heavy lifting
+            df_all = query_filtered_df({
+                "keywords_or": [],
+                "naics": [],
+                "set_asides": [],
+                "due_before": None,
+                "notice_types": [],   # consider all notice types you already allow
+            })
+
+            if df_all.empty:
+                st.warning("No solicitations in the database to evaluate.")
+                return
+
+            # Compose an internal-use company description that biases AI correctly
+            # We also inject a small "negative_hint" to push the filter to avoid non-fits.
+            company_desc_internal = preset_desc.strip()
+            if negative_hint.strip():
+                company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
+
+            # Pre-trim with embeddings to keep the LLM prompt small/cheap
+            pretrim_cap = min(int(max_candidates_cap), max(20, 12 * int(internal_top_k)))
+            pretrim = ai_downselect_df(company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
+
+            if pretrim.empty:
+                st.info("AI pre-filter returned nothing.")
+                return
+
+            # Rank with the LLM
+            ranked = ai_rank_solicitations_by_fit(
+                df=pretrim,
+                company_desc=company_desc_internal,
+                api_key=OPENAI_API_KEY,
+                top_k=int(internal_top_k),
+                max_candidates=min(len(pretrim), 60),  # keep the ranking prompt tight
+                model="gpt-4o-mini",
+            )
+
+            if not ranked:
+                st.info("AI ranking returned no results.")
+                return
+
+            # Order the dataframe per the ranked list
+            id_order = [x["notice_id"] for x in ranked]
+            preorder = {nid: i for i, nid in enumerate(id_order)}
+            top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
+            top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
+            top_df = top_df.sort_values("__order").drop(columns="__order")
+
+            # Generate short blurbs for what we're showing
+            blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=int(len(top_df)))
+            top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
+
+            # quick lookup for reasons and scores
+            reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
+            score_by_id  = {x["notice_id"]: x.get("score", 0)  for x in ranked}
+            top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
+
+            st.success(f"Top {len(top_df)} matches by relevance:")
+            for i, row in enumerate(top_df.itertuples(index=False), start=1):
+                hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
+                with st.expander(f"{i}. {hdr}"):
+                    st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                    st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
+                    st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                    st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
+                    st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+                    link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                    st.write(f"[Open on SAM.gov]({link})")
+                    reason = reason_by_id.get(str(getattr(row, "notice_id", "")), "")
+                    if reason:
+                        st.markdown("**Why this matched (AI):**")
+                        st.info(reason)
+
+            # Make these results available to the Supplier Suggestions tab if desired
+            st.session_state.sol_df = top_df.copy()
+
+            # Offer a download
+            st.download_button(
+                f"Download Internal Use Results (Top-{int(internal_top_k)})",
+                top_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"internal_top{int(internal_top_k)}.csv",
+                mime="text/csv"
+            )
+
+        except Exception as e:
+            st.exception(e)
+
+    # Run the chosen preset
+    if run_machine_shop:
+        preset_desc = (
+            "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
+            "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
+            "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
+            "Prefer solicitations with part drawings, specs, materials (e.g., aluminum, steel, titanium), "
+            "and tangible manufactured items."
+        )
+        negative_hint = (
+            "Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
+            "or anything that does not involve fabricating or machining a physical part."
+        )
+        _run_internal_preset(preset_desc, negative_hint)
+
+    if run_services:
+        preset_desc = (
+            "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
+            "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
+            "operations support, professional services, and other labor-based or outcome-based services "
+            "delivered under SOW/Performance Work Statement."
+        )
+        negative_hint = (
+            "Manufacturing-only or pure product buys without a material services component."
+        )
+        _run_internal_preset(preset_desc, negative_hint)
 st.markdown("---")
 st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
