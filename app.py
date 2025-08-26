@@ -1310,7 +1310,7 @@ with tab5:
     with c1:
         run_machine_shop = st.button("Solicitations for Machine Shop", type="primary", use_container_width=True)
     with c2:
-        run_services = st.button("Solicitations for Services", type="secondary", use_container_width=True)
+        run_services = st.button("Solicitations for Services", type="primary", use_container_width=True)
 
     # Helper to run preset search
     def _run_internal_preset(preset_desc: str, negative_hint: str = ""):
