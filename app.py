@@ -11,12 +11,30 @@ from openai import OpenAI
 import find_relevant_suppliers as fs
 import generate_proposal as gp
 import get_relevant_solicitations as gs
+import secrets as pysecrets
+import hashlib
+from datetime import timedelta
+from streamlit_cookies_manager import EncryptedCookieManager
+
 SQLModel.metadata.clear()
 
 # =========================
 # Streamlit page
 # =========================
 st.set_page_config(page_title="KIP", layout="wide")
+
+def get_secret(name, default=None):
+    if name in st.secrets:
+        return st.secrets[name]
+    return os.getenv(name, default)
+
+# Secure cookies (encrypted in browser)
+cookies = EncryptedCookieManager(
+    prefix="kip_",
+    password=get_secret("COOKIE_PASSWORD", "dev-cookie-secret")  # !! set in secrets
+)
+if not cookies.ready():
+    st.stop()
 
 # --- Simple view router ---
 # views: "auth", "main", "account"
@@ -39,14 +57,6 @@ def normalize_naics_input(text_in: str) -> list[str]:
 
 def parse_keywords_or(text_in: str) -> list[str]:
     return [k.strip() for k in text_in.split(",") if k.strip()]
-
-# =========================
-# Secrets
-# =========================
-def get_secret(name, default=None):
-    if name in st.secrets:
-        return st.secrets[name]
-    return os.getenv(name, default)
 
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
 SERP_API_KEY   = get_secret("SERP_API_KEY")
@@ -143,6 +153,23 @@ class CompanyProfile(SQLModel, table=True):
     state: Optional[str] = None
     created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+# Remember-me tokens table (per-user, revocable)
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens (user_id)
+        """))
+except Exception as e:
+    st.warning(f"Auth token table note: {e}")
 
 # Lightweight migration: unique index on users.email and one-profile-per-user constraint
 try:
@@ -308,6 +335,66 @@ render_sidebar_header()
 # =========================
 # AI helpers
 # =========================
+def _hash_token(raw: str) -> str:
+    # Hash the token before storing (don’t store raw)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def _issue_remember_me_token(user_id: int, days: int = None) -> str:
+    days = days or int(get_secret("COOKIE_DAYS", 30))
+    raw = pysecrets.token_urlsafe(32)
+    tok_hash = _hash_token(raw)
+    now = datetime.utcnow()
+    exp = now + timedelta(days=days)
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            INSERT INTO auth_tokens (user_id, token_hash, expires_at, created_at)
+            VALUES (:uid, :th, :exp, :now)
+        """), {
+            "uid": user_id,
+            "th": tok_hash,
+            "exp": exp.isoformat(),
+            "now": now.isoformat(),
+        })
+    return raw  # we return raw to set in cookie
+
+def _validate_remember_me_token(raw: str) -> Optional[int]:
+    if not raw:
+        return None
+    tok_hash = _hash_token(raw)
+    with engine.connect() as conn:
+        row = conn.execute(sa.text("""
+            SELECT user_id, expires_at
+            FROM auth_tokens
+            WHERE token_hash = :th
+            ORDER BY created_at DESC
+            LIMIT 1
+        """), {"th": tok_hash}).mappings().first()
+    if not row:
+        return None
+    try:
+        if datetime.fromisoformat(row["expires_at"]) < datetime.utcnow():
+            return None
+    except Exception:
+        return None
+    return int(row["user_id"])
+
+def _revoke_all_tokens_for_user(user_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(sa.text("DELETE FROM auth_tokens WHERE user_id = :uid"), {"uid": user_id})
+
+# Attempt auto-login from remember-me cookie if not already signed in
+if st.session_state.user is None:
+    raw_cookie = cookies.get(get_secret("COOKIE_NAME", "kip_auth"))
+    uid = _validate_remember_me_token(raw_cookie) if raw_cookie else None
+    if uid:
+        # load user and profile
+        with engine.connect() as conn:
+            row = conn.execute(sa.text("SELECT id, email FROM users WHERE id = :uid"),
+                               {"uid": uid}).mappings().first()
+        if row:
+            st.session_state.user = {"id": row["id"], "email": row["email"]}
+            st.session_state.profile = get_profile(row["id"])
+            st.session_state.view = "main"
 
 def _embed_texts(texts: list[str], api_key: str) -> np.ndarray:
     client = OpenAI(api_key=api_key)
@@ -674,6 +761,7 @@ def render_auth_screen():
         st.subheader("Log in")
         le = st.text_input("Email", key="login_email_full")
         lp = st.text_input("Password", type="password", key="login_password_full")
+        remember_me = st.checkbox("Remember me for 30 days", value=True)
         if st.button("Log in", key="btn_login_full", use_container_width=True):
             u = get_user_by_email(le or "")
             if not u:
@@ -685,6 +773,17 @@ def render_auth_screen():
                 st.session_state.profile = get_profile(u["id"])
                 st.session_state.view = "main"
                 st.success("Logged in.")
+
+                # If "remember me", issue token + set encrypted cookie
+                if remember_me:
+                    raw_token = _issue_remember_me_token(u["id"], days=int(get_secret("COOKIE_DAYS", 30)))
+                    cookies.set(
+                        get_secret("COOKIE_NAME", "kip_auth"),
+                        raw_token,
+                        expires_at=(datetime.utcnow() + timedelta(days=int(get_secret("COOKIE_DAYS", 30))))
+                    )
+                    cookies.save()  # persist cookie to browser
+
                 st.rerun()
 
     # ---- Sign up
@@ -713,6 +812,18 @@ def render_auth_screen():
 def render_account_settings():
     st.title("Account Settings")
 
+    if st.button("Sign out", key="btn_signout_settings"):
+        # Revoke tokens and clear cookie
+        if st.session_state.user:
+            _revoke_all_tokens_for_user(st.session_state.user["id"])
+        cookies.delete(get_secret("COOKIE_NAME", "kip_auth"))
+        cookies.save()
+
+        st.session_state.user = None
+        st.session_state.profile = None
+        st.session_state.view = "auth"
+        st.rerun()
+
     if st.session_state.user is None:
         st.info("Please log in first.")
         if st.button("Go to Login / Sign up"):
@@ -721,12 +832,6 @@ def render_account_settings():
         st.stop()
 
     st.write(f"Signed in as **{st.session_state.user['email']}**")
-    if st.button("Sign out", key="btn_signout_settings"):
-        st.session_state.user = None
-        st.session_state.profile = None
-        st.session_state.view = "auth"
-        st.rerun()
-
     st.markdown("---")
     st.subheader("Company Profile")
 
