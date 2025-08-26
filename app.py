@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy import text, inspect
 from sqlmodel import SQLModel, Field, create_engine
 import streamlit as st
+import uuid
 from openai import OpenAI
 import find_relevant_suppliers as fs
 import generate_proposal as gp
@@ -1422,9 +1423,9 @@ with tab5:
 
     c1, c2 = st.columns(2)
     with c1:
-        run_machine_shop = st.button("Solicitations for Machine Shop", type="primary", use_container_width=True)
+        run_machine_shop = st.button("Solicitations for Machine Shop", type="primary", use_container_width=True, key="iu_btn_machine")
     with c2:
-        run_services = st.button("Solicitations for Services", type="primary", use_container_width=True)
+        run_services = st.button("Solicitations for Services", type="primary", use_container_width=True, key="iu_btn_services")
 
     def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
         """
@@ -1483,7 +1484,7 @@ with tab5:
             return pd.DataFrame(columns=["name","website","location","reason"])
 
     # Helper to run preset search
-    def _run_internal_preset(preset_desc: str, negative_hint: str = ""):
+    def _run_internal_preset(preset_desc: str, negative_hint: str = "", key_salt: str = ""):        
         try:
             # pull everything; we'll let AI do the heavy lifting
             df_all = query_filtered_df({
@@ -1562,53 +1563,58 @@ with tab5:
                         st.info(reason)
 
                     for i, row in enumerate(top_df.itertuples(index=False), start=1):
+                        hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
                         nid = str(getattr(row, "notice_id", ""))
-                        hdr = (getattr(row, "blurb", None) or getattr(
-                            row, "title", None) or "Untitled")
 
-                        # keep this expander open if we've already opened it (e.g., after clicking the button)
-                        exp_open = st.session_state.expander_open.get(nid, False)
+                        # unique keys per run/preset
+                        exp_key = f"iu_exp_{nid}_{i}_{key_salt}"
+                        with st.expander(f"{i}. {hdr}", expanded=False, key=exp_key):
+                            st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                            st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
+                            st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                            st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
+                            st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+                            link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                            st.write(f"[Open on SAM.gov]({link})")
+                            reason = reason_by_id.get(str(getattr(row, "notice_id", "")), "")
+                            if reason:
+                                st.markdown("**Why this matched (AI):**")
+                                st.info(reason)
 
-                        with st.expander(f"{i}. {hdr}", expanded=exp_open):
-                            # two columns: left = solicitation details + button, right = vendors
-                            left, right = st.columns([2, 1])
+                            # --- Vendor finder button (SerpAPI) ---
+                            btn_key = f"iu_find_vendors_{nid}_{i}_{key_salt}"  # <-- salt added here
+                            if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                                sol_dict = {
+                                    "notice_id": nid,
+                                    "title": getattr(row, "title", ""),
+                                    "description": getattr(row, "description", ""),
+                                    "naics_code": getattr(row, "naics_code", ""),
+                                    "set_aside_code": getattr(row, "set_aside_code", ""),
+                                    "response_date": getattr(row, "response_date", ""),
+                                    "posted_date": getattr(row, "posted_date", ""),
+                                    "link": getattr(row, "link", ""),
+                                }
+                                vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
+                                st.session_state.vendor_suggestions[nid] = vendors_df  # cache it
 
-                            with left:
-                                st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
-                                st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                                st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
-                                st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                                st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                                link = make_sam_public_url(
-                                    str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
-                                st.write(f"[Open on SAM.gov]({link})")
-                                reason = reason_by_id.get(nid, "")
-                                if reason:
-                                    st.markdown("**Why this matched (AI):**")
-                                    st.info(reason)
+                            vend_df = st.session_state.vendor_suggestions.get(nid)
+                            if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                                st.markdown("**Top vendor candidates (via SerpAPI):**")
+                                for j, v in vend_df.iterrows():
+                                    name = (v.get("name") or "").strip() or "Unnamed vendor"
+                                    website = (v.get("website") or "").strip()
+                                    location = (v.get("location") or "").strip()
+                                    reason_txt = (v.get("reason") or "").strip()
 
-                                # --- Find vendors button (SerpAPI) ---
-                                btn_key = f"iu_find_vendors_{nid}_{i}"
-                                if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                                    # Build a solicitation dict to send to the supplier finder
-                                    sol_dict = {
-                                        "notice_id": nid,
-                                        "title": getattr(row, "title", ""),
-                                        "description": getattr(row, "description", ""),
-                                        "naics_code": getattr(row, "naics_code", ""),
-                                        "set_aside_code": getattr(row, "set_aside_code", ""),
-                                        "response_date": getattr(row, "response_date", ""),
-                                        "posted_date": getattr(row, "posted_date", ""),
-                                        "link": getattr(row, "link", ""),
-                                    }
-                                    vendors_df = _find_vendors_for_opportunity(
-                                        sol_dict, max_google=5, top_n=3)
-                                    # cache it
-                                    st.session_state.vendor_suggestions[nid] = vendors_df
+                                    if website:
+                                        st.markdown(f"- **[{name}]({website})**")
+                                    else:
+                                        st.markdown(f"- **{name}**")
 
-                                    # keep THIS expander open on the rerun
-                                    st.session_state.expander_open[nid] = True
-                                    st.rerun()
+                                    if location:
+                                        st.caption(location)
+                                    if reason_txt:
+                                        st.write(reason_txt)
 
                             with right:
                                 vend_df = st.session_state.vendor_suggestions.get(nid)
@@ -1652,6 +1658,7 @@ with tab5:
 
     # Run the chosen preset
     if run_machine_shop:
+        st.session_state["iu_salt"] = uuid.uuid4().hex  # new salt for this run
         preset_desc = (
             "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
             "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
@@ -1663,18 +1670,17 @@ with tab5:
             "Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
             "or anything that does not involve fabricating or machining a physical part."
         )
-        _run_internal_preset(preset_desc, negative_hint)
+        _run_internal_preset(preset_desc, negative_hint, key_salt=st.session_state["iu_salt"])
 
     if run_services:
+        st.session_state["iu_salt"] = uuid.uuid4().hex  # new salt for this run
         preset_desc = (
             "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
             "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
             "operations support, professional services, and other labor-based or outcome-based services "
             "delivered under SOW/Performance Work Statement."
         )
-        negative_hint = (
-            "Manufacturing-only or pure product buys without a material services component."
-        )
-        _run_internal_preset(preset_desc, negative_hint)
+        negative_hint = "Manufacturing-only or pure product buys without a material services component."
+        _run_internal_preset(preset_desc, negative_hint, key_salt=st.session_state["iu_salt"])
 st.markdown("---")
 st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
