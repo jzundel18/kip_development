@@ -877,6 +877,12 @@ if "vendor_suggestions" not in st.session_state:
 # track which Internal Use expanders are open (per notice)
 if "expander_open" not in st.session_state:
     st.session_state.expander_open = {}  # { notice_id: bool }
+if "iu_results" not in st.session_state:
+    st.session_state.iu_results = None    # {"top_df": DataFrame, "reason_by_id": dict}
+if "iu_key_salt" not in st.session_state:
+    st.session_state.iu_key_salt = ""     # salt to keep button keys unique per run
+if "iu_open_nid" not in st.session_state:
+    st.session_state.iu_open_nid = None   # keeps the clicked expander open after rerun
 # =========================
 # AI ranker (used for the expander section)
 # =========================
@@ -1389,233 +1395,257 @@ with tab5:
     with c2:
         run_services = st.button("Solicitations for Services", type="primary", use_container_width=True, key="iu_btn_services")
 
+    def _ai_vendor_why(vendor_name: str, solicitation_title: str, solicitation_desc: str, api_key: str) -> str:
+        """Fallback: 1-sentence reason why this vendor might fit."""
+        try:
+            client = OpenAI(api_key=api_key)
+            sys = "You are a concise sourcing analyst. One sentence. No fluff."
+            user = (
+                f"Solicitation title:\n{solicitation_title}\n\n"
+                f"Solicitation description:\n{(solicitation_desc or '')[:1500]}\n\n"
+                f"Vendor: {vendor_name}\n\n"
+                "In one short sentence, say why this vendor could likely do the work."
+            )
+            r = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
+                temperature=0.2,
+            )
+            return (r.choices[0].message.content or "").strip()
+        except Exception:
+            return ""
+
     def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
         """
         Uses SerpAPI via find_relevant_suppliers.get_suppliers to find vendors
         for a SINGLE solicitation (sol dict). Returns a DataFrame with up to top_n rows.
-        We try to surface: name, website, location, justification/reason.
+        Columns: name, website, location, reason.
         """
         try:
             results = fs.get_suppliers(
-                solicitations=[sol],                    # single-item list
-                our_recommended_suppliers=[],          # none for this quick lookup
-                our_not_recommended_suppliers=[],      # none for this quick lookup
+                solicitations=[sol],
+                our_recommended_suppliers=[],
+                our_not_recommended_suppliers=[],
                 Max_Google_Results=int(max_google),
                 OpenAi_API_Key=OPENAI_API_KEY,
-                Serp_API_Key=SERP_API_KEY
+                Serp_API_Key=SERP_API_KEY,
             )
             df = pd.DataFrame(results)
-
             if df.empty:
-                return df
+                return pd.DataFrame(columns=["name","website","location","reason"])
 
-            # If there's a score column, sort by it; otherwise leave as-is
-            score_col = None
-            for cand in ["score", "ai_score", "relevance", "confidence"]:
-                if cand in df.columns:
-                    score_col = cand
-                    break
+            score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
             if score_col:
                 df = df.sort_values(score_col, ascending=False)
 
-            # Normalize some common columns so the renderer is robust
-            # (fallbacks cover a few likely names that get_suppliers might emit)
             def pick(d, *names, default=""):
                 for n in names:
-                    if n in d and pd.notna(d[n]):
+                    if n in d and pd.notna(d[n]) and str(d[n]).strip():
                         return str(d[n]).strip()
                 return default
 
-            # Build a cleaned view with standard columns we’ll display
             cleaned = []
             for _, r in df.head(top_n).iterrows():
                 rd = r.to_dict()
-                cleaned.append({
-                    "name":       pick(rd, "supplier_name", "name", "vendor", "company"),
-                    "website":    pick(rd, "website", "url", "link"),
-                    "location":   ", ".join([x for x in [
-                                    pick(rd, "city", "supplier_city", "location_city"),
-                                    pick(rd, "state", "supplier_state", "location_state")
-                                    ] if x]),
-                    "reason":     pick(rd, "reason", "why_matched", "justification", "notes"),
-                })
+                name     = pick(rd, "supplier_name", "name", "vendor", "company")
+                website  = pick(rd, "website", "url", "link")
+                location = ", ".join([x for x in [
+                    pick(rd, "city", "supplier_city", "location_city"),
+                    pick(rd, "state", "supplier_state", "location_state"),
+                ] if x])
+                reason   = pick(rd, "reason", "why_matched", "justification", "notes")
+
+                if not reason and name:
+                    reason = _ai_vendor_why(
+                        vendor_name=name,
+                        solicitation_title=sol.get("title",""),
+                        solicitation_desc=sol.get("description",""),
+                        api_key=OPENAI_API_KEY,
+                    )
+                cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
+
             return pd.DataFrame(cleaned)
 
         except Exception as e:
             st.warning(f"Vendor lookup failed: {e}")
             return pd.DataFrame(columns=["name","website","location","reason"])
 
-    # Helper to run preset search
-    def _run_internal_preset(preset_desc: str, negative_hint: str = "", key_salt: str = ""):        
-        try:
-            # pull everything; we'll let AI do the heavy lifting
-            df_all = query_filtered_df({
-                "keywords_or": [],
-                "naics": [],
-                "set_asides": [],
-                "due_before": None,
-                "notice_types": [],   # consider all notice types you already allow
-            })
+    def _compute_internal_results(preset_desc: str, negative_hint: str = "") -> dict | None:
+        """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
+        # pull everything; we'll let AI do the heavy lifting
+        df_all = query_filtered_df({
+            "keywords_or": [],
+            "naics": [],
+            "set_asides": [],
+            "due_before": None,
+            "notice_types": [],
+        })
+        if df_all.empty:
+            st.warning("No solicitations in the database to evaluate.")
+            return None
 
-            if df_all.empty:
-                st.warning("No solicitations in the database to evaluate.")
-                return
+        company_desc_internal = preset_desc.strip()
+        if negative_hint.strip():
+            company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
 
-            # Compose an internal-use company description that biases AI correctly
-            # We also inject a small "negative_hint" to push the filter to avoid non-fits.
-            company_desc_internal = preset_desc.strip()
-            if negative_hint.strip():
-                company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
+        pretrim_cap = min(int(max_candidates_cap), max(20, 12 * int(internal_top_k)))
+        pretrim = ai_downselect_df(company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
+        if pretrim.empty:
+            st.info("AI pre-filter returned nothing.")
+            return None
 
-            # Pre-trim with embeddings to keep the LLM prompt small/cheap
-            pretrim_cap = min(int(max_candidates_cap), max(20, 12 * int(internal_top_k)))
-            pretrim = ai_downselect_df(company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
-
-            if pretrim.empty:
-                st.info("AI pre-filter returned nothing.")
-                return
-
-            # Rank with the LLM
-            ranked = ai_rank_solicitations_by_fit(
-                df=pretrim,
-                company_desc=company_desc_internal,
-                api_key=OPENAI_API_KEY,
-                top_k=int(internal_top_k),
-                max_candidates=min(len(pretrim), 60),  # keep the ranking prompt tight
-                model="gpt-4o-mini",
-            )
-
-            if not ranked:
-                st.info("AI ranking returned no results.")
-                return
-
-            # Order the dataframe per the ranked list
-            id_order = [x["notice_id"] for x in ranked]
-            preorder = {nid: i for i, nid in enumerate(id_order)}
-            top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
-            top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-            top_df = (
-                top_df.sort_values("__order")
-                    .drop_duplicates(subset=["notice_id"])
-                    .drop(columns="__order")
-)
-            # Generate short blurbs for what we're showing
-            blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=int(len(top_df)))
-            top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
-
-            # quick lookup for reasons and scores
-            reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
-            score_by_id  = {x["notice_id"]: x.get("score", 0)  for x in ranked}
-            top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
-
-            st.success(f"Top {len(top_df)} matches by relevance:")
-            for idx, row in enumerate(top_df.itertuples(index=False), start=1):
-                hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
-                nid = str(getattr(row, "notice_id", ""))
-
-                # NOTE: st.expander does NOT support key= — do NOT pass a key here
-                with st.expander(
-                    f"{idx}. {hdr}",
-                    expanded=st.session_state.get("expander_open", {}).get(nid, False)
-                ):                    
-                    # Create a two-column layout so the vendors can sit next to the button
-                    left, right = st.columns([2, 1])
-
-                    with left:
-                        st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
-                        st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                        st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
-                        st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                        st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                        link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
-                        st.write(f"[Open on SAM.gov]({link})")
-
-                        reason = reason_by_id.get(nid, "")
-                        if reason:
-                            st.markdown("**Why this matched (AI):**")
-                            st.info(reason)
-
-                        # --- Vendor finder button (SerpAPI) ---
-                        btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"  # unique per notice + run
-                        if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                            sol_dict = {
-                                "notice_id": nid,
-                                "title": getattr(row, "title", ""),
-                                "description": getattr(row, "description", ""),
-                                "naics_code": getattr(row, "naics_code", ""),
-                                "set_aside_code": getattr(row, "set_aside_code", ""),
-                                "response_date": getattr(row, "response_date", ""),
-                                "posted_date": getattr(row, "posted_date", ""),
-                                "link": getattr(row, "link", ""),
-                            }
-                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
-                            st.session_state.vendor_suggestions[nid] = vendors_df  # cache per-notice
-
-                            # keep this solicitation's expander open after rerun
-                            if "expander_open" not in st.session_state:
-                                st.session_state.expander_open = {}
-                            st.session_state.expander_open[nid] = True
-
-                    with right:
-                        vend_df = st.session_state.vendor_suggestions.get(nid)
-                        if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
-                            st.markdown("**Vendor candidates**")
-                            for j, v in vend_df.iterrows():
-                                name = (v.get("name") or "").strip() or "Unnamed vendor"
-                                website = (v.get("website") or "").strip()
-                                location = (v.get("location") or "").strip()
-                                reason_txt = (v.get("reason") or "").strip()
-
-                                if website:
-                                    st.markdown(f"- **[{name}]({website})**")
-                                else:
-                                    st.markdown(f"- **{name}**")
-
-                                if location:
-                                    st.caption(location)
-                                if reason_txt:
-                                    st.write(reason_txt)
-                        else:
-                            st.caption("No vendors yet. Click the button to fetch.")
-            # Make these results available to the Supplier Suggestions tab if desired
-            st.session_state.sol_df = top_df.copy()
-
-            # Offer a download
-            st.download_button(
-                f"Download Internal Use Results (Top-{int(internal_top_k)})",
-                top_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"internal_top{int(internal_top_k)}.csv",
-                mime="text/csv"
-            )
-
-        except Exception as e:
-            st.exception(e)
-
-    # Run the chosen preset
-    if run_machine_shop:
-        st.session_state["iu_salt"] = uuid.uuid4().hex  # new salt for this run
-        preset_desc = (
-            "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
-            "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
-            "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
-            "Prefer solicitations with part drawings, specs, materials (e.g., aluminum, steel, titanium), "
-            "and tangible manufactured items."
+        ranked = ai_rank_solicitations_by_fit(
+            df=pretrim,
+            company_desc=company_desc_internal,
+            api_key=OPENAI_API_KEY,
+            top_k=int(internal_top_k),
+            max_candidates=min(len(pretrim), 60),
+            model="gpt-4o-mini",
         )
-        negative_hint = (
-            "Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
-            "or anything that does not involve fabricating or machining a physical part."
-        )
-        _run_internal_preset(preset_desc, negative_hint, key_salt=st.session_state["iu_salt"])
+        if not ranked:
+            st.info("AI ranking returned no results.")
+            return None
 
-    if run_services:
-        st.session_state["iu_salt"] = uuid.uuid4().hex  # new salt for this run
-        preset_desc = (
-            "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
-            "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
-            "operations support, professional services, and other labor-based or outcome-based services "
-            "delivered under SOW/Performance Work Statement."
+        # Order per ranked list
+        id_order = [x["notice_id"] for x in ranked]
+        preorder = {nid: i for i, nid in enumerate(id_order)}
+        top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
+        top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
+        top_df = (
+            top_df.sort_values("__order")
+                .drop_duplicates(subset=["notice_id"])
+                .drop(columns="__order")
+                .reset_index(drop=True)
         )
-        negative_hint = "Manufacturing-only or pure product buys without a material services component."
-        _run_internal_preset(preset_desc, negative_hint, key_salt=st.session_state["iu_salt"])
+
+        # blurbs + fit_score
+        blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=int(len(top_df)))
+        top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
+        reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
+        score_by_id  = {x["notice_id"]: x.get("score", 0) for x in ranked}
+        top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
+
+        return {"top_df": top_df, "reason_by_id": reason_by_id}
+
+    def _render_internal_results():
+        data = st.session_state.iu_results
+        if not data:
+            return
+        key_salt = st.session_state.iu_key_salt or ""
+        top_df = data["top_df"]
+        reason_by_id = data["reason_by_id"]
+
+        # Ensure one expander is open by default if none selected yet
+        if st.session_state.iu_open_nid is None and len(top_df):
+            st.session_state.iu_open_nid = str(top_df.iloc[0]["notice_id"])
+
+        st.success(f"Top {len(top_df)} matches by relevance:")
+        for idx, row in enumerate(top_df.itertuples(index=False), start=1):
+            hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
+            nid = str(getattr(row, "notice_id", ""))
+
+            # no key= on expander; keep it open between reruns by NOT toggling a state var here
+            expanded = (st.session_state.get("iu_open_nid") == nid)
+            with st.expander(f"{idx}. {hdr}", expanded=expanded):
+                left, right = st.columns([2, 1])
+
+                with left:
+                    st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                    st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
+                    st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                    st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
+                    st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+                    link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                    st.write(f"[Open on SAM.gov]({link})")
+
+                    reason = reason_by_id.get(nid, "")
+                    if reason:
+                        st.markdown("**Why this matched (AI):**")
+                        st.info(reason)
+
+                    # vendor button: unique per notice + run salt
+                    btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
+                    if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                        sol_dict = {
+                            "notice_id": nid,
+                            "title": getattr(row, "title", ""),
+                            "description": getattr(row, "description", ""),
+                            "naics_code": getattr(row, "naics_code", ""),
+                            "set_aside_code": getattr(row, "set_aside_code", ""),
+                            "response_date": getattr(row, "response_date", ""),
+                            "posted_date": getattr(row, "posted_date", ""),
+                            "link": getattr(row, "link", ""),
+                        }
+                        vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
+                        st.session_state.vendor_suggestions[nid] = vendors_df  # cache per-notice
+                        st.session_state.iu_open_nid = nid
+                        st.rerun()  # ensure right column updates immediately
+
+                with right:
+                    vend_df = st.session_state.vendor_suggestions.get(nid)
+                    if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                        st.markdown("**Vendor candidates**")
+                        for j, v in vend_df.iterrows():
+                            name = (v.get("name") or "").strip() or "Unnamed vendor"
+                            website = (v.get("website") or "").strip()
+                            location = (v.get("location") or "").strip()
+                            reason_txt = (v.get("reason") or "").strip()
+
+                            if website:
+                                st.markdown(f"- **[{name}]({website})**")
+                            else:
+                                st.markdown(f"- **{name}**")
+
+                            if location:
+                                st.caption(location)
+                            if reason_txt:
+                                st.write(reason_txt)
+                    else:
+                        st.caption("No vendors yet. Click the button to fetch.")
+   # Run the chosen preset
+if run_machine_shop:
+    st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+    preset_desc = (
+        "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
+        "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
+        "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
+        "Prefer solicitations with part drawings, specs, materials (e.g., aluminum, steel, titanium), "
+        "and tangible manufactured items."
+    )
+    negative_hint = (
+        "Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
+        "or anything that does not involve fabricating or machining a physical part."
+    )
+    with st.spinner("Finding best-matching solicitations..."):
+        data = _compute_internal_results(preset_desc, negative_hint)
+    st.session_state.iu_results = data
+    st.rerun()
+
+if run_services:
+    st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+    preset_desc = (
+        "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
+        "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
+        "operations support, professional services, and other labor-based or outcome-based services "
+        "delivered under SOW/Performance Work Statement."
+    )
+    negative_hint = "Manufacturing-only or pure product buys without a material services component."
+    with st.spinner("Finding best-matching solicitations..."):
+        data = _compute_internal_results(preset_desc, negative_hint)
+    st.session_state.iu_results = data
+    st.rerun()
+
+# Always render cached results (so lists persist across reruns, including vendor-button clicks)
+_render_internal_results()
+
+# If you want: export download for cached results
+if st.session_state.iu_results and isinstance(st.session_state.iu_results.get("top_df"), pd.DataFrame):
+    top_df = st.session_state.iu_results["top_df"]
+    st.download_button(
+        f"Download Internal Use Results (Top-{int(internal_top_k)})",
+        top_df.to_csv(index=False).encode("utf-8"),
+        file_name=f"internal_top{int(internal_top_k)}.csv",
+        mime="text/csv",
+    )
 st.markdown("---")
 st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
