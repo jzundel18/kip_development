@@ -14,10 +14,9 @@ import generate_proposal as gp
 import get_relevant_solicitations as gs
 import secrets as pysecrets
 import hashlib
+import models
 from datetime import timedelta
 from streamlit_cookies_manager import EncryptedCookieManager
-
-SQLModel.metadata.clear()
 
 # =========================
 # Streamlit page
@@ -114,47 +113,6 @@ except Exception as e:
 # =========================
 # Static schema (only the fields you want)
 # =========================
-class SolicitationRaw(SQLModel, table=True):
-    __table_args__ = {"extend_existing": True}
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    pulled_at: Optional[str] = Field(default=None, index=True)  # when we pulled from SAM
-    notice_id: str = Field(index=True, nullable=False, unique=True)
-
-    solicitation_number: Optional[str] = None
-    title: Optional[str] = None
-    notice_type: Optional[str] = None
-
-    posted_date: Optional[str] = Field(default=None, index=True)
-    response_date: Optional[str] = Field(default=None, index=True)
-    archive_date: Optional[str] = Field(default=None, index=True)
-    naics_code: Optional[str] = Field(default=None, index=True)
-
-    set_aside_code: Optional[str] = Field(default=None, index=True)
-
-    description: Optional[str] = None
-    link: Optional[str] = None
-
-class User(SQLModel, table=True):
-    __tablename__ = "users"
-    __table_args__ = {"extend_existing": True}   # <-- add this
-    id: Optional[int] = Field(default=None, primary_key=True)
-    email: str = Field(index=True, unique=True, nullable=False)
-    password_hash: str = Field(nullable=False)
-    created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
-
-class CompanyProfile(SQLModel, table=True):
-    __tablename__ = "company_profile"
-    __table_args__ = {"extend_existing": True}   # <-- add this
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(index=True, nullable=False)
-    company_name: str = Field(nullable=False)
-    description: str = Field(nullable=False)
-    city: Optional[str] = None
-    state: Optional[str] = None
-    created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
-
 # Remember-me tokens table (per-user, revocable)
 try:
     with engine.begin() as conn:
@@ -210,7 +168,7 @@ def create_user(email: str, password: str) -> Optional[int]:
                 VALUES (:email, :ph, :ts)
                 RETURNING id
             """)
-            new_id = conn.execute(sql, {"email": email, "ph": pw_hash, "ts": datetime.utcnow().isoformat()}).scalar_one()
+            new_id = conn.execute(sql, {"email": email, "ph": pw_hash, "ts": datetime.now(timezone.utc).isoformat()}).scalar_one()
             return int(new_id)
         except Exception as e:
             st.error(f"Could not create user: {e}")
@@ -227,7 +185,7 @@ def get_profile(user_id: int) -> Optional[dict]:
 
 def upsert_profile(user_id: int, company_name: str, description: str, city: str, state: str) -> None:
     with engine.begin() as conn:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         # Try update first
         upd = conn.execute(sa.text("""
             UPDATE company_profile
@@ -240,20 +198,12 @@ def upsert_profile(user_id: int, company_name: str, description: str, city: str,
                 VALUES (:uid, :cn, :d, :c, :s, :ts, :ts)
             """), {"uid": user_id, "cn": company_name, "d": description, "c": city, "s": state, "ts": now})
 
-# ---------------------------
-# Company directory (new table)
-# ---------------------------
-class Company(SQLModel, table=True):
-    __table_args__ = {"extend_existing": True}
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True)
-    description: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = Field(default=None, index=True)
-
-# Create (or update) tables
-SQLModel.metadata.create_all(engine)
+# Create (or update) tables — run once per session
+if "db_initialized" not in st.session_state:
+    try:
+        SQLModel.metadata.create_all(engine)
+    finally:
+        st.session_state["db_initialized"] = True
 
 # Lightweight migration: ensure columns & unique index
 REQUIRED_COLS = {
@@ -373,7 +323,7 @@ def _validate_remember_me_token(raw: str) -> Optional[int]:
     if not row:
         return None
     try:
-        if datetime.fromisoformat(row["expires_at"]) < datetime.utcnow():
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
             return None
     except Exception:
         return None
@@ -737,7 +687,7 @@ def insert_company_row(row: dict) -> None:
         VALUES (:name, :description, :city, :state)
     """)
     row = {k: (row.get(k) or "") for k in ["name","description","city","state"]}
-    row["created_at"] = datetime.utcnow().isoformat()
+    row["created_at"] = datetime.now(timezone.utc).isoformat()
     with engine.begin() as conn:
         conn.execute(sql, row)
 
@@ -1180,7 +1130,7 @@ with tab1:
                             st.session_state.sol_df = top_df.copy()
                             # Invalidate any old partner matches (Tab 4 will auto-rebuild)
                             st.session_state.partner_matches = None
-                            st.session_state.topn_stamp = datetime.utcnow().isoformat()
+                            st.session_state.topn_stamp = datetime.now(timezone.utc).isoformat()
                             st.download_button(
                             f"Download Top-{int(top_k_select)} (AI-ranked) as CSV",
                             top_df.to_csv(index=False).encode("utf-8"),
