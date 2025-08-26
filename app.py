@@ -1141,8 +1141,11 @@ with tab1:
                             preorder = {nid: i for i, nid in enumerate(id_order)}
                             top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
                             top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-                            top_df = top_df.sort_values("__order").drop(columns="__order")
-
+                            top_df = (
+                                top_df.sort_values("__order")
+                                    .drop_duplicates(subset=["notice_id"])
+                                    .drop(columns="__order")
+)
                             # Generate blurbs
                             blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
                             top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
@@ -1528,8 +1531,11 @@ with tab5:
             preorder = {nid: i for i, nid in enumerate(id_order)}
             top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
             top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-            top_df = top_df.sort_values("__order").drop(columns="__order")
-
+            top_df = (
+                top_df.sort_values("__order")
+                    .drop_duplicates(subset=["notice_id"])
+                    .drop(columns="__order")
+)
             # Generate short blurbs for what we're showing
             blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=int(len(top_df)))
             top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
@@ -1582,7 +1588,7 @@ with tab5:
                                     st.info(reason)
 
                                 # --- Find vendors button (SerpAPI) ---
-                                btn_key = f"find_vendors_{nid}"
+                                btn_key = f"iu_find_vendors_{nid}_{i}"
                                 if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
                                     # Build a solicitation dict to send to the supplier finder
                                     sol_dict = {
