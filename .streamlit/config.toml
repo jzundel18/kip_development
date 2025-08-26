@@ -1,0 +1,9 @@
+[server]
+# Use polling instead of inotify/watchdog
+fileWatcherType = "poll"
+
+# Optional: ignore big folders so fewer files are watched
+folderWatchBlacklist = ["venv", ".venv", ".git", "node_modules", "data", "logs", "/home/adminuser/venv"]
+
+# Optional: don’t hot-reload on save (reduces watchers further)
+runOnSave = false
