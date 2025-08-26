@@ -970,32 +970,48 @@ def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
 # --- helper: derive a decent display name from URL if name is missing ---
 from urllib.parse import urlparse
 
+from urllib.parse import urlparse
+
 def _company_name_from_url(url: str) -> str:
-    """
-    Turns https://www.acme-mfg.com/some/path -> 'Acme Mfg'
-    Used only when the SERP result didn't give us a clean name.
-    """
     if not url:
         return ""
     try:
-        host = urlparse(url).hostname or ""
+        host = urlparse(url if "://" in url else f"https://{url}").hostname or ""
     except Exception:
         host = ""
     if not host:
         return ""
-    # strip www. and TLD
-    host = host.lower().strip()
     if host.startswith("www."):
         host = host[4:]
-    # take first label before the dot
     base = host.split(".")[0]
-    # replace dashes/underscores with spaces and title-case
     base = base.replace("-", " ").replace("_", " ").strip()
-    # short common suffix normalization
-    base = base.replace("mfg", "mfg").replace("llc", "LLC").replace("inc", "Inc")
-    # Title-case words
-    base = " ".join(w.upper() if len(w) <= 4 and w.isalpha() and w.isupper() else w.title() for w in base.split())
-    return base
+    # title-case, but keep short, all-caps acronyms (<=4 chars)
+    parts = []
+    for w in base.split():
+        if len(w) <= 4 and w.isalpha() and w.isupper():
+            parts.append(w)
+        else:
+            parts.append(w.title())
+    return " ".join(parts)
+
+def _normalize_url(url: str) -> str:
+    """Ensure the URL has a scheme; Streamlit markdown needs it."""
+    if not url:
+        return ""
+    url = url.strip()
+    if not url:
+        return ""
+    if not url.lower().startswith(("http://", "https://")):
+        return f"https://{url}"
+    return url
+
+def _md_escape(text: str) -> str:
+    """Escape characters that can break markdown links."""
+    if not text:
+        return ""
+    for ch in ["[", "]", "(", ")", "*", "_", "`"]:
+        text = text.replace(ch, f"\\{ch}")
+    return text
 
 # ====== ROUTER ======
 if st.session_state.view == "auth":
@@ -1801,17 +1817,18 @@ with tab5:
                     vend_df = st.session_state.vendor_suggestions.get(nid)
                     if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
                         st.markdown("**Vendor candidates**")
-                        for j, v in vend_df.iterrows():
+                        for _, v in vend_df.iterrows():
                             raw_name   = (v.get("name") or "").strip()
-                            website    = (v.get("website") or "").strip()
+                            website    = _normalize_url((v.get("website") or "").strip())
                             location   = (v.get("location") or "").strip()
                             reason_txt = (v.get("reason") or "").strip()
 
-                            # Ensure the link text is the company name; derive from URL if missing
+                            # Prefer explicit name; fall back to domain-derived name
                             display_name = raw_name or _company_name_from_url(website) or "Unnamed Vendor"
+                            display_name = _md_escape(display_name)
 
-                            # Show as a bold link (or bold text if no URL)
                             if website:
+                                # Link shows the company name (not the URL)
                                 st.markdown(f"- **[{display_name}]({website})**")
                             else:
                                 st.markdown(f"- **{display_name}**")
