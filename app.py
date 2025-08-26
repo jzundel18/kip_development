@@ -966,91 +966,36 @@ def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
         return link
     nid = (notice_id or "").strip()
     return f"https://sam.gov/opp/{nid}/view" if nid else "https://sam.gov/"
-from urllib.parse import urlparse
 
-def _normalize_url(url: str) -> str:
-    if not url:
-        return ""
-    u = url.strip()
-    if not u:
-        return ""
-    if not u.lower().startswith(("http://", "https://")):
-        u = "https://" + u
-    return u
-
-def _domain(url: str) -> str:
-    try:
-        host = urlparse(_normalize_url(url)).hostname or ""
-        return host.lower()
-    except Exception:
-        return ""
-
-def _company_name_from_url(url: str) -> str:
-    host = _domain(url)
-    if not host:
-        return ""
-    if host.startswith("www."):
-        host = host[4:]
-    left = host.split(".")[0]
-    left = left.replace("-", " ").replace("_", " ").strip()
-    parts = []
-    for w in left.split():
-        if len(w) <= 4 and w.isalpha() and w.isupper():
-            parts.append(w)
-        else:
-            parts.append(w.title())
-    return " ".join(parts)
-
-def _md_escape(text: str) -> str:
-    if not text:
-        return ""
-    for ch in ["[", "]", "(", ")", "*", "_", "`"]:
-        text = text.replace(ch, f"\\{ch}")
-    return text
 # --- helper: derive a decent display name from URL if name is missing ---
-
 from urllib.parse import urlparse
 
 def _company_name_from_url(url: str) -> str:
+    """
+    Turns https://www.acme-mfg.com/some/path -> 'Acme Mfg'
+    Used only when the SERP result didn't give us a clean name.
+    """
     if not url:
         return ""
     try:
-        host = urlparse(url if "://" in url else f"https://{url}").hostname or ""
+        host = urlparse(url).hostname or ""
     except Exception:
         host = ""
     if not host:
         return ""
+    # strip www. and TLD
+    host = host.lower().strip()
     if host.startswith("www."):
         host = host[4:]
+    # take first label before the dot
     base = host.split(".")[0]
+    # replace dashes/underscores with spaces and title-case
     base = base.replace("-", " ").replace("_", " ").strip()
-    # title-case, but keep short, all-caps acronyms (<=4 chars)
-    parts = []
-    for w in base.split():
-        if len(w) <= 4 and w.isalpha() and w.isupper():
-            parts.append(w)
-        else:
-            parts.append(w.title())
-    return " ".join(parts)
-
-def _normalize_url(url: str) -> str:
-    """Ensure the URL has a scheme; Streamlit markdown needs it."""
-    if not url:
-        return ""
-    url = url.strip()
-    if not url:
-        return ""
-    if not url.lower().startswith(("http://", "https://")):
-        return f"https://{url}"
-    return url
-
-def _md_escape(text: str) -> str:
-    """Escape characters that can break markdown links."""
-    if not text:
-        return ""
-    for ch in ["[", "]", "(", ")", "*", "_", "`"]:
-        text = text.replace(ch, f"\\{ch}")
-    return text
+    # short common suffix normalization
+    base = base.replace("mfg", "mfg").replace("llc", "LLC").replace("inc", "Inc")
+    # Title-case words
+    base = " ".join(w.upper() if len(w) <= 4 and w.isalpha() and w.isupper() else w.title() for w in base.split())
+    return base
 
 # ====== ROUTER ======
 if st.session_state.view == "auth":
@@ -1633,180 +1578,113 @@ with tab5:
 
     def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
         """
-        Uses fs.get_suppliers(...) but *aggressively filters* to keep only real vendors (manufacturers/distributors/shops).
-        Returns DataFrame with columns: name, website, location, reason.
+        1) Try your original helper (fs.get_suppliers)
+        2) If it throws (e.g., 'Parser must be a string...' from dateutil), fallback to a direct SerpAPI query we control.
+        Returns DataFrame with columns: name, website, location, reason
         """
-        # ------------- tuning knobs -------------
-        BLOCK_TLDS = {"gov", "mil", "edu"}   # generally not commercial vendors
-        BLOCK_DOMAIN_SUBSTR = {
-            # gov/aggregator/repost/directories
-            "sam.gov", "beta.sam.gov", "govwin", "bidnet", "tenders", "procurement", "purchasing",
-            "buyboard", "bidboard", "findrfp", "rfp", "rfqs", "rfqdb", "governmentcontracts",
-            "uscontractorregistration", "opencorporates", " wikipedia.", "linkedin.com", "glassdoor",
-            "indeed.", "facebook.", "x.com", "twitter.", "youtube.", "pressrelease",
-            "datagov", "ca.gov", ".state.", ".tx.us", ".us/", ".us?"
-        }
-        # Words that suggest *vendor capabilities*
-        POS_NAME_OR_DOMAIN_HINTS = {
-            "cnc", "machine", "machining", "milling", "turning", "lathe", "fabrication", "fabricator",
-            "weld", "welding", "precision", "tool", "mfg", "manufactur", "metal", "plastics", "fastener",
-            "bolt", "screw", "hardware", "industrial", "automation", "assembly", "shop", "distributor",
-            "supplier", "supply", "capabilities", "oem"
-        }
-        # Words that often indicate *reposts/directories/news*
-        NEG_SNIPPET_HINTS = {
-            "sam.gov", "solicitation", "rfp", "rfq", "tender", "bidsync", "bidnet", "govwin",
-            "notice id", "opportunity", "agency", "contract", "grant", "award"
-        }
-        # Words that suggest *buyable products/services*
-        POS_SNIPPET_HINTS = {
-            "catalog", "products", "capabilities", "services", "request a quote", "get a quote",
-            "we manufacture", "manufacturer", "distributor", "stock", "inventory",
-            "cnc machining", "precision machining", "machine shop", "fasteners", "bolts", "screws"
+        # ---- normalize all inputs to safe strings
+        sol_norm = {
+            "notice_id":     _s(sol.get("notice_id")),
+            "title":         _s(sol.get("title")),
+            "description":   _s(sol.get("description")),
+            "naics_code":    _s(sol.get("naics_code")),
+            "set_aside_code":_s(sol.get("set_aside_code")),
+            "response_date": _s(sol.get("response_date")),
+            "posted_date":   _s(sol.get("posted_date")),
+            "link":          _s(sol.get("link")),
         }
 
-        def is_blocked_domain(url: str) -> bool:
-            d = _domain(url)
-            if not d:
-                return True  # if no domain, treat as blocked
-            # TLD check
-            parts = d.split(".")
-            if len(parts) >= 2 and parts[-1] in BLOCK_TLDS:
-                return True
-            host = ".".join(parts[-2:]) if len(parts) >= 2 else d
-            full = d
-            for bad in BLOCK_DOMAIN_SUBSTR:
-                if bad in full:
-                    return True
-            return False
+        # guard: need some text to search
+        if not sol_norm["title"] and not sol_norm["description"]:
+            st.warning("This solicitation has no title/description text to search; skipping vendor lookup.")
+            return pd.DataFrame(columns=["name","website","location","reason"])
 
-        def vendor_score(name: str, url: str, snippet: str) -> float:
-            name_l = (name or "").lower()
-            dom = _domain(url)
-            dom_l = dom.lower()
-            snip_l = (snippet or "").lower()
-
-            score = 0.0
-
-            # positive signals in name or domain
-            if any(k in name_l for k in POS_NAME_OR_DOMAIN_HINTS):
-                score += 2.0
-            if any(k in dom_l for k in POS_NAME_OR_DOMAIN_HINTS):
-                score += 2.0
-
-            # positive snippet signals
-            if any(k in snip_l for k in POS_SNIPPET_HINTS):
-                score += 1.5
-
-            # product-y paths
-            path = urlparse(_normalize_url(url)).path.lower()
-            if any(p in path for p in ["/products", "/product", "/capabilities", "/services", "/catalog"]):
-                score += 1.0
-
-            # negatives
-            if any(k in snip_l for k in NEG_SNIPPET_HINTS):
-                score -= 2.0
-
-            # very generic domains get a tiny penalty
-            if dom_l.endswith(".org"):
-                score -= 0.5
-
-            # boost if both name & domain look vendor-y
-            if score >= 3.0:
-                score += 0.5
-
-            return score
-
-        def pick(d: dict, *names, default=""):
-            for n in names:
-                if n in d and pd.notna(d[n]) and str(d[n]).strip():
-                    return str(d[n]).strip()
-            return default
-
+        # ---- 1) TRY your original helper
         try:
             results = fs.get_suppliers(
-                solicitations=[sol],
+                solicitations=[sol_norm],
                 our_recommended_suppliers=[],
                 our_not_recommended_suppliers=[],
                 Max_Google_Results=int(max_google),
                 OpenAi_API_Key=OPENAI_API_KEY,
                 Serp_API_Key=SERP_API_KEY,
             )
-            df_raw = pd.DataFrame(results)
+            df = pd.DataFrame(results) if isinstance(results, (list, tuple)) else pd.DataFrame()
+            if not df.empty:
+                score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
+                if score_col:
+                    df = df.sort_values(score_col, ascending=False)
+
+                def pick(d, *names, default=""):
+                    for n in names:
+                        if n in d and pd.notna(d[n]) and str(d[n]).strip():
+                            return str(d[n]).strip()
+                    return default
+
+                cleaned = []
+                for _, r in df.head(top_n).iterrows():
+                    rd = r.to_dict()
+                    name     = pick(rd, "supplier_name", "name", "vendor", "company")
+                    website  = pick(rd, "website", "url", "link")
+                    location = ", ".join([x for x in [
+                        pick(rd, "city", "supplier_city", "location_city"),
+                        pick(rd, "state", "supplier_state", "location_state"),
+                    ] if x])
+                    reason   = pick(rd, "reason", "why_matched", "justification", "notes")
+                    if not reason and name:
+                        reason = _ai_vendor_why(
+                            vendor_name=name,
+                            solicitation_title=sol_norm["title"],
+                            solicitation_desc=sol_norm["description"],
+                            api_key=OPENAI_API_KEY,
+                        )
+                    cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
+                if cleaned:
+                    return pd.DataFrame(cleaned)
+
         except Exception as e:
-            st.warning(f"Primary supplier finder failed; using post-filter only. ({e})")
-            df_raw = pd.DataFrame([])
+            # NOTE: This is the path you're currently hitting
+            st.info(f"Primary supplier finder failed; using direct SerpAPI fallback. ({e})")
 
-        if df_raw.empty:
-            return pd.DataFrame(columns=["name", "website", "location", "reason"])
+        # ---- 2) FALLBACK: direct SerpAPI (no fragile date parsing)
+        query_bits = [sol_norm["title"]]
+        if sol_norm["naics_code"]:
+            query_bits.append(f"NAICS {sol_norm['naics_code']}")
+        # steer the search a bit toward vendors
+        query_bits.append("manufacturer supplier vendor")
+        q = " ".join([b for b in query_bits if b]).strip()
 
-        # Normalize columns we might get back from fs.get_suppliers
-        cleaned_rows = []
-        for _, r in df_raw.iterrows():
-            rd = r.to_dict()
-            name     = pick(rd, "supplier_name", "name", "vendor", "company")
-            website  = pick(rd, "website", "url", "link")
-            snippet  = pick(rd, "snippet", "summary", "about", "description", default="")
-            city     = pick(rd, "city", "supplier_city", "location_city")
-            state    = pick(rd, "state", "supplier_state", "location_state")
-            location = ", ".join([x for x in [city, state] if x])
+        try:
+            raw = _fallback_serpapi_fetch(q, SERP_API_KEY, max_results=max(10, top_n*3))
+        except Exception as e:
+            st.warning(f"SerpAPI fallback failed: {e}")
+            return pd.DataFrame(columns=["name","website","location","reason"])
 
-            # Hard domain block first
-            if is_blocked_domain(website):
+        rows = []
+        for it in raw[: max(10, top_n*3)]:  # look at a few; we’ll prune to top_n later
+            website = it["link"]
+            name = _companyish_name_from_result(it["title"], website)
+            # 1-sentence reason
+            reason = _ai_vendor_why(
+                vendor_name=name,
+                solicitation_title=sol_norm["title"],
+                solicitation_desc=sol_norm["description"],
+                api_key=OPENAI_API_KEY,
+            )
+            rows.append({"name": name, "website": website, "location": "", "reason": reason})
+
+        # de-dupe by website host, keep first 3
+        out, seen = [], set()
+        for r in rows:
+            h = _host(r["website"])
+            if not h or h in seen:
                 continue
+            seen.add(h)
+            out.append(r)
+            if len(out) >= top_n:
+                break
 
-            # derive display name if missing
-            if not name:
-                name = _company_name_from_url(website)
-
-            if not name or not website:
-                # must have both a name and a website to be a usable vendor
-                continue
-
-            sc = vendor_score(name, website, snippet)
-
-            cleaned_rows.append({
-                "name": name,
-                "website": _normalize_url(website),
-                "location": location,
-                "reason": snippet,    # we'll rewrite a short reason below
-                "_score": sc,
-            })
-
-        if not cleaned_rows:
-            return pd.DataFrame(columns=["name", "website", "location", "reason"])
-
-        df = pd.DataFrame(cleaned_rows).sort_values("_score", ascending=False)
-
-        # Compose a crisp reason if snippet is weak
-        title = (sol.get("title") or "").strip()
-        desc  = (sol.get("description") or "").lower()
-        need_tokens = set([t for t in re.findall(r"[a-z]{3,}", (title + " " + desc))])
-
-        def short_reason(row: pd.Series) -> str:
-            base = (row.get("reason") or "").strip()
-            if base:
-                # Trim long snippets
-                return base[:220]
-            # Build a synthetic reason from signals
-            name  = row.get("name") or ""
-            host  = _domain(row.get("website") or "")
-            sigs  = [k for k in ["cnc", "machin", "fabricat", "weld", "fastener", "bolt", "screw", "precision", "oem"]
-                    if k in (name.lower() + " " + host)]
-            hint  = ", ".join(sorted(set(sigs))) if sigs else "relevant manufacturing/distribution capabilities"
-            # If solicitation is about bolts, reflect that, etc.
-            want = ""
-            for kw in ["bolt", "bolts", "fastener", "fasteners", "screw", "screws", "cnc", "machin", "fabricat"]:
-                if kw in need_tokens:
-                    want = kw
-                    break
-            if want:
-                return f"Supplier with {hint}; appears suitable for '{want}' requirement."
-            return f"Supplier with {hint}; appears suitable for requirement."
-
-        df["reason"] = df.apply(short_reason, axis=1)
-
-        return df[["name", "website", "location", "reason"]].head(int(top_n))
+        return pd.DataFrame(out, columns=["name","website","location","reason"])
 
     def _compute_internal_results(preset_desc: str, negative_hint: str = "") -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
@@ -1923,18 +1801,17 @@ with tab5:
                     vend_df = st.session_state.vendor_suggestions.get(nid)
                     if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
                         st.markdown("**Vendor candidates**")
-                        for _, v in vend_df.iterrows():
+                        for j, v in vend_df.iterrows():
                             raw_name   = (v.get("name") or "").strip()
-                            website    = _normalize_url((v.get("website") or "").strip())
+                            website    = (v.get("website") or "").strip()
                             location   = (v.get("location") or "").strip()
                             reason_txt = (v.get("reason") or "").strip()
 
-                            # Prefer explicit name; fall back to domain-derived name
+                            # Ensure the link text is the company name; derive from URL if missing
                             display_name = raw_name or _company_name_from_url(website) or "Unnamed Vendor"
-                            display_name = _md_escape(display_name)
 
+                            # Show as a bold link (or bold text if no URL)
                             if website:
-                                # Link shows the company name (not the URL)
                                 st.markdown(f"- **[{display_name}]({website})**")
                             else:
                                 st.markdown(f"- **{display_name}**")
