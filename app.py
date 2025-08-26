@@ -804,7 +804,7 @@ if "sup_df" not in st.session_state:
     st.session_state.sup_df = None
 
 # =========================
-# AI ranker (used for the Top 5 expander section)
+# AI ranker (used for the expander section)
 # =========================
 def ai_rank_solicitations_by_fit(
     df: pd.DataFrame,
@@ -939,7 +939,15 @@ with tab1:
 
     st.session_state.company_desc = company_desc or ""
     use_ai_downselect = st.checkbox("Use AI to downselect based on description", value=False)
-    
+    # Let the user pick how many AI-ranked matches to return
+    top_k_select = (
+        st.number_input(
+            "How many AI-ranked matches?",
+            min_value=1, max_value=50, value=5, step=1,
+            help="How many solicitations the AI should rank and return."
+        )
+        if use_ai_downselect else 5
+)
     if st.button("Show top results", type="primary", key="btn_show_results"):
         try:
             # 1) Apply manual filters from DB (no SAM calls)
@@ -949,7 +957,7 @@ with tab1:
                 st.warning("No solicitations match your filters. Try adjusting filters or refresh today's feed.")
                 st.session_state.sol_df = None
             else:
-                # ===== IF AI downselect + company description → Rank Top 5 =====
+                # ===== IF AI downselect + company description → Rank Top N =====
                 if use_ai_downselect and company_desc.strip():
                     # Pre-trim with embeddings to keep prompt small & fast
                     # Keep the most-similar N items before LLM ranking
@@ -981,16 +989,14 @@ with tab1:
                             mime="text/csv"
                         )
                     else:
-                        # Rank Top 5 with LLM (small prompt, capped candidates)
-                        with st.spinner("Ranking top matches with AI…"):
-                            ranked = ai_rank_solicitations_by_fit(
-                                df=pretrim,
-                                company_desc=company_desc.strip(),
-                                api_key=OPENAI_API_KEY,
-                                top_k=5,
-                                max_candidates=60,     # keep prompt compact → faster, cheaper
-                                model="gpt-4o-mini",
-                            )
+                        ranked = ai_rank_solicitations_by_fit(
+                        df=pretrim,
+                        company_desc=company_desc.strip(),
+                        api_key=OPENAI_API_KEY,
+                        top_k=int(top_k_select),
+                        max_candidates=60,
+                        model="gpt-4o-mini",
+)
 
                         if not ranked:
                             st.info("AI ranking returned no results; showing the manually filtered table instead.")
@@ -1018,18 +1024,18 @@ with tab1:
                                 mime="text/csv"
                             )
                         else:
-                            # Build ordered Top-5 dataframe
+                            # Build ordered dataframe
                             id_order = [x["notice_id"] for x in ranked]
                             preorder = {nid: i for i, nid in enumerate(id_order)}
                             top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
                             top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
                             top_df = top_df.sort_values("__order").drop(columns="__order")
 
-                            # Generate blurbs only for Top-5
+                            # Generate blurbs
                             blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
                             top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
 
-                            # Show Top-5 as expanders: blurb first, click to see details
+                            # Show expanders: blurb first, click to see details
                             st.success(f"Top {len(top_df)} matches by company fit:")
                             # quick lookup for reasons and scores
                             reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
@@ -1053,20 +1059,17 @@ with tab1:
                                         st.markdown("**Why this matched (AI):**")
                                         st.info(reason)
 
-                            # Save the Top-5 dataframe itself for Tab 4
-                            st.session_state.top5_df = top_df.reset_index(drop=True)
-                            # Remember for downstream tabs / downloads
+                            # Save the AI-ranked dataframe itself for Tab 4
+                            st.session_state.topn_df = top_df.reset_index(drop=True)
                             st.session_state.sol_df = top_df.copy()
                             # Invalidate any old partner matches (Tab 4 will auto-rebuild)
                             st.session_state.partner_matches = None
-                            st.session_state.top5_stamp = datetime.utcnow().isoformat()
-                            # Optional: let user download just the Top-5 rows
+                            st.session_state.topn_stamp = datetime.utcnow().isoformat()
                             st.download_button(
-                                "Download Top-5 (AI-ranked) as CSV",
-                                top_df.to_csv(index=False).encode("utf-8"),
-                                file_name="top5_ai_ranked.csv",
-                                mime="text/csv"
-                            )
+                            f"Download Top-{int(top_k_select)} (AI-ranked) as CSV",
+                            top_df.to_csv(index=False).encode("utf-8"),
+                            file_name=f"top{int(top_k_select)}_ai_ranked.csv",
+                            mime="text/csv")
 
                 # ===== NO AI → just show the filtered table with blurbs =====
                 else:
@@ -1178,16 +1181,14 @@ with tab3:
                 st.exception(e)
 # ---- Tab 4
 with tab4:
-    st.header("Partner Matches (from Top-5)")
+    st.header("Partner Matches (from AI-ranked results)")
 
-    # Load companies from DB (read-only; no manage UI)
+    # Need AI-ranked results from Tab 1
+    topn = st.session_state.get("topn_df")
     df_companies = companies_df()
 
-    # Need Top-5 from Tab 1
-    top5 = st.session_state.get("top5_df")
-
-    if top5 is None or top5.empty:
-        st.info("No Top-5 available. In Tab 1, run AI ranking to generate Top-5 first.")
+    if topn is None or topn.empty:
+        st.info("No AI-ranked results available. In Tab 1, run AI ranking to generate matches first.")
     elif df_companies.empty:
         st.info("Your company database is empty. Populate the 'company' table in Supabase with: name, description, city, state.")
     else:
@@ -1196,16 +1197,16 @@ with tab4:
         if not company_desc_global:
             st.info("No company description provided in Tab 1. Please enter one there and rerun.")
         else:
-            # Auto-compute matches when Top-5 changes or cache is empty
+            # Auto-compute matches when Top-n changes or cache is empty
             need_recompute = (
                 st.session_state.get("partner_matches") is None or
-                st.session_state.get("partner_matches_stamp") != st.session_state.get("top5_stamp")
+                st.session_state.get("partner_matches_stamp") != st.session_state.get("topn_stamp")
             )
 
             if need_recompute:
-                with st.spinner("Analyzing gaps and selecting partners for Top-5…"):
+                with st.spinner("Analyzing gaps and selecting partners..."):
                     matches = []
-                    for _, row in top5.head(5).iterrows():
+                    for _, row in topn.iterrows():
                         title = str(row.get("title", "")) or "Untitled"
                         blurb = str(row.get("blurb", "")).strip()
                         desc  = str(row.get("description", "")) or ""
@@ -1239,9 +1240,9 @@ with tab4:
                             "ai": ai
                         })
 
-                # Cache results with a stamp tied to the Top-5
+                # Cache results with a stamp tied to the Top-n
                 st.session_state.partner_matches = matches
-                st.session_state.partner_matches_stamp = st.session_state.get("top5_stamp")
+                st.session_state.partner_matches_stamp = st.session_state.get("topn_stamp")
 
             # Render cached matches
             matches = st.session_state.get("partner_matches", [])
