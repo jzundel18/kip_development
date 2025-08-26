@@ -810,8 +810,8 @@ def ai_rank_solicitations_by_fit(
     df: pd.DataFrame,
     company_desc: str,
     api_key: str,
-    top_k: int = 5,
-    max_candidates: int = 100,
+    top_k: int = 10,
+    max_candidates: int = 1000,
     model: str = "gpt-4o-mini",
 ) -> list[dict]:
     if df is None or df.empty:
@@ -902,9 +902,9 @@ with tab1:
 
     colA, colB, colC = st.columns([1,1,1])
     with colA:
-        limit_results = st.number_input("Max results to show", min_value=1, max_value=5000, value=200)
+        limit_results = st.number_input("Max results to show", min_value=1, max_value=5000, value=20)
     with colB:
-        keywords_raw = st.text_input("Filter keywords (OR, comma-separated)", value="rfq, rfp, rfi")
+        keywords_raw = st.text_input("Filter keywords (OR, comma-separated)", value="")
     with colC:
         naics_raw = st.text_input("Filter by NAICS (comma-separated)", value="")
 
