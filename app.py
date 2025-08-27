@@ -648,8 +648,13 @@ def ai_downselect_df(company_desc: str, df: pd.DataFrame, api_key: str,
         q = client.embeddings.create(model="text-embedding-3-small", input=[company_desc])
         Xq = np.array(q.data[0].embedding, dtype=np.float32)
 
-        r = client.embeddings.create(model="text-embedding-3-small", input=texts)
-        X = np.array([d.embedding for d in r.data], dtype=np.float32)
+        X_list = []
+        batch_size = 500  # tune as needed
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            r = client.embeddings.create(model="text-embedding-3-small", input=batch)
+            X_list.extend([d.embedding for d in r.data])
+        X = np.array(X_list, dtype=np.float32)
 
         Xq_norm = Xq / (np.linalg.norm(Xq) + 1e-9)
         X_norm = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
@@ -1117,6 +1122,39 @@ def _company_name_from_url(url: str) -> str:
     base = " ".join(w.upper() if len(w) <= 4 and w.isalpha() and w.isupper() else w.title() for w in base.split())
     return base
 
+# --- Locality extraction (very lightweight) ---
+_US_STATE_ABBR = {
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+    "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+    "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"
+}
+
+def _extract_locality(text: str) -> dict | None:
+    """
+    Heuristically extract 'City, ST' (US) from the solicitation text.
+    Returns {"city": "...", "state": "ST"} or None if not found.
+    """
+    if not text:
+        return None
+    t = " ".join(text.split())  # collapse whitespace
+    # 1) Look for "... City, ST ..." pattern
+    m = re.search(r"\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s*,\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b", t)
+    if m:
+        city, st = m.group(1), m.group(2)
+        return {"city": city, "state": st}
+    # 2) Fort/AFB/Port style (e.g., "Fort Bragg, NC", "Hill AFB, UT")
+    m = re.search(r"\b(Fort|Camp|Port|Base|Depot|Arsenal|AFB)\s+[A-Z][\w-]+(?:\s[A-Z][\w-]+)*\s*,\s*(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b", t)
+    if m:
+        # Use the base name as "city" for filtering
+        place = m.group(0).rsplit(",", 1)[0]
+        st = m.group(2)
+        return {"city": place, "state": st}
+    # 3) If only a state is clearly present, return state-only
+    m = re.search(r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b", t)
+    if m:
+        return {"city": "", "state": m.group(1)}
+    return None
+
 # ====== ROUTER ======
 if st.session_state.view == "auth":
     render_auth_screen()
@@ -1150,6 +1188,9 @@ if "sup_df" not in st.session_state:
 # cache: per-solicitation vendor suggestions (Internal Use tab)
 if "vendor_suggestions" not in st.session_state:
     st.session_state.vendor_suggestions = {}  # { notice_id: DataFrame }
+# per-solicitation user messages (e.g., no locality / no vendors found)
+if "vendor_errors" not in st.session_state:
+    st.session_state.vendor_errors = {}  # { notice_id: str }
 # track which Internal Use expanders are open (per notice)
 if "expander_open" not in st.session_state:
     st.session_state.expander_open = {}
@@ -1720,95 +1761,53 @@ with tab5:
         except Exception as e:
             return f"(Could not generate research direction: {e})"
     
-    def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
+    def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3, locality: dict | None = None) -> pd.DataFrame:
         """
-        1) Try your original helper (fs.get_suppliers)
-        2) If it throws (e.g., 'Parser must be a string...' from dateutil), fallback to a direct SerpAPI query we control.
-        Returns DataFrame with columns: name, website, location, reason
+        1) Try original helper (fs.get_suppliers)
+        2) Fallback to SerpAPI with vendor-ish filters
+        If 'locality' is provided, bias/trim to that locality.
+        Returns DataFrame: [name, website, location, reason]
         """
-        # ---- normalize all inputs to safe strings
-        sol_norm = {
-            "notice_id":     _s(sol.get("notice_id")),
-            "title":         _s(sol.get("title")),
-            "description":   _s(sol.get("description")),
-            "naics_code":    _s(sol.get("naics_code")),
-            "set_aside_code":_s(sol.get("set_aside_code")),
-            "response_date": _s(sol.get("response_date")),
-            "posted_date":   _s(sol.get("posted_date")),
-            "link":          _s(sol.get("link")),
-        }
-
-        # guard: need some text to search
-        if not sol_norm["title"] and not sol_norm["description"]:
-            st.warning("This solicitation has no title/description text to search; skipping vendor lookup.")
-            return pd.DataFrame(columns=["name","website","location","reason"])
-
-        # ---- 1) TRY your original helper
-        try:
-            results = fs.get_suppliers(
-                solicitations=[sol_norm],
-                our_recommended_suppliers=[],
-                our_not_recommended_suppliers=[],
-                Max_Google_Results=int(max_google),
-                OpenAi_API_Key=OPENAI_API_KEY,
-                Serp_API_Key=SERP_API_KEY,
-            )
-            df = pd.DataFrame(results) if isinstance(results, (list, tuple)) else pd.DataFrame()
-            if not df.empty:
-                score_col = next((c for c in ["score","ai_score","relevance","confidence"] if c in df.columns), None)
-                if score_col:
-                    df = df.sort_values(score_col, ascending=False)
-
-                def pick(d, *names, default=""):
-                    for n in names:
-                        if n in d and pd.notna(d[n]) and str(d[n]).strip():
-                            return str(d[n]).strip()
-                    return default
-
-                cleaned = []
-                for _, r in df.head(top_n).iterrows():
-                    rd = r.to_dict()
-                    name     = pick(rd, "supplier_name", "name", "vendor", "company")
-                    website  = pick(rd, "website", "url", "link")
-                    location = ", ".join([x for x in [
-                        pick(rd, "city", "supplier_city", "location_city"),
-                        pick(rd, "state", "supplier_state", "location_state"),
-                    ] if x])
-                    reason   = pick(rd, "reason", "why_matched", "justification", "notes")
-                    if not reason and name:
-                        reason = _ai_vendor_why(
-                            vendor_name=name,
-                            solicitation_title=sol_norm["title"],
-                            solicitation_desc=sol_norm["description"],
-                            api_key=OPENAI_API_KEY,
-                        )
-                    cleaned.append({"name": name, "website": website, "location": location, "reason": reason})
-                if cleaned:
-                    return pd.DataFrame(cleaned)
-
-        except Exception as e:
-            # NOTE: This is the path you're currently hitting
-            st.info(f"Primary supplier finder failed; using direct SerpAPI fallback. ({e})")
-
+        ...
         # ---- 2) FALLBACK: direct SerpAPI (no fragile date parsing)
         query_bits = [sol_norm["title"]]
         if sol_norm["naics_code"]:
             query_bits.append(f"NAICS {sol_norm['naics_code']}")
         # steer the search a bit toward vendors
-        query_bits.append("manufacturer supplier vendor")
+        query_bits.append("service provider contractor")
+        if locality:
+            if locality.get("city"):
+                query_bits.append(locality["city"])
+            if locality.get("state"):
+                query_bits.append(locality["state"])
+            query_bits.append("near")  # nudge to local results
         q = " ".join([b for b in query_bits if b]).strip()
 
         try:
-            raw = _fallback_serpapi_fetch(q, SERP_API_KEY, max_results=max(10, top_n*3))
+            raw = _fallback_serpapi_fetch(q, SERP_API_KEY, max_results=max(20, top_n*5))
         except Exception as e:
             st.warning(f"SerpAPI fallback failed: {e}")
             return pd.DataFrame(columns=["name","website","location","reason"])
 
         rows = []
-        for it in raw[: max(10, top_n*3)]:  # look at a few; we’ll prune to top_n later
+        for it in raw:
             website = it["link"]
-            name = _companyish_name_from_result(it["title"], website)
-            # 1-sentence reason
+            title = it.get("title") or ""
+            snippet = it.get("snippet") or ""
+            name = _companyish_name_from_result(title, website)
+
+            # If we have a locality, prefer results whose snippet or title mentions the city/state
+            if locality:
+                city_ok = locality.get("city") and (locality["city"].lower() in (title + " " + snippet).lower())
+                state_ok = locality.get("state") and (locality["state"] in (title + " " + snippet))
+                # require at least one match if a city is present; otherwise accept state
+                if locality.get("city"):
+                    if not (city_ok or state_ok):
+                        continue
+                else:
+                    if not state_ok:
+                        continue
+
             reason = _ai_vendor_why(
                 vendor_name=name,
                 solicitation_title=sol_norm["title"],
@@ -1817,7 +1816,7 @@ with tab5:
             )
             rows.append({"name": name, "website": website, "location": "", "reason": reason})
 
-        # de-dupe by website host, keep first 3
+        # de-dupe by host and cap to top_n
         out, seen = [], set()
         for r in rows:
             h = _host(r["website"])
@@ -2044,25 +2043,63 @@ with tab5:
                         st.markdown("**Proposed Research Direction:**")
                         st.write(direction)
                     else:
-                        btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-
+                        # --- Vendor finder button (Machine Shop / Services modes) ---
+                        # Use a different label for services
+                        btn_label = "Find 3 potential vendors (SerpAPI)"
                         if st.session_state.get("iu_mode") == "services":
-                            # Services mode → locality-aware finder
-                            if st.button("Find 3 local service providers", key=btn_key):
-                                sol_dict = {
-                                    "notice_id": nid,
-                                    "title": getattr(row, "title", ""),
-                                    "description": getattr(row, "description", ""),
-                                    "naics_code": getattr(row, "naics_code", ""),
-                                    "set_aside_code": getattr(row, "set_aside_code", ""),
-                                    "response_date": getattr(row, "response_date", ""),
-                                    "posted_date": getattr(row, "posted_date", ""),
-                                    "link": getattr(row, "link", ""),
-                                }
-                                df_local, note = _find_service_vendors_for_opportunity(sol_dict, top_n=3)
-                                st.session_state.vendor_suggestions[nid] = df_local
-                                st.session_state.vendor_debug[nid] = {"note": note}
-                                st.rerun()
+                            btn_label = "Find 3 local service providers"
+
+                        btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
+                        if st.button(btn_label, key=btn_key):
+                            # 1) Try to extract locality from title+description for SERVICES
+                            locality = None
+                            if st.session_state.get("iu_mode") == "services":
+                                locality = _extract_locality(
+                                    f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}"
+                                )
+                                if not locality:
+                                    st.session_state.vendor_errors[nid] = (
+                                        "Could not identify a specific locality from the solicitation. "
+                                        "Showing general providers instead."
+                                    )
+                                else:
+                                    # Clear any old message for this notice
+                                    st.session_state.vendor_errors.pop(nid, None)
+
+                            sol_dict = {
+                                "notice_id": nid,
+                                "title": getattr(row, "title", ""),
+                                "description": getattr(row, "description", ""),
+                                "naics_code": getattr(row, "naics_code", ""),
+                                "set_aside_code": getattr(row, "set_aside_code", ""),
+                                "response_date": getattr(row, "response_date", ""),
+                                "posted_date": getattr(row, "posted_date", ""),
+                                "link": getattr(row, "link", ""),
+                            }
+
+                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3, locality=locality)
+
+                            if vendors_df is None or vendors_df.empty:
+                                # No vendors found → set a clear message for the right column
+                                loc_msg = ""
+                                if st.session_state.get("iu_mode") == "services":
+                                    if locality:
+                                        where = ", ".join([x for x in [locality.get("city",""), locality.get("state","")] if x]) or locality.get("state","")
+                                        loc_msg = f" for the specified locality ({where})"
+                                    st.session_state.vendor_errors[nid] = (
+                                        f"No service providers were found{loc_msg}. "
+                                        "Try broadening the search or verify the location in the solicitation text."
+                                    )
+                                else:
+                                    st.session_state.vendor_errors[nid] = (
+                                        "No vendors found for this opportunity with the current search."
+                                    )
+                            else:
+                                # Clear message on success
+                                st.session_state.vendor_errors.pop(nid, None)
+
+                            st.session_state.vendor_suggestions[nid] = vendors_df
+                            st.rerun()
                         else:
                             # Machine Shop or fallback → generic finder
                             if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
@@ -2081,12 +2118,12 @@ with tab5:
                                 st.rerun()
 
                 with right:
+                    err_msg = st.session_state.vendor_errors.get(nid)
+                    if err_msg:
+                        st.info(err_msg)
+
                     vend_df = st.session_state.vendor_suggestions.get(nid)
                     if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
-                        dbg = (st.session_state.vendor_debug or {}).get(nid, {})
-                        note_txt = (dbg.get("note") or "").strip()
-                        if note_txt:
-                            st.caption(note_txt)
                         st.markdown("**Vendor candidates**")
                         for j, v in vend_df.iterrows():
                             raw_name   = (v.get("name") or "").strip()
@@ -2094,21 +2131,19 @@ with tab5:
                             location   = (v.get("location") or "").strip()
                             reason_txt = (v.get("reason") or "").strip()
 
-                            # Ensure the link text is the company name; derive from URL if missing
                             display_name = raw_name or _company_name_from_url(website) or "Unnamed Vendor"
-
-                            # Show as a bold link (or bold text if no URL)
                             if website:
                                 st.markdown(f"- **[{display_name}]({website})**")
                             else:
                                 st.markdown(f"- **{display_name}**")
-
                             if location:
                                 st.caption(location)
                             if reason_txt:
                                 st.write(reason_txt)
                     else:
-                        st.caption("No vendors yet. Click the button to fetch.")
+                        # Only show a generic message if there wasn’t a specific one
+                        if not err_msg:
+                            st.caption("No vendors yet. Click the button to fetch.")
    # Run the chosen preset
     if run_machine_shop:
         st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
