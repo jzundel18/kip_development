@@ -1761,47 +1761,89 @@ with tab5:
         except Exception as e:
             return f"(Could not generate research direction: {e})"
     
-    def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3, locality: dict | None = None) -> pd.DataFrame:
+    def _find_vendors_for_opportunity(
+        sol: dict,
+        max_google: int = 5,
+        top_n: int = 3,
+        locality: dict | None = None
+    ) -> pd.DataFrame:
         """
-        1) Try original helper (fs.get_suppliers)
-        2) Fallback to SerpAPI with vendor-ish filters
-        If 'locality' is provided, bias/trim to that locality.
-        Returns DataFrame: [name, website, location, reason]
+        Use SerpAPI (Google) with vendor-ish filters.
+        If 'locality' is provided (e.g., {"city":"Norfolk","state":"VA"}),
+        bias the query and post-filter to that locality.
+
+        Returns DataFrame with columns: [name, website, location, reason]
         """
-        ...
-        # ---- 2) FALLBACK: direct SerpAPI (no fragile date parsing)
-        query_bits = [sol_norm["title"]]
-        if sol_norm["naics_code"]:
-            query_bits.append(f"NAICS {sol_norm['naics_code']}")
-        # steer the search a bit toward vendors
+        # --- Normalize solicitation dict so later code is safe ---
+        sol_norm = {
+            "notice_id": str(sol.get("notice_id", "")),
+            "title": str(sol.get("title", "")),
+            "description": str(sol.get("description", "")),
+            "naics_code": str(sol.get("naics_code", "")),
+            "set_aside_code": str(sol.get("set_aside_code", "")),
+            "response_date": str(sol.get("response_date", "")),
+            "posted_date": str(sol.get("posted_date", "")),
+            "link": str(sol.get("link", "")),
+        }
+
+        title = sol_norm["title"].strip()
+        desc  = sol_norm["description"].strip()
+        naics = sol_norm["naics_code"].strip()
+
+        # --- Build a vendor-ish Google query string ---
+        query_bits = []
+        if title:
+            query_bits.append(title)
+        if naics:
+            query_bits.append(f"NAICS {naics}")
+        # steer toward vendors
         query_bits.append("service provider contractor")
+
+        # If locality provided, add city/state tokens to query
         if locality:
-            if locality.get("city"):
-                query_bits.append(locality["city"])
-            if locality.get("state"):
-                query_bits.append(locality["state"])
-            query_bits.append("near")  # nudge to local results
+            city = (locality.get("city") or "").strip()
+            state = (locality.get("state") or "").strip()
+            if city:
+                query_bits.append(city)
+            if state:
+                query_bits.append(state)
+            # nudge Google toward local results
+            query_bits.append("near")
+
         q = " ".join([b for b in query_bits if b]).strip()
+        if not q:
+            # If somehow the title is empty, fall back to description words
+            q = " ".join((desc[:120] or "services contractor")).strip()
 
+        # --- SerpAPI Google search (filtered toward vendor pages) ---
         try:
-            raw = _fallback_serpapi_fetch(q, SERP_API_KEY, max_results=max(20, top_n*5))
+            raw_results = _fallback_serpapi_fetch(q, SERP_API_KEY, max_results=max(20, top_n * 6))
         except Exception as e:
-            st.warning(f"SerpAPI fallback failed: {e}")
-            return pd.DataFrame(columns=["name","website","location","reason"])
+            st.warning(f"SerpAPI search failed: {e}")
+            return pd.DataFrame(columns=["name", "website", "location", "reason"])
 
-        rows = []
-        for it in raw:
-            website = it["link"]
-            title = it.get("title") or ""
-            snippet = it.get("snippet") or ""
-            name = _companyish_name_from_result(title, website)
+        rows: list[dict] = []
 
-            # If we have a locality, prefer results whose snippet or title mentions the city/state
+        # --- Post-filter for locality if provided ---
+        for it in raw_results:
+            website = it.get("link", "") or ""
+            title_r = it.get("title", "") or ""
+            snippet = it.get("snippet", "") or ""
+
+            display_name = _companyish_name_from_result(title_r, website)
+
+            # If we have a locality, prefer results that mention city/state
             if locality:
-                city_ok = locality.get("city") and (locality["city"].lower() in (title + " " + snippet).lower())
-                state_ok = locality.get("state") and (locality["state"] in (title + " " + snippet))
-                # require at least one match if a city is present; otherwise accept state
-                if locality.get("city"):
+                text_lc = (title_r + " " + snippet).lower()
+                city = (locality.get("city") or "").strip()
+                state = (locality.get("state") or "").strip()
+
+                city_ok = bool(city) and (city.lower() in text_lc)
+                state_ok = bool(state) and (state in (title_r + " " + snippet))
+
+                # If a city is present, require city OR state match.
+                # If only a state is present, require state match.
+                if city:
                     if not (city_ok or state_ok):
                         continue
                 else:
@@ -1809,17 +1851,23 @@ with tab5:
                         continue
 
             reason = _ai_vendor_why(
-                vendor_name=name,
-                solicitation_title=sol_norm["title"],
-                solicitation_desc=sol_norm["description"],
+                vendor_name=display_name,
+                solicitation_title=title,
+                solicitation_desc=desc,
                 api_key=OPENAI_API_KEY,
             )
-            rows.append({"name": name, "website": website, "location": "", "reason": reason})
 
-        # de-dupe by host and cap to top_n
+            rows.append({
+                "name": display_name,
+                "website": website,
+                "location": "",   # unknown from organic results; Maps path fills this
+                "reason": reason,
+            })
+
+        # --- De-dupe by host and cap to top_n ---
         out, seen = [], set()
         for r in rows:
-            h = _host(r["website"])
+            h = _host(r.get("website", ""))
             if not h or h in seen:
                 continue
             seen.add(h)
@@ -1827,7 +1875,7 @@ with tab5:
             if len(out) >= top_n:
                 break
 
-        return pd.DataFrame(out, columns=["name","website","location","reason"])
+        return pd.DataFrame(out, columns=["name", "website", "location", "reason"])
 
     def _find_service_vendors_for_opportunity(sol: dict, top_n: int = 3) -> tuple[pd.DataFrame, str]:
         """
