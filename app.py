@@ -184,6 +184,41 @@ def _fallback_serpapi_fetch(query: str, serp_key: str, max_results: int = 15) ->
         uniq.append(it)
     return uniq
 
+def _serpapi_maps_local_services(query: str, city: str, state: str, serp_key: str, max_results: int = 8) -> list[dict]:
+    """
+    Use SerpAPI Google Maps to find local service vendors near city/state.
+    Returns list of dicts: {name, website, address, phone}
+    """
+    import requests
+    url = "https://serpapi.com/search.json"
+    loc = ", ".join([x for x in [city, state] if x])
+    params = {
+        "engine": "google_maps",
+        "q": query,
+        "type": "search",
+        "hl": "en",
+        "api_key": serp_key,
+    }
+    # If we have a locality, bias the search there
+    if loc:
+        params["location"] = loc
+
+    r = requests.get(url, params=params, timeout=25)
+    r.raise_for_status()
+    data = r.json() if r.content else {}
+
+    out = []
+    for row in (data.get("local_results") or []):
+        name = (row.get("title") or "").strip()
+        website = (row.get("website") or "").strip() or (row.get("links", {}).get("website") or "").strip()
+        address = (row.get("address") or "").strip()
+        phone = (row.get("phone") or "").strip()
+        if name:
+            out.append({"name": name, "website": website, "address": address, "phone": phone})
+        if len(out) >= max_results:
+            break
+    return out
+
 def normalize_naics_input(text_in: str) -> list[str]:
     if not text_in:
         return []
@@ -706,6 +741,92 @@ def ai_make_blurbs(
             continue
 
     return out
+
+# --- Location extraction for "Services" mode ---
+
+_US_STATES = {
+    # abbrev -> full
+    "AL":"Alabama","AK":"Alaska","AZ":"Arizona","AR":"Arkansas","CA":"California","CO":"Colorado","CT":"Connecticut",
+    "DE":"Delaware","FL":"Florida","GA":"Georgia","HI":"Hawaii","ID":"Idaho","IL":"Illinois","IN":"Indiana","IA":"Iowa",
+    "KS":"Kansas","KY":"Kentucky","LA":"Louisiana","ME":"Maine","MD":"Maryland","MA":"Massachusetts","MI":"Michigan",
+    "MN":"Minnesota","MS":"Mississippi","MO":"Missouri","MT":"Montana","NE":"Nebraska","NV":"Nevada","NH":"New Hampshire",
+    "NJ":"New Jersey","NM":"New Mexico","NY":"New York","NC":"North Carolina","ND":"North Dakota","OH":"Ohio",
+    "OK":"Oklahoma","OR":"Oregon","PA":"Pennsylvania","RI":"Rhode Island","SC":"South Carolina","SD":"South Dakota",
+    "TN":"Tennessee","TX":"Texas","UT":"Utah","VT":"Vermont","VA":"Virginia","WA":"Washington","WV":"West Virginia",
+    "WI":"Wisconsin","WY":"Wyoming","DC":"District of Columbia"
+}
+_STATE_NAMES = {v.upper(): k for k, v in _US_STATES.items()}
+
+def _regex_guess_location(text: str) -> dict:
+    """
+    Quick heuristic: find patterns like 'City, ST' or any state name / abbrev mentions.
+    Returns {"city": str, "state": str, "raw": str} (may be empty strings).
+    """
+    import re
+    t = (text or "").strip()
+    if not t:
+        return {"city":"", "state":"", "raw":""}
+
+    # city, ST (2-letter)
+    m = re.search(r'\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\s*,\s*([A-Z]{2})\b', t)
+    if m and m.group(2) in _US_STATES:
+        return {"city": m.group(1).strip(), "state": m.group(2), "raw": m.group(0)}
+
+    # any full state name
+    for name in _STATE_NAMES:
+        if re.search(r'\b' + re.escape(name) + r'\b', t, flags=re.IGNORECASE):
+            abbr = _STATE_NAMES[name]
+            return {"city":"", "state": abbr, "raw": name}
+
+    # bare 2-letter state abbrev
+    m2 = re.search(r'\b([A-Z]{2})\b', t)
+    if m2 and m2.group(1) in _US_STATES:
+        return {"city":"", "state": m2.group(1), "raw": m2.group(1)}
+
+    return {"city":"", "state":"", "raw":""}
+
+def _extract_work_location(title: str, description: str, api_key: str) -> dict:
+    """
+    Uses LLM to extract US city/state from solicitation narrative.
+    Falls back to regex heuristic.
+    Returns: {"city": str, "state": "CA", "raw": "...", "confidence": float}
+    """
+    blob = f"{(title or '').strip()}\n\n{(description or '').strip()}"
+    # quick heuristic first (cheap)
+    guess = _regex_guess_location(blob)
+    if guess.get("city") or guess.get("state"):
+        guess["confidence"] = 0.6
+        return guess
+
+    # LLM attempt (structured JSON)
+    try:
+        client = OpenAI(api_key=api_key)
+        sys = ("You extract the intended WORK LOCATION from federal solicitations. "
+               "Return ONLY JSON {\"city\":\"\",\"state\":\"\",\"raw\":\"\",\"confidence\":0-1}. "
+               "If city unknown but state is clear, leave city empty. If no location mentioned, return empty strings.")
+        user = ("Extract US work location (city/state) where the services will be performed from the text below. "
+                "Be conservative—ignore mailing addresses and POCs unless explicitly marked as the performance location.\n\n"
+                f"{blob[:6000]}")
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[{"role":"system","content":sys},{"role":"user","content":user}],
+            temperature=0.0,
+        )
+        data = json.loads(r.choices[0].message.content or "{}")
+        city = (data.get("city") or "").strip()
+        state = (data.get("state") or "").strip().upper()
+        raw = (data.get("raw") or "").strip()
+        conf = float(data.get("confidence", 0.5))
+        # normalize state to 2-letter if full name given
+        if state and len(state) > 2:
+            state = _STATE_NAMES.get(state.upper(), state[:2].upper())
+        if state and state not in _US_STATES:
+            state = ""
+        return {"city": city, "state": state, "raw": raw, "confidence": conf}
+    except Exception:
+        # fallback only
+        return {**_regex_guess_location(blob), "confidence": 0.4}
 
 # =========================
 # DB helpers
@@ -1709,6 +1830,85 @@ with tab5:
 
         return pd.DataFrame(out, columns=["name","website","location","reason"])
 
+    def _find_service_vendors_for_opportunity(sol: dict, top_n: int = 3) -> tuple[pd.DataFrame, str]:
+        """
+        Extract work location from the solicitation, then use a local Google Maps search
+        to find service providers in that same locality. If no location is found, note it and
+        fall back to a general (non-local) query.
+        Returns (df, note_str). df columns: name, website, location, reason
+        """
+        title = _s(sol.get("title"))
+        desc  = _s(sol.get("description"))
+        naics = _s(sol.get("naics_code"))
+
+        # 1) Extract location
+        loc = _extract_work_location(title, desc, OPENAI_API_KEY)
+        city, state = loc.get("city","").strip(), loc.get("state","").strip()
+        has_loc = bool(city or state)
+        note = ""
+        if has_loc:
+            pretty_loc = ", ".join([x for x in [city, state] if x])
+            note = f"Matching suppliers in the work locality: {pretty_loc}."
+        else:
+            note = "Solicitation does not clearly state a work location; showing capable service providers without locality filtering."
+
+        # 2) Build a services query
+        #    Use title words + service-ish keywords; include NAICS if present
+        service_words = ["services", "maintenance", "installation", "inspection", "field service", "support"]
+        q_bits = [title] + service_words
+        if naics:
+            q_bits.append(f"NAICS {naics}")
+        q = " ".join([b for b in q_bits if b]).strip()
+
+        # 3) Maps search (local if possible)
+        try:
+            maps_rows = _serpapi_maps_local_services(q, city if has_loc else "", state if has_loc else "", SERP_API_KEY, max_results=10)
+        except Exception as e:
+            maps_rows = []
+            note += f" (Maps search failed: {e})"
+
+        # 4) Post-filter: keep ones whose address includes the state (and city if given)
+        picked = []
+        for r in maps_rows:
+            addr = (r.get("address") or "").upper()
+            ok = True
+            if state:
+                ok = ok and (state.upper() in addr or _US_STATES.get(state, "").upper() in addr)
+            if city:
+                ok = ok and (city.upper() in addr)
+            if ok:
+                picked.append(r)
+
+        use_rows = picked or maps_rows  # if nothing matches strictly, use whatever we got (but we already noted locality logic)
+
+        # 5) Convert to display rows + 1-line AI reason
+        rows = []
+        for r in use_rows[: max(10, top_n*3)]:
+            name = r.get("name","").strip()
+            website = r.get("website","").strip()
+            loc_str = r.get("address","").strip()
+            reason = _ai_vendor_why(
+                vendor_name=name or (website or "This vendor"),
+                solicitation_title=title,
+                solicitation_desc=desc,
+                api_key=OPENAI_API_KEY,
+            )
+            rows.append({"name": name or _companyish_name_from_result("", website), "website": website, "location": loc_str, "reason": reason})
+
+        # De-dupe by host and cut to top_n
+        out, seen = [], set()
+        for r in rows:
+            h = _host(r.get("website",""))
+            if h and h in seen:
+                continue
+            if h:
+                seen.add(h)
+            out.append(r)
+            if len(out) >= top_n:
+                break
+
+        return pd.DataFrame(out, columns=["name","website","location","reason"]), note
+
     def _compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
         # pull everything; we'll let AI do the heavy lifting
@@ -1844,26 +2044,49 @@ with tab5:
                         st.markdown("**Proposed Research Direction:**")
                         st.write(direction)
                     else:
-                        # --- Vendor finder button (for Machine Shop / Services modes only) ---
                         btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-                        if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                            sol_dict = {
-                                "notice_id": nid,
-                                "title": getattr(row, "title", ""),
-                                "description": getattr(row, "description", ""),
-                                "naics_code": getattr(row, "naics_code", ""),
-                                "set_aside_code": getattr(row, "set_aside_code", ""),
-                                "response_date": getattr(row, "response_date", ""),
-                                "posted_date": getattr(row, "posted_date", ""),
-                                "link": getattr(row, "link", ""),
-                            }
-                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
-                            st.session_state.vendor_suggestions[nid] = vendors_df
-                            st.rerun()
+
+                        if st.session_state.get("iu_mode") == "services":
+                            # Services mode → locality-aware finder
+                            if st.button("Find 3 local service providers", key=btn_key):
+                                sol_dict = {
+                                    "notice_id": nid,
+                                    "title": getattr(row, "title", ""),
+                                    "description": getattr(row, "description", ""),
+                                    "naics_code": getattr(row, "naics_code", ""),
+                                    "set_aside_code": getattr(row, "set_aside_code", ""),
+                                    "response_date": getattr(row, "response_date", ""),
+                                    "posted_date": getattr(row, "posted_date", ""),
+                                    "link": getattr(row, "link", ""),
+                                }
+                                df_local, note = _find_service_vendors_for_opportunity(sol_dict, top_n=3)
+                                st.session_state.vendor_suggestions[nid] = df_local
+                                st.session_state.vendor_debug[nid] = {"note": note}
+                                st.rerun()
+                        else:
+                            # Machine Shop or fallback → generic finder
+                            if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                                sol_dict = {
+                                    "notice_id": nid,
+                                    "title": getattr(row, "title", ""),
+                                    "description": getattr(row, "description", ""),
+                                    "naics_code": getattr(row, "naics_code", ""),
+                                    "set_aside_code": getattr(row, "set_aside_code", ""),
+                                    "response_date": getattr(row, "response_date", ""),
+                                    "posted_date": getattr(row, "posted_date", ""),
+                                    "link": getattr(row, "link", ""),
+                                }
+                                vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
+                                st.session_state.vendor_suggestions[nid] = vendors_df
+                                st.rerun()
 
                 with right:
                     vend_df = st.session_state.vendor_suggestions.get(nid)
                     if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                        dbg = (st.session_state.vendor_debug or {}).get(nid, {})
+                        note_txt = (dbg.get("note") or "").strip()
+                        if note_txt:
+                            st.caption(note_txt)
                         st.markdown("**Vendor candidates**")
                         for j, v in vend_df.iterrows():
                             raw_name   = (v.get("name") or "").strip()
