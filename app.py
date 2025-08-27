@@ -1550,11 +1550,13 @@ with tab5:
         help="We first pre-trim with embeddings, then rank with the LLM."
     )
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         run_machine_shop = st.button("Solicitations for Machine Shop", type="primary", use_container_width=True, key="iu_btn_machine")
     with c2:
         run_services = st.button("Solicitations for Services", type="primary", use_container_width=True, key="iu_btn_services")
+    with c3:
+        run_research = st.button("R&D Solicitations", type="primary", use_container_width=True, key="iu_btn_research")
 
     def _ai_vendor_why(vendor_name: str, solicitation_title: str, solicitation_desc: str, api_key: str) -> str:
         """Fallback: 1-sentence reason why this vendor might fit."""
@@ -1686,7 +1688,7 @@ with tab5:
 
         return pd.DataFrame(out, columns=["name","website","location","reason"])
 
-    def _compute_internal_results(preset_desc: str, negative_hint: str = "") -> dict | None:
+    def _compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
         # pull everything; we'll let AI do the heavy lifting
         df_all = query_filtered_df({
@@ -1700,10 +1702,42 @@ with tab5:
             st.warning("No solicitations in the database to evaluate.")
             return None
 
+        # -------- OPTIONAL: restrict to research-type before AI ranking --------
+        if research_only:
+            # NAICS frequently used for R&D (add more as needed)
+            rd_naics_prefixes = ("5417",)  # covers 541713/14/15/715 etc.
+            naics_mask = df_all["naics_code"].fillna("").astype(str).str.startswith(rd_naics_prefixes)
+
+            # Keyword signals in title/description
+            text = (df_all["title"].fillna("") + " " + df_all["description"].fillna("")).str.lower()
+            kw_any = [
+                "research", "r&d", "r and d", "development", "sbir", "sttr",
+                "prototype", "prototyping", "broad agency announcement", "baa",
+                "technology demonstration", "feasibility study", "study", "innovative",
+                "scientific", "laboratory", "experimentation", "test and evaluation"
+            ]
+            kw_mask = text.apply(lambda t: any(k in t for k in kw_any))
+
+            # Notice types that often signal research-ish market research/BAAs
+            nt = df_all["notice_type"].fillna("").str.lower()
+            nt_mask = nt.str.contains("baa") | nt.str.contains("sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
+
+            df_all = df_all[naics_mask | kw_mask | nt_mask].reset_index(drop=True)
+            if df_all.empty:
+                st.info("No likely research-type opportunities found.")
+                return None
+
+        # -------- Build the company description for AI --------
+        # Prefer the saved/entered description from Tab 1 if present
+        base_desc = (st.session_state.get("company_desc") or "").strip()
         company_desc_internal = preset_desc.strip()
+        if base_desc:
+            # Put your own company description at the top so the AI ranks for *you*
+            company_desc_internal = base_desc + "\n\n" + company_desc_internal
         if negative_hint.strip():
             company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
 
+        # -------- Pre-trim with embeddings to keep the LLM prompt small --------
         pretrim_cap = min(int(max_candidates_cap), max(20, 12 * int(internal_top_k)))
         pretrim = ai_downselect_df(company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
         if pretrim.empty:
@@ -1742,7 +1776,7 @@ with tab5:
         top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
 
         return {"top_df": top_df, "reason_by_id": reason_by_id}
-
+    
     def _render_internal_results():
         data = st.session_state.iu_results
         if not data:
@@ -1852,6 +1886,22 @@ if run_services:
     negative_hint = "Manufacturing-only or pure product buys without a material services component."
     with st.spinner("Finding best-matching solicitations..."):
         data = _compute_internal_results(preset_desc, negative_hint)
+    st.session_state.iu_results = data
+    st.rerun()
+
+if run_research:
+    st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+    preset_desc = (
+        "We are pursuing research and development (R&D) opportunities aligned with our capabilities. "
+        "Strong fits include applied research, technology maturation, prototyping, experimentation, "
+        "testing and evaluation, studies, and early-stage development tasks that culminate in demos or reports."
+    )
+    negative_hint = (
+        "Commodity/product-only buys, routine MRO, janitorial, food service, facility maintenance, "
+        "simple reselling, and non-technical services with no research or prototype component."
+    )
+    with st.spinner("Finding best-matching research solicitations..."):
+        data = _compute_internal_results(preset_desc, negative_hint, research_only=True)
     st.session_state.iu_results = data
     st.rerun()
 
