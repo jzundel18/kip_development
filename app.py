@@ -534,7 +534,7 @@ def ai_identify_gaps(company_desc: str, solicitation_text: str, api_key: str) ->
 
 def pick_best_partner_for_gaps(gap_text: str, companies: pd.DataFrame, api_key: str, top_n: int = 1) -> pd.DataFrame:
     """
-    Use embeddings to match companies to the gap text. Returns top_n rows from `companies`.
+    Use embeddings to match companies to the gap text. Returns top_n rows from companies.
     """
     if companies.empty or not gap_text.strip():
         return companies.head(0)
@@ -895,7 +895,6 @@ def render_auth_screen():
                 else:
                     st.error("Could not create account. Check server logs.")
 
-
 def render_account_settings():
     st.title("Account Settings")
 
@@ -1019,7 +1018,6 @@ with colR2:
         st.metric("Rows in DB", int(cnt))
     except Exception:
         st.metric("Rows in DB", 0)
-
 
 # =========================
 # Session state
@@ -1889,67 +1887,67 @@ with tab5:
                     else:
                         st.caption("No vendors yet. Click the button to fetch.")
    # Run the chosen preset
-if run_machine_shop:
-    st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
-    st.session_state.iu_mode = "machine"
-    preset_desc = (
-        "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
-        "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
-        "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
-        "Prefer solicitations with part drawings, specs, materials (e.g., aluminum, steel, titanium), "
-        "and tangible manufactured items."
-    )
-    negative_hint = (
-        "Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
-        "or anything that does not involve fabricating or machining a physical part."
-    )
-    with st.spinner("Finding best-matching solicitations..."):
-        data = _compute_internal_results(preset_desc, negative_hint)
-    st.session_state.iu_results = data
-    st.rerun()
+    if run_machine_shop:
+        st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+        st.session_state.iu_mode = "machine"
+        preset_desc = (
+            "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
+            "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
+            "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
+            "Prefer solicitations with part drawings, specs, materials (e.g., aluminum, steel, titanium), "
+            "and tangible manufactured items."
+        )
+        negative_hint = (
+            "Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
+            "or anything that does not involve fabricating or machining a physical part."
+        )
+        with st.spinner("Finding best-matching solicitations..."):
+            data = _compute_internal_results(preset_desc, negative_hint)
+        st.session_state.iu_results = data
+        st.rerun()
 
-if run_services:
-    st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
-    st.session_state.iu_mode = "services"
-    preset_desc = (
-        "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
-        "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
-        "operations support, professional services, and other labor-based or outcome-based services "
-        "delivered under SOW/Performance Work Statement."
-    )
-    negative_hint = "Manufacturing-only or pure product buys without a material services component."
-    with st.spinner("Finding best-matching solicitations..."):
-        data = _compute_internal_results(preset_desc, negative_hint)
-    st.session_state.iu_results = data
-    st.rerun()
+    if run_services:
+        st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+        st.session_state.iu_mode = "services"
+        preset_desc = (
+            "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
+            "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
+            "operations support, professional services, and other labor-based or outcome-based services "
+            "delivered under SOW/Performance Work Statement."
+        )
+        negative_hint = "Manufacturing-only or pure product buys without a material services component."
+        with st.spinner("Finding best-matching solicitations..."):
+            data = _compute_internal_results(preset_desc, negative_hint)
+        st.session_state.iu_results = data
+        st.rerun()
 
-if run_research:
-    st.session_state.iu_key_salt = uuid.uuid4().hex
-    st.session_state.iu_mode = "rd"   # mark that we are in research mode
-    preset_desc = (
-        "We are pursuing research and development (R&D) opportunities aligned with our capabilities. "
-        "Strong fits include applied research, technology maturation, prototyping, experimentation, "
-        "testing and evaluation, studies, and early-stage development tasks."
-    )
-    negative_hint = (
-        "Commodity/product-only buys, routine MRO, janitorial, IT support, or other non-research services."
-    )
-    with st.spinner("Finding best-matching research solicitations..."):
-        data = _compute_internal_results(preset_desc, negative_hint, research_only=True)
-    st.session_state.iu_results = data
-    st.rerun()
+    if run_research:
+        st.session_state.iu_key_salt = uuid.uuid4().hex
+        st.session_state.iu_mode = "rd"   # mark that we are in research mode
+        preset_desc = (
+            "We are pursuing research and development (R&D) opportunities aligned with our capabilities. "
+            "Strong fits include applied research, technology maturation, prototyping, experimentation, "
+            "testing and evaluation, studies, and early-stage development tasks."
+        )
+        negative_hint = (
+            "Commodity/product-only buys, routine MRO, janitorial, IT support, or other non-research services."
+        )
+        with st.spinner("Finding best-matching research solicitations..."):
+            data = _compute_internal_results(preset_desc, negative_hint, research_only=True)
+        st.session_state.iu_results = data
+        st.rerun()
 
-# Always render cached results (so lists persist across reruns, including vendor-button clicks)
-_render_internal_results()
+    # Always render cached results (so lists persist across reruns, including vendor-button clicks)
+    _render_internal_results()
 
-# If you want: export download for cached results
-if st.session_state.iu_results and isinstance(st.session_state.iu_results.get("top_df"), pd.DataFrame):
-    top_df = st.session_state.iu_results["top_df"]
-    st.download_button(
-        f"Download Internal Use Results (Top-{int(internal_top_k)})",
-        top_df.to_csv(index=False).encode("utf-8"),
-        file_name=f"internal_top{int(internal_top_k)}.csv",
-        mime="text/csv",
-    )
-st.markdown("---")
-st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
+    # If you want: export download for cached results
+    if st.session_state.iu_results and isinstance(st.session_state.iu_results.get("top_df"), pd.DataFrame):
+        top_df = st.session_state.iu_results["top_df"]
+        st.download_button(
+            f"Download Internal Use Results (Top-{int(internal_top_k)})",
+            top_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"internal_top{int(internal_top_k)}.csv",
+            mime="text/csv",
+        )
+    st.markdown("---")
+    st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
