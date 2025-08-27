@@ -2050,22 +2050,10 @@ with tab5:
                             btn_label = "Find 3 local service providers"
 
                         btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-                        if st.button(btn_label, key=btn_key):
-                            # 1) Try to extract locality from title+description for SERVICES
-                            locality = None
-                            if st.session_state.get("iu_mode") == "services":
-                                locality = _extract_locality(
-                                    f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}"
-                                )
-                                if not locality:
-                                    st.session_state.vendor_errors[nid] = (
-                                        "Could not identify a specific locality from the solicitation. "
-                                        "Showing general providers instead."
-                                    )
-                                else:
-                                    # Clear any old message for this notice
-                                    st.session_state.vendor_errors.pop(nid, None)
+                        clicked = st.button(btn_label, key=btn_key)
 
+                        if clicked:
+                            # Build solicitation dict once
                             sol_dict = {
                                 "notice_id": nid,
                                 "title": getattr(row, "title", ""),
@@ -2077,25 +2065,32 @@ with tab5:
                                 "link": getattr(row, "link", ""),
                             }
 
-                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3, locality=locality)
-
-                            if vendors_df is None or vendors_df.empty:
-                                # No vendors found → set a clear message for the right column
-                                loc_msg = ""
-                                if st.session_state.get("iu_mode") == "services":
-                                    if locality:
-                                        where = ", ".join([x for x in [locality.get("city",""), locality.get("state","")] if x]) or locality.get("state","")
-                                        loc_msg = f" for the specified locality ({where})"
+                            locality = None
+                            if st.session_state.get("iu_mode") == "services":
+                                # Try to extract locality for services
+                                locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}")
+                                if not locality:
                                     st.session_state.vendor_errors[nid] = (
-                                        f"No service providers were found{loc_msg}. "
-                                        "Try broadening the search or verify the location in the solicitation text."
+                                        "Could not identify a specific locality from the solicitation. "
+                                        "Showing general providers instead."
                                     )
                                 else:
-                                    st.session_state.vendor_errors[nid] = (
-                                        "No vendors found for this opportunity with the current search."
-                                    )
+                                    st.session_state.vendor_errors.pop(nid, None)
+
+                            vendors_df = _find_vendors_for_opportunity(
+                                sol_dict, max_google=5, top_n=3, locality=locality
+                            )
+
+                            if vendors_df is None or vendors_df.empty:
+                                loc_msg = ""
+                                if st.session_state.get("iu_mode") == "services" and locality:
+                                    where = ", ".join([x for x in [locality.get("city",""), locality.get("state","")] if x]) or locality.get("state","")
+                                    loc_msg = f" for the specified locality ({where})"
+                                st.session_state.vendor_errors[nid] = (
+                                    f"No service providers were found{loc_msg}. "
+                                    "Try broadening the search or verify the location in the solicitation text."
+                                )
                             else:
-                                # Clear message on success
                                 st.session_state.vendor_errors.pop(nid, None)
 
                             st.session_state.vendor_suggestions[nid] = vendors_df
