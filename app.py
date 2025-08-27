@@ -2112,14 +2112,16 @@ with tab5:
                                 "link": getattr(row, "link", ""),
                             }
 
-                            locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}")
+                            locality = _extract_locality(
+                                f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}"
+                            )
 
                             if not _has_locality(locality):
                                 # No usable location → explicitly fall back to non-local search
                                 locality = None
                                 st.session_state.vendor_errors[nid] = (
-                                    "Solicitation does not mention a specific work location; "
-                                    "showing capable service providers regardless of location."
+                                    "⚠️ No place of performance was identified in the solicitation. "
+                                    "Doing a national search for capable service providers instead."
                                 )
                             else:
                                 st.session_state.vendor_errors.pop(nid, None)
