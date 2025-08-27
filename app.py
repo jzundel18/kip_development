@@ -2044,16 +2044,12 @@ with tab5:
                         st.write(direction)
                     else:
                         # --- Vendor finder button (Machine Shop / Services modes) ---
-                        # Use a different label for services
                         btn_label = "Find 3 potential vendors (SerpAPI)"
                         if st.session_state.get("iu_mode") == "services":
                             btn_label = "Find 3 local service providers"
 
                         btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-                        clicked = st.button(btn_label, key=btn_key)
-
-                        if clicked:
-                            # Build solicitation dict once
+                        if st.button(btn_label, key=btn_key):
                             sol_dict = {
                                 "notice_id": nid,
                                 "title": getattr(row, "title", ""),
@@ -2067,7 +2063,6 @@ with tab5:
 
                             locality = None
                             if st.session_state.get("iu_mode") == "services":
-                                # Try to extract locality for services
                                 locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}")
                                 if not locality:
                                     st.session_state.vendor_errors[nid] = (
@@ -2077,9 +2072,7 @@ with tab5:
                                 else:
                                     st.session_state.vendor_errors.pop(nid, None)
 
-                            vendors_df = _find_vendors_for_opportunity(
-                                sol_dict, max_google=5, top_n=3, locality=locality
-                            )
+                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3, locality=locality)
 
                             if vendors_df is None or vendors_df.empty:
                                 loc_msg = ""
@@ -2095,22 +2088,6 @@ with tab5:
 
                             st.session_state.vendor_suggestions[nid] = vendors_df
                             st.rerun()
-                        else:
-                            # Machine Shop or fallback → generic finder
-                            if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                                sol_dict = {
-                                    "notice_id": nid,
-                                    "title": getattr(row, "title", ""),
-                                    "description": getattr(row, "description", ""),
-                                    "naics_code": getattr(row, "naics_code", ""),
-                                    "set_aside_code": getattr(row, "set_aside_code", ""),
-                                    "response_date": getattr(row, "response_date", ""),
-                                    "posted_date": getattr(row, "posted_date", ""),
-                                    "link": getattr(row, "link", ""),
-                                }
-                                vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
-                                st.session_state.vendor_suggestions[nid] = vendors_df
-                                st.rerun()
 
                 with right:
                     err_msg = st.session_state.vendor_errors.get(nid)
