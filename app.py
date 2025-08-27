@@ -105,6 +105,9 @@ def _host(u: str) -> str:
     except Exception:
         return ""
 
+def _has_locality(loc: dict | None) -> bool:
+    return bool(loc and ((loc.get("city") or "").strip() or (loc.get("state") or "").strip()))
+
 def _companyish_name_from_result(title: str, link: str) -> str:
     t = (title or "").strip()
     if t:
@@ -1800,7 +1803,7 @@ with tab5:
         query_bits.append("service provider contractor")
 
         # If locality provided, add city/state tokens to query
-        if locality:
+        if _has_locality(locality):
             city = (locality.get("city") or "").strip()
             state = (locality.get("state") or "").strip()
             if city:
@@ -1833,7 +1836,7 @@ with tab5:
             display_name = _companyish_name_from_result(title_r, website)
 
             # If we have a locality, prefer results that mention city/state
-            if locality:
+            if _has_locality(locality):
                 text_lc = (title_r + " " + snippet).lower()
                 city = (locality.get("city") or "").strip()
                 state = (locality.get("state") or "").strip()
@@ -2109,16 +2112,17 @@ with tab5:
                                 "link": getattr(row, "link", ""),
                             }
 
-                            locality = None
-                            if st.session_state.get("iu_mode") == "services":
-                                locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}")
-                                if not locality:
-                                    st.session_state.vendor_errors[nid] = (
-                                        "Could not identify a specific locality from the solicitation. "
-                                        "Showing general providers instead."
-                                    )
-                                else:
-                                    st.session_state.vendor_errors.pop(nid, None)
+                            locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}")
+
+                            if not _has_locality(locality):
+                                # No usable location → explicitly fall back to non-local search
+                                locality = None
+                                st.session_state.vendor_errors[nid] = (
+                                    "Solicitation does not mention a specific work location; "
+                                    "showing capable service providers regardless of location."
+                                )
+                            else:
+                                st.session_state.vendor_errors.pop(nid, None)
 
                             vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3, locality=locality)
 

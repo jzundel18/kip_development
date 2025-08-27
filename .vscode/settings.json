@@ -1,4 +1,4 @@
 {
-    "editor.defaultFormatter": "ms-python.autopep8",
+    "editor.defaultFormatter": null,
     "editor.formatOnPaste": true
 }
