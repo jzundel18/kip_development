@@ -1578,6 +1578,29 @@ with tab5:
         except Exception:
             return ""
 
+    def _ai_research_direction(title: str, description: str, api_key: str) -> str:
+        """
+        Generate a short paragraph suggesting a potential research direction
+        we could pursue in line with the solicitation.
+        """
+        try:
+            client = OpenAI(api_key=api_key)
+            sys = (
+                "You are a research strategist for federal contracts. "
+                "Given a solicitation title and description, propose a concise research direction "
+                "or innovation we could pursue to align with the opportunity. "
+                "Be concrete and realistic, ~3–5 sentences max."
+            )
+            user = f"Solicitation title:\n{title}\n\nSolicitation description:\n{description[:2000]}"
+            r = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
+                temperature=0.4,
+            )
+            return (r.choices[0].message.content or "").strip()
+        except Exception as e:
+            return f"(Could not generate research direction: {e})"
+    
     def _find_vendors_for_opportunity(sol: dict, max_google: int = 5, top_n: int = 3) -> pd.DataFrame:
         """
         1) Try your original helper (fs.get_suppliers)
@@ -1813,23 +1836,32 @@ with tab5:
                         st.markdown("**Why this matched (AI):**")
                         st.info(reason)
 
-                    # vendor button: unique per notice + run salt
-                    btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-                    if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
-                        sol_dict = {
-                            "notice_id":     _s(nid),
-                            "title":         _s(getattr(row, "title", "")),
-                            "description":   _s(getattr(row, "description", "")),
-                            "naics_code":    _s(getattr(row, "naics_code", "")),
-                            "set_aside_code":_s(getattr(row, "set_aside_code", "")),
-                            "response_date": _s(getattr(row, "response_date", "")),
-                            "posted_date":   _s(getattr(row, "posted_date", "")),
-                            "link":          _s(getattr(row, "link", "")),
-}
-                        vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
-                        st.session_state.vendor_suggestions[nid] = vendors_df  # cache per-notice
-                        st.session_state.iu_open_nid = nid
-                        st.rerun()  # ensure right column updates immediately
+                    # Branch: R&D solicitations → show research direction instead of vendor button
+                    if st.session_state.get("iu_mode") == "rd":
+                        direction = _ai_research_direction(
+                            getattr(row, "title", ""),
+                            getattr(row, "description", ""),
+                            OPENAI_API_KEY,
+                        )
+                        st.markdown("**Proposed Research Direction:**")
+                        st.write(direction)
+                    else:
+                        # --- Vendor finder button (for Machine Shop / Services modes only) ---
+                        btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
+                        if st.button("Find 3 potential vendors (SerpAPI)", key=btn_key):
+                            sol_dict = {
+                                "notice_id": nid,
+                                "title": getattr(row, "title", ""),
+                                "description": getattr(row, "description", ""),
+                                "naics_code": getattr(row, "naics_code", ""),
+                                "set_aside_code": getattr(row, "set_aside_code", ""),
+                                "response_date": getattr(row, "response_date", ""),
+                                "posted_date": getattr(row, "posted_date", ""),
+                                "link": getattr(row, "link", ""),
+                            }
+                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3)
+                            st.session_state.vendor_suggestions[nid] = vendors_df
+                            st.rerun()
 
                 with right:
                     vend_df = st.session_state.vendor_suggestions.get(nid)
@@ -1859,6 +1891,7 @@ with tab5:
    # Run the chosen preset
 if run_machine_shop:
     st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+    st.session_state.iu_mode = "machine"
     preset_desc = (
         "We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
         "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
@@ -1877,6 +1910,7 @@ if run_machine_shop:
 
 if run_services:
     st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+    st.session_state.iu_mode = "services"
     preset_desc = (
         "We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
         "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
@@ -1890,15 +1924,15 @@ if run_services:
     st.rerun()
 
 if run_research:
-    st.session_state.iu_key_salt = uuid.uuid4().hex  # new salt for this run
+    st.session_state.iu_key_salt = uuid.uuid4().hex
+    st.session_state.iu_mode = "rd"   # mark that we are in research mode
     preset_desc = (
         "We are pursuing research and development (R&D) opportunities aligned with our capabilities. "
         "Strong fits include applied research, technology maturation, prototyping, experimentation, "
-        "testing and evaluation, studies, and early-stage development tasks that culminate in demos or reports."
+        "testing and evaluation, studies, and early-stage development tasks."
     )
     negative_hint = (
-        "Commodity/product-only buys, routine MRO, janitorial, food service, facility maintenance, "
-        "simple reselling, and non-technical services with no research or prototype component."
+        "Commodity/product-only buys, routine MRO, janitorial, IT support, or other non-research services."
     )
     with st.spinner("Finding best-matching research solicitations..."):
         data = _compute_internal_results(preset_desc, negative_hint, research_only=True)
