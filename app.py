@@ -62,6 +62,17 @@ if "vendor_notes" not in st.session_state:
 # Small helpers
 # =========================
 
+def _stringify(v) -> str:
+    import json
+    if v is None:
+        return ""
+    if isinstance(v, (str, int, float, bool)):
+        return str(v)
+    try:
+        return json.dumps(v, ensure_ascii=False)
+    except Exception:
+        return str(v)
+
 def _s(v) -> str:
     """Return a safe string for downstream parsers (handles None/NaN/NaT)."""
     try:
@@ -852,7 +863,7 @@ COLS_TO_SAVE = [
     "notice_id","solicitation_number","title","notice_type",
     "posted_date","response_date","archive_date",
     "naics_code","set_aside_code",
-    "description","link"
+    "description","link",
     "pop_city","pop_state","pop_zip","pop_country","pop_raw",
 ]
 
@@ -883,7 +894,7 @@ def insert_new_records_only(records) -> int:
         nid = (m.get("notice_id") or "").strip()
         if not nid:
             continue
-        row = {k: (m.get(k) or "") for k in COLS_TO_SAVE}
+        row = {k: _stringify(m.get(k)) for k in COLS_TO_SAVE}
         row["pulled_at"] = now_iso
         # Normalize link to a human-facing URL
         row["link"] = make_sam_public_url(row["notice_id"], row.get("link"))
@@ -1090,6 +1101,52 @@ def render_account_settings():
         if st.button("Back to app", key="btn_back_to_app"):
             st.session_state.view = "main"
             st.rerun()
+
+    # --- Daily email digest (opt-in) ---
+    st.markdown("---")
+    st.subheader("Daily Email Digest")
+
+    def get_digest_subscription(conn, user_id, email):
+        row = conn.execute(sa.text("""
+            SELECT id, email, min_score, max_per_day, company_desc_override, is_enabled
+            FROM digest_subscribers
+            WHERE email = :e
+            LIMIT 1
+        """), {"e": email}).mappings().first()
+        return dict(row) if row else None
+
+    def upsert_digest_subscription(conn, user_id, email, is_enabled, min_score, max_per_day, desc_override):
+        # update else insert
+        r = conn.execute(sa.text("""
+            UPDATE digest_subscribers
+            SET is_enabled = :en, min_score = :ms, max_per_day = :mp,
+                company_desc_override = :co, updated_at = :now
+            WHERE email = :e
+            RETURNING id
+        """), {"en": bool(is_enabled), "ms": int(min_score), "mp": int(max_per_day),
+            "co": desc_override.strip(), "now": datetime.now(timezone.utc).isoformat(), "e": email}).first()
+        if not r:
+            conn.execute(sa.text("""
+                INSERT INTO digest_subscribers (user_id, email, is_enabled, min_score, max_per_day, company_desc_override, created_at, updated_at)
+                VALUES (:uid, :e, :en, :ms, :mp, :co, :now, :now)
+            """), {"uid": user_id, "e": email, "en": bool(is_enabled), "ms": int(min_score),
+                "mp": int(max_per_day), "co": desc_override.strip(), "now": datetime.now(timezone.utc).isoformat()})
+
+    with engine.connect() as conn:
+        sub = get_digest_subscription(conn, st.session_state.user["email"])
+
+    enabled = st.checkbox("Email me each morning with top AI matches from yesterday", value=bool(sub and sub.get("is_enabled", True)))
+    min_score = st.slider("Only include matches with score ≥", min_value=50, max_value=95, value=int((sub or {}).get("min_score", 70)), step=5)
+    max_per_day = st.number_input("Max opportunities per email", min_value=1, max_value=5, value=int((sub or {}).get("max_per_day", 5)))
+    desc_override = st.text_area("Use a different company description for the digest (optional)", value=(sub or {}).get("company_desc_override", ""), height=100)
+
+    if st.button("Save daily email settings"):
+        with engine.begin() as conn:
+            upsert_digest_subscription(conn,
+                                    st.session_state.user["id"],
+                                    st.session_state.user["email"],
+                                    enabled, min_score, max_per_day, desc_override)
+        st.success("Daily email digest settings saved.")
 
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     # UI should not show these two columns

@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 import requests
 import time
 import html
+import json
 import re
 
 # --- Endpoints (use /prod/) ---
@@ -72,6 +73,17 @@ def _mask_key(k: str) -> str:
         return "(none)"
     return f"...{k[-4:]}"
 
+
+def _stringify(v) -> str:
+    """Return a safe, trimmed string for DB/logging."""
+    if v is None:
+        return ""
+    if isinstance(v, (str, int, float, bool)):
+        return str(v).strip()
+    try:
+        return json.dumps(v, ensure_ascii=False).strip()
+    except Exception:
+        return str(v).strip()
 
 # --- HTTP core with key rotation ---
 def _request_sam(params: Dict[str, Any], api_keys: List[str]) -> Dict[str, Any]:
@@ -145,7 +157,7 @@ def get_sam_raw_v3(
     params = {
         "limit": int(limit),
         "postedFrom": posted_from,  # MM/dd/YYYY
-        "postedTo": posted_to,      # MM/dd/
+        "postedTo": posted_to,      # MM/dd/YYYY
         "offset": int(offset),   # NEW: SAM v2 accepts 'offset' for paging
 
     }
@@ -514,21 +526,19 @@ def map_record_allowed_fields(
 
     pop = _extract_place_of_performance(rec, detail)
 
-    return {
-        "notice_id":            notice_id,
-        "solicitation_number":  solicitation_number,
-        "title":                title,
-        "notice_type":          notice_type,
-        "posted_date":          posted_date,
-        "response_date":        response_date,
-        "archive_date":         archive_date,
-        "naics_code":           naics_code,
-        "set_aside_code":       set_aside_code,
-        "description":          description,
-        "link":                 link,
-        "pop_city":             pop.get("pop_city", ""),
-        "pop_state":            pop.get("pop_state", ""),
-        "pop_zip":              pop.get("pop_zip", ""),
-        "pop_country":          pop.get("pop_country", ""),
-        "pop_raw":              pop.get("pop_raw", ""),
+    mapped = {
+        "notice_id": _stringify(rec.get("noticeId") or rec.get("id")),
+        "solicitation_number": _stringify(rec.get("solicitationNumber") or rec.get("solicitationNo")),
+        "title": _stringify(rec.get("title")),
+        "notice_type": _stringify(rec.get("type") or rec.get("noticeType")),
+        "posted_date": _stringify(rec.get("postedDate") or rec.get("publishDate")),
+        "response_date": _stringify(response_date),
+        "archive_date": _stringify(rec.get("archiveDate")),
+        "naics_code": _stringify(rec.get("naics") or rec.get("naicsCode")),
+        "set_aside_code": _stringify(rec.get("setAside") or rec.get("setAsideType")),
+        "description": _stringify(description),
+        "link": _stringify(rec.get("uiLink") or rec.get("samLink") or rec.get("link")),
     }
+
+    mapped.update(pop)
+    return mapped
