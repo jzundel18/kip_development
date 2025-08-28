@@ -395,7 +395,13 @@ REQUIRED_COLS = {
     "set_aside_code": "TEXT",
     "description": "TEXT",
     "link": "TEXT",
+    "pop_city": "TEXT",
+    "pop_state": "TEXT",     
+    "pop_country": "TEXT",   
+    "pop_zip": "TEXT",
+    "pop_raw": "TEXT",
 }
+
 try:
     insp = inspect(engine)
     existing_cols = {c["name"] for c in insp.get_columns("solicitationraw")}
@@ -847,6 +853,7 @@ COLS_TO_SAVE = [
     "posted_date","response_date","archive_date",
     "naics_code","set_aside_code",
     "description","link"
+    "pop_city","pop_state","pop_zip","pop_country","pop_raw",
 ]
 
 DISPLAY_COLS = [
@@ -903,7 +910,8 @@ def query_filtered_df(filters: dict) -> pd.DataFrame:
     # Pull a superset of columns; we'll hide some in the UI
     base_cols = ["pulled_at","notice_id","solicitation_number","title","notice_type",
                  "posted_date","response_date","archive_date",
-                 "naics_code","set_aside_code","description","link"]
+                 "naics_code","set_aside_code","description","link",
+                "pop_city","pop_state","pop_zip","pop_country","pop_raw"]
 
     with engine.connect() as conn:
         df = pd.read_sql_query(f"SELECT {', '.join(base_cols)} FROM solicitationraw", conn)
@@ -2115,42 +2123,44 @@ with tab5:
                                 "link": getattr(row, "link", ""),
                             }
 
-                            locality = _extract_locality(
-                                f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}"
-                            )
+                            locality = {
+                                    "city": _s(getattr(row, "pop_city", "")),
+                                    "state": _s(getattr(row, "pop_state", "")),
+                            }
 
                             if not _has_locality(locality):
-                                # No usable location → national search
-                                locality = None
-                                st.session_state.vendor_notes[nid] = (
-                                    "No place of performance was specified; conducting a national search."
-                                )
-                                st.session_state.vendor_errors[nid] = (
-                                    "⚠️ No place of performance was identified in the solicitation. "
-                                    "Doing a national search for capable service providers instead."
-                                )
-                            else:
-                                # Local search; show the detected place of performance
-                                pretty_loc = ", ".join([x for x in [locality.get('city',''), locality.get('state','')] if x])
-                                st.session_state.vendor_notes[nid] = f"Place of performance: {pretty_loc}. Searching local providers."
-                                st.session_state.vendor_errors.pop(nid, None)
+                                locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
 
-                            vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3, locality=locality)
+                            # Message shown under the button (and also on the right panel)
+                            if _has_locality(locality):
+                                where = ", ".join([x for x in [locality.get("city",""), locality.get("state","")] if x])
+                                st.session_state.vendor_notes[nid] = f"Place of performance: {where}"
+                                st.session_state.vendor_errors.pop(nid, None)
+                            else:
+                                st.session_state.vendor_notes[nid] = (
+                                    "No place of performance specified in the solicitation. "
+                                    "Conducting a national search."
+                                )
+
+                            vendors_df, _note_unused = _find_service_vendors_for_opportunity(
+                                sol_dict, top_n=3
+                            )
 
                             if vendors_df is None or vendors_df.empty:
                                 loc_msg = ""
-                                if st.session_state.get("iu_mode") == "services" and locality:
+                                if _has_locality(locality):
                                     where = ", ".join([x for x in [locality.get("city",""), locality.get("state","")] if x]) or locality.get("state","")
                                     loc_msg = f" for the specified locality ({where})"
-                                st.session_state.vendor_errors[nid] = (
-                                    f"No service providers were found{loc_msg}. "
-                                    "Try broadening the search or verify the location in the solicitation text."
-                                )
+                                st.session_state.vendor_errors[nid] = f"No service providers were found{loc_msg}."
                             else:
                                 st.session_state.vendor_errors.pop(nid, None)
 
                             st.session_state.vendor_suggestions[nid] = vendors_df
                             st.rerun()
+
+                            note = st.session_state.vendor_notes.get(nid)
+                            if note:
+                                st.caption(note)
 
                 with right:
                     # Short note directly under the button (place of performance or national)

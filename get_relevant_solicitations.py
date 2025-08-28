@@ -376,6 +376,81 @@ def _first_nonempty(obj: Dict[str, Any], *keys: str, default: str = "None") -> s
             return str(v)
     return default
 
+def _extract_place_of_performance(rec: dict, detail: dict | None = None) -> dict:
+    """
+    Returns normalized dict: {"pop_city","pop_state","pop_zip","pop_country","pop_raw"}.
+    Works with several possible shapes from SAM search/notice detail.
+    """
+    def _from_obj(obj: dict | None) -> dict:
+        if not isinstance(obj, dict):
+            return {}
+        # potential containers
+        candidates = []
+        for k in (
+            "placeOfPerformance",
+            "place_of_performance",
+            "placeOfPerformanceAddress",
+            "primaryPlaceOfPerformance",
+            "popAddress",
+            "placeOfPerformanceLocation",
+            "place_of_performance_location",
+            "placeOfPerformanceCityState",
+        ):
+            v = obj.get(k)
+            if isinstance(v, dict):
+                candidates.append(v)
+        # addresses list
+        for k in ("addresses", "locations", "placeOfPerformanceAddresses"):
+            v = obj.get(k)
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                candidates.append(v[0])
+
+        # also allow using the object itself if it already looks like an address
+        candidates.append(obj)
+
+        best = {}
+        for c in candidates:
+            if not isinstance(c, dict):
+                continue
+            city = c.get("city") or c.get("cityName") or (
+                c.get("address") or {}).get("city")
+            state = (c.get("state") or c.get("stateCode") or (c.get("address") or {}).get("state") or
+                     c.get("stateProvince") or c.get("stateProvinceCode"))
+            zipc = c.get("zip") or c.get("zipCode") or c.get(
+                "postalCode") or (c.get("address") or {}).get("postalCode")
+            country = c.get("country") or c.get("countryCode") or c.get(
+                "countryName") or (c.get("address") or {}).get("country")
+            # heuristic: if at least state or city is present, accept
+            if city or state or zipc or country:
+                best = {"pop_city": (city or "").strip(),
+                        "pop_state": (state or "").strip(),
+                        "pop_zip": (zipc or "").strip(),
+                        "pop_country": (country or "").strip()}
+                break
+        return best
+
+    pop = {}
+    pop.update(_from_obj(rec))
+    if not (pop.get("pop_city") or pop.get("pop_state") or pop.get("pop_zip") or pop.get("pop_country")):
+        pop.update(_from_obj(detail or {}))
+
+    # build raw pretty string
+    parts = []
+    if pop.get("pop_city"):
+        parts.append(pop["pop_city"])
+    if pop.get("pop_state"):
+        parts.append(pop["pop_state"])
+    raw = ", ".join(parts)
+    if pop.get("pop_zip"):
+        raw = (raw + f" {pop['pop_zip']}".rstrip()).strip()
+    if pop.get("pop_country") and pop["pop_country"].upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
+        raw = (raw + f" ({pop['pop_country']})").strip()
+
+    pop["pop_raw"] = raw
+    # ensure all keys exist
+    for k in ("pop_city", "pop_state", "pop_zip", "pop_country", "pop_raw"):
+        pop.setdefault(k, "")
+    return pop
 
 def map_record_allowed_fields(
     rec: Dict[str, Any],
@@ -437,6 +512,8 @@ def map_record_allowed_fields(
     if description and description.strip().lower() in ("none", "n/a", "na"):
         description = ""
 
+    pop = _extract_place_of_performance(rec, detail)
+
     return {
         "notice_id":            notice_id,
         "solicitation_number":  solicitation_number,
@@ -449,4 +526,9 @@ def map_record_allowed_fields(
         "set_aside_code":       set_aside_code,
         "description":          description,
         "link":                 link,
+        "pop_city":             pop.get("pop_city", ""),
+        "pop_state":            pop.get("pop_state", ""),
+        "pop_zip":              pop.get("pop_zip", ""),
+        "pop_country":          pop.get("pop_country", ""),
+        "pop_raw":              pop.get("pop_raw", ""),
     }
