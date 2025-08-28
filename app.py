@@ -54,6 +54,9 @@ if "profile" not in st.session_state:
     st.session_state.profile = None
 if "view" not in st.session_state:
     st.session_state.view = "main" if st.session_state.user else "auth"
+# per-solicitation status/note shown under the Services button
+if "vendor_notes" not in st.session_state:
+    st.session_state.vendor_notes = {}  # { notice_id: str }
 
 # =========================
 # Small helpers
@@ -2117,13 +2120,19 @@ with tab5:
                             )
 
                             if not _has_locality(locality):
-                                # No usable location → explicitly fall back to non-local search
+                                # No usable location → national search
                                 locality = None
+                                st.session_state.vendor_notes[nid] = (
+                                    "No place of performance was specified; conducting a national search."
+                                )
                                 st.session_state.vendor_errors[nid] = (
                                     "⚠️ No place of performance was identified in the solicitation. "
                                     "Doing a national search for capable service providers instead."
                                 )
                             else:
+                                # Local search; show the detected place of performance
+                                pretty_loc = ", ".join([x for x in [locality.get('city',''), locality.get('state','')] if x])
+                                st.session_state.vendor_notes[nid] = f"Place of performance: {pretty_loc}. Searching local providers."
                                 st.session_state.vendor_errors.pop(nid, None)
 
                             vendors_df = _find_vendors_for_opportunity(sol_dict, max_google=5, top_n=3, locality=locality)
@@ -2144,6 +2153,11 @@ with tab5:
                             st.rerun()
 
                 with right:
+                    # Short note directly under the button (place of performance or national)
+                    note_msg = st.session_state.vendor_notes.get(nid)
+                    if note_msg:
+                        st.caption(note_msg)
+
                     err_msg = st.session_state.vendor_errors.get(nid)
                     if err_msg:
                         st.info(err_msg)
