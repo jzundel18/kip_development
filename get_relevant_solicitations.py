@@ -93,7 +93,7 @@ def _stringify(v) -> str:
         return json.dumps(v, ensure_ascii=False).strip()
     except Exception:
         return str(v).strip()
-
+    
 # --- HTTP core with key rotation ---
 def _request_sam(params: Dict[str, Any], api_keys: List[str]) -> Dict[str, Any]:
     """
@@ -443,10 +443,10 @@ def _extract_place_of_performance(rec: dict, detail: dict | None = None) -> dict
                 "countryName") or (c.get("address") or {}).get("country")
             # heuristic: if at least state or city is present, accept
             if city or state or zipc or country:
-                best = {"pop_city": (city or "").strip(),
-                        "pop_state": (state or "").strip(),
-                        "pop_zip": (zipc or "").strip(),
-                        "pop_country": (country or "").strip()}
+                best = {"pop_city": _s(city),
+                        "pop_state": _s(state),
+                        "pop_zip": _s(zipc),
+                        "pop_country": _s(country)}
                 break
         return best
 
