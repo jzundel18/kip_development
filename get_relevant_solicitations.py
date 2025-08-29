@@ -73,7 +73,16 @@ def _mask_key(k: str) -> str:
         return "(none)"
     return f"...{k[-4:]}"
 
-
+def _s(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    try:
+        return json.dumps(v, ensure_ascii=False)
+    except Exception:
+        return str(v)
+    
 def _stringify(v) -> str:
     """Return a safe, trimmed string for DB/logging."""
     if v is None:
@@ -498,12 +507,11 @@ def map_record_allowed_fields(
     response_date = _pick_response_date(rec, detail)
 
         # description: prefer inline; if missing/URL, use detail, then noticedesc
-    description = _first_nonempty(rec, "description", "synopsis", default="")
-
-    def _looks_like_placeholder_or_url(t: str) -> bool:
-        if not t:
+    description = _s(_first_nonempty(rec, "description", "synopsis", default=""))
+    def _looks_like_placeholder_or_url(t) -> bool:
+        if t is None:
             return True
-        s = t.strip().lower()
+        s = _s(t).strip().lower()
         return s in ("none", "n/a", "na") or s.startswith("http://") or s.startswith("https://")
 
     if _looks_like_placeholder_or_url(description):
