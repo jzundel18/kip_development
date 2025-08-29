@@ -894,10 +894,51 @@ def insert_new_records_only(records) -> int:
         nid = (m.get("notice_id") or "").strip()
         if not nid:
             continue
+        
+        # set-aside can show up under various keys; prefer normalized key if present
+        set_code = (
+            m.get("set_aside_code")
+            or m.get("setAside")
+            or m.get("setAsideType")
+            or ""
+        )
+        # place of performance may be nested; support multiple shapes
+        pop_container = None
+        for k in ("place_of_performance", "pop", "placeOfPerformance"):
+            if isinstance(m.get(k), dict):
+                pop_container = m.get(k)
+                break
+
+        # Accept top-level fallbacks if the mapper already flattened them
+        city    = (m.get("pop_city")    or (pop_container or {}).get("city")    or "").strip()
+        state   = (m.get("pop_state")   or (pop_container or {}).get("state")   or "").strip()
+        zipc    = (m.get("pop_zip")     or (pop_container or {}).get("zip")     or (pop_container or {}).get("postalCode") or "").strip()
+        country = (m.get("pop_country") or (pop_container or {}).get("country") or (pop_container or {}).get("countryCode") or "").strip()
+
+        # Always keep a raw JSON snapshot of whatever we found
+        try:
+            pop_raw = json.dumps(pop_container or {
+                "city": city, "state": state, "zip": zipc, "country": country
+            }, ensure_ascii=False)
+        except Exception:
+            pop_raw = ""
+
+        # --- Build base row from the allow-list, then override the fields we normalized ---
         row = {k: _stringify(m.get(k)) for k in COLS_TO_SAVE}
+        row["notice_id"] = nid
         row["pulled_at"] = now_iso
-        # Normalize link to a human-facing URL
+
+        # Normalize the public link
         row["link"] = make_sam_public_url(row["notice_id"], row.get("link"))
+
+        # Override with our normalized values (as safe strings)
+        row["set_aside_code"] = _stringify(set_code)
+        row["pop_city"]    = _s(city)
+        row["pop_state"]   = _s(state)
+        row["pop_zip"]     = _s(zipc)
+        row["pop_country"] = _s(country)
+        row["pop_raw"]     = _stringify(pop_raw)
+
         rows.append(row)
 
     if not rows:
