@@ -535,17 +535,17 @@ def map_record_allowed_fields(
     pop = _extract_place_of_performance(rec, detail)
 
     mapped = {
-        "notice_id": _stringify(rec.get("noticeId") or rec.get("id")),
-        "solicitation_number": _stringify(rec.get("solicitationNumber") or rec.get("solicitationNo")),
-        "title": _stringify(rec.get("title")),
-        "notice_type": _stringify(rec.get("type") or rec.get("noticeType")),
-        "posted_date": _stringify(rec.get("postedDate") or rec.get("publishDate")),
+        "notice_id": _stringify(notice_id),
+        "solicitation_number": _stringify(solicitation_number),
+        "title": _stringify(title),
+        "notice_type": _stringify(notice_type),
+        "posted_date": _stringify(posted_date),
         "response_date": _stringify(response_date),
-        "archive_date": _stringify(rec.get("archiveDate")),
-        "naics_code": _stringify(rec.get("naics") or rec.get("naicsCode")),
-        "set_aside_code": _stringify(rec.get("setAside") or rec.get("setAsideType")),
+        "archive_date": _stringify(archive_date),
+        "naics_code": _stringify(naics_code),
+        "set_aside_code": _stringify(set_aside_code),
         "description": _stringify(description),
-        "link": _stringify(rec.get("uiLink") or rec.get("samLink") or rec.get("link")),
+        "link": _stringify(link),
     }
 
     mapped.update(pop)
