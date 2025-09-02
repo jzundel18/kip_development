@@ -1,242 +1,239 @@
-# scripts/auto_refresh.py
-import os, sys
-from pathlib import Path
-from datetime import datetime, timezone
+#!/usr/bin/env python3
+"""
+Fast auto-refresh for SAM.gov opportunities:
+- Uses v2 search with pagination + key rotation.
+- Inserts ONLY brand-new notice_ids.
+- Does NOT fetch long descriptions (keeps it fast).
+- Always stores a PUBLIC web URL for each notice (no API key required).
+"""
 
-# ---------- Make local modules importable ----------
-REPO_ROOT = Path(__file__).resolve().parents[1]
-for p in (REPO_ROOT, REPO_ROOT / "scripts", REPO_ROOT / "src"):
-    sys.path.insert(0, str(p))
+from __future__ import annotations
+import os
+import sys
+import time
+import json
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 import sqlalchemy as sa
-from sqlalchemy import create_engine, text as sqltext
+from sqlalchemy import text, create_engine
+from sqlalchemy.exc import SQLAlchemyError
 
+# Import your shared fetch/mapping helpers
 import get_relevant_solicitations as gs
-from get_relevant_solicitations import SamQuotaError, SamAuthError, SamBadRequestError
 
-# ---------- Env / secrets ----------
-DB_URL = os.environ.get("SUPABASE_DB_URL", "sqlite:///app.db")
+# ---------------- Config ----------------
+PAGE_SIZE = int(os.getenv("PAGE_SIZE", "200"))
+MAX_RECORDS = int(os.getenv("MAX_RECORDS", "5000"))
+DAYS_BACK = int(os.getenv("DAYS_BACK", "1"))
+DB_URL = os.getenv("SUPABASE_DB_URL") or os.getenv(
+    "DB_URL") or "sqlite:///app.db"
 
-# Handle SAM_KEYS as comma OR newline separated
-_raw_keys = os.environ.get("SAM_KEYS", "")
-SAM_KEYS = []
-if _raw_keys:
-    parts = []
-    for line in _raw_keys.replace("\r", "").split("\n"):
-        parts.extend([p.strip() for p in line.split(",")])
-    SAM_KEYS = [p for p in parts if p]
-print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)")
+# Read keys from env or secrets-like CSV. If you keep them in Streamlit secrets elsewhere,
+# mirror them into an ENV var for this GitHub Action.
+SAM_KEYS_RAW = os.getenv("SAM_KEYS", "")
+SAM_KEYS = [k.strip() for k in SAM_KEYS_RAW.split(",") if k.strip()]
 
-# Time window (default last 24h)
-try:
-    DAYS_BACK = int(os.environ.get("DAYS_BACK", "1"))
-except ValueError:
-    DAYS_BACK = 1
-print(f"DAYS_BACK = {DAYS_BACK}")
-
-# Paging controls (tune via GitHub Actions env if desired)
-PAGE_SIZE = int(os.environ.get("SAM_PAGE_SIZE", "200"))      # how many per page
-MAX_RECORDS = int(os.environ.get("SAM_MAX_RECORDS", "5000")) # safety cap per run
-print(f"Paging: PAGE_SIZE={PAGE_SIZE}, MAX_RECORDS={MAX_RECORDS}")
-
-# --- DB (add connect timeout for Postgres) ---
-pg_opts = {}
-if DB_URL.startswith("postgresql"):
-    pg_opts["connect_args"] = {"connect_timeout": 10}  # seconds
-
-engine = create_engine(DB_URL, pool_pre_ping=True, **pg_opts)
-print("auto_refresh.py: engine created", flush=True)
-
-# Quick DB ping so we can see if we hang here
-try:
-    with engine.connect() as conn:
-        conn.execute(sa.text("SELECT 1"))
-    print("auto_refresh.py: DB ping OK", flush=True)
-except Exception as e:
-    print("auto_refresh.py: DB ping FAILED:", repr(e), flush=True)
-    sys.exit(2)
-
-# ---------- Insert helper ----------
-COLS_TO_SAVE = [
-    "notice_id","solicitation_number","title","notice_type",
-    "posted_date","response_date","archive_date",
-    "naics_code","set_aside_code",
-    "description","link"
+# ---------------- Helpers ----------------
+REQUIRED_COLS = [
+    "notice_id", "solicitation_number", "title", "notice_type",
+    "posted_date", "response_date", "archive_date",
+    "naics_code", "set_aside_code", "description", "link",
+    "pop_city", "pop_state", "pop_zip", "pop_country", "pop_raw",
 ]
 
-def insert_new_records_only(records) -> int:
-    if not records:
-        return 0
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    rows = []
-    for r in records:
-        # Fast path: don't fetch description here; backfill runs separately
-        m = gs.map_record_allowed_fields(r, api_keys=SAM_KEYS, fetch_desc=True)
-        if (m.get("notice_type") or "").strip().lower() == "justification":
-            continue
-        nid = (m.get("notice_id") or "").strip()
-        if not nid:
-            continue
-        row = {k: (m.get(k) or "") for k in COLS_TO_SAVE}
-        row["pulled_at"] = now_iso
-        rows.append(row)
 
+def _stringify(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (str, int, float, bool)):
+        return str(v).strip()
+    try:
+        return json.dumps(v, ensure_ascii=False).strip()
+    except Exception:
+        return str(v).strip()
+
+
+def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
+    nid = (notice_id or "").strip()
+    if not nid:
+        return "https://sam.gov/"
+    # If caller already handed us a public web URL, keep it; otherwise force public opp URL
+    if link and isinstance(link, str) and ("api.sam.gov" not in link):
+        return link
+    return f"https://sam.gov/opp/{nid}/view"
+
+
+def _engine():
+    # For Postgres (Supabase) we usually want pool_pre_ping; SQLite is fine default.
+    kw = {}
+    if DB_URL.startswith("postgresql"):
+        kw.update(dict(pool_pre_ping=True, pool_size=5, max_overflow=2))
+    return create_engine(DB_URL, **kw)
+
+
+def _ensure_table(conn):
+    # Fail fast if table missing; we don’t try to create here—use your app migration
+    try:
+        conn.execute(text("SELECT 1 FROM solicitationraw LIMIT 1"))
+    except Exception as e:
+        raise RuntimeError(
+            "Table 'solicitationraw' not found. Run your app once to migrate/create schema.") from e
+
+
+def _already_have_ids(conn) -> set[str]:
+    # Pull the set of existing notice_ids to skip duplicates quickly
+    rows = conn.execute(
+        text("SELECT notice_id FROM solicitationraw")).fetchall()
+    return {str(r[0]) for r in rows if r and r[0]}
+
+
+def _insert_rows(conn, rows: List[Dict[str, Any]]) -> int:
     if not rows:
-        print("No new rows to insert after filtering/mapping.")
         return 0
-
-    cols = ["pulled_at"] + COLS_TO_SAVE
-    placeholders = ", ".join(":" + c for c in cols)
-    sql = sa.text(f"""
-        INSERT INTO solicitationraw ({", ".join(cols)})
-        VALUES ({placeholders})
-        ON CONFLICT (notice_id) DO UPDATE SET
-        pop_city    = COALESCE(NULLIF(EXCLUDED.pop_city, ''), solicitationraw.pop_city),
-        pop_state   = COALESCE(NULLIF(EXCLUDED.pop_state, ''), solicitationraw.pop_state),
-        pop_zip     = COALESCE(NULLIF(EXCLUDED.pop_zip, ''), solicitationraw.pop_zip),
-        pop_country = COALESCE(NULLIF(EXCLUDED.pop_country, ''), solicitationraw.pop_country),
-        pop_raw     = CASE WHEN EXCLUDED.pop_raw <> '' THEN EXCLUDED.pop_raw ELSE solicitationraw.pop_raw END
-        """)
-    with engine.begin() as conn:
-        conn.execute(sql, rows)
+    # Only include columns that exist in your schema
+    cols = ["pulled_at"] + REQUIRED_COLS
+    sql = text(f"""
+        INSERT INTO solicitationraw (
+            {", ".join(cols)}
+        ) VALUES (
+            {", ".join(":"+c for c in cols)}
+        )
+        ON CONFLICT (notice_id) DO NOTHING
+    """)
+    conn.execute(sql, rows)
     return len(rows)
 
-# auto_refresh.py
-from sqlalchemy import text
-import get_relevant_solicitations as gs
+# ---------------- Main ----------------
 
-# ... after bulk insert succeeds ...
-with engine.connect() as conn:
-    new_rows = pd.read_sql_query(
-        "SELECT notice_id FROM solicitationraw WHERE pulled_at = :ts",
-        conn,
-        params={"ts": now_iso},  # same timestamp string you used when inserting
-    )
 
-# Limit backfill per run so you stay snappy & avoid quota spikes
-MAX_BACKFILL = 150  # tune: 50–200 is reasonable
-ids_to_backfill = [str(x) for x in new_rows["notice_id"].dropna().astype(str).tolist()][:MAX_BACKFILL]
+def main():
+    print("=== Auto refresh start ===")
+    print(datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y"))
+    print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)")
+    print(f"DAYS_BACK = {DAYS_BACK}")
+    print(f"Paging: PAGE_SIZE={PAGE_SIZE}, MAX_RECORDS={MAX_RECORDS}")
 
-if ids_to_backfill:
-    updates = []
-    for nid in ids_to_backfill:
-        try:
-            data = gs.enrich_notice_fields(nid, SAM_KEYS)
-            # Skip empty updates (rare)
-            if not any(data.get(k) for k in ("description","pop_city","pop_state","pop_zip","pop_country")):
-                continue
-            updates.append({"notice_id": nid, **data})
-            # Tiny delay helps smooth rate limiting
-            time.sleep(0.05)
-        except Exception as e:
-            # Log and continue
-            print(f"backfill failed for {nid}: {e}")
+    if not SAM_KEYS:
+        print("ERROR: No SAM_KEYS provided (env SAM_KEYS). Exiting.")
+        sys.exit(1)
 
-    if updates:
-        # Batch UPDATEs
-        with engine.begin() as conn:
-            conn.execute(text("""
-                UPDATE solicitationraw
-                SET
-                    description = COALESCE(NULLIF(:description, ''), description),
-                    pop_city    = COALESCE(NULLIF(:pop_city, ''), pop_city),
-                    pop_state   = COALESCE(NULLIF(:pop_state, ''), pop_state),
-                    pop_zip     = COALESCE(NULLIF(:pop_zip, ''), pop_zip),
-                    pop_country = COALESCE(NULLIF(:pop_country, ''), pop_country),
-                    pop_raw     = COALESCE(NULLIF(:pop_raw, ''), pop_raw)
-                WHERE notice_id = :notice_id
-            """), updates)
-            
-def db_counts():
+    engine = _engine()
+    print("auto_refresh.py: engine created")
+
     try:
         with engine.connect() as conn:
-            total = conn.execute(sqltext("SELECT COUNT(*) FROM solicitationraw")).scalar_one()
-            max_pulled = conn.execute(sqltext("SELECT MAX(pulled_at) FROM solicitationraw")).scalar_one()
-        return int(total or 0), str(max_pulled or "")
-    except Exception as e:
-        print("db_counts() failed:", repr(e))
-        return None, None
+            _ensure_table(conn)
+            print("auto_refresh.py: DB ping OK")
 
-# ---------- Main ----------
-def main():
-    print("auto_refresh.py: entered main()", flush=True)
+            # For logging DB size (optional)
+            try:
+                before = conn.execute(
+                    text("SELECT COUNT(*) FROM solicitationraw")).scalar() or 0
+                last_pulled = conn.execute(
+                    text("SELECT MAX(pulled_at) FROM solicitationraw")).scalar()
+                print(
+                    f"DB before: {before} rows; last pulled_at: {last_pulled}")
+            except Exception:
+                pass
+
+    except Exception as e:
+        print("auto_refresh.py: DB check failed")
+        print(e)
+        sys.exit(1)
+
+    print("auto_refresh.py: entered main()")
     print("Starting auto-refresh job...")
-    total_before, last_pulled = db_counts()
-    if total_before is not None:
-        print(f"DB before: {total_before} rows; last pulled_at: {last_pulled}")
+
+    total_inserted = 0
+    total_seen = 0
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     try:
-        print("Fetching solicitations from SAM.gov with pagination…", flush=True)
+        with engine.begin() as conn:
+            existing = _already_have_ids(conn)
+            rows_to_insert: List[Dict[str, Any]] = []
 
-        total_fetched = 0
-        total_inserted = 0
-        offset = 0
-        page_idx = 0
+            print("Fetching solicitations from SAM.gov with pagination…")
+            offset = 0
 
-        while total_fetched < MAX_RECORDS:
-            page_idx += 1
-            print(f"  → Page {page_idx}: offset={offset}, limit={PAGE_SIZE}", flush=True)
+            while True:
+                limit = min(PAGE_SIZE, MAX_RECORDS - total_seen)
+                if limit <= 0:
+                    break
 
-            raw = gs.get_sam_raw_v3(
-                days_back=DAYS_BACK,
-                limit=PAGE_SIZE,
-                api_keys=SAM_KEYS,
-                filters={},
-                offset=offset,   # requires get_sam_raw_v3 to accept 'offset'
-            )
+                print(
+                    f"  → Page {offset//PAGE_SIZE + 1}: offset={offset}, limit={limit}")
 
-            count = len(raw)
-            total_fetched += count
-            print(f"    fetched {count} records (cumulative fetched: {total_fetched})", flush=True)
+                # IMPORTANT: keep fetch fast — do not fetch descriptions on refresh
+                raw = gs.get_sam_raw_v3(
+                    days_back=DAYS_BACK,
+                    limit=limit,
+                    api_keys=SAM_KEYS,
+                    filters={},       # we want everything in the window
+                    offset=offset,
+                )
+                if not raw:
+                    break
 
-            if count == 0:
-                break
+                total_seen += len(raw)
+                print(
+                    f"    fetched {len(raw)} records (cumulative fetched: {total_seen})")
 
-            # Log a few IDs from the first pages to verify paging works
-            if page_idx <= 2:
-                try:
-                    sample_ids = [
-                        gs.map_record_allowed_fields(r, api_keys=SAM_KEYS, fetch_desc=False).get("notice_id")
-                        for r in raw[:5]
-                    ]
-                    print(f"    sample notice_ids: {sample_ids}")
-                except Exception as e:
-                    print("    sample logging failed:", repr(e))
+                for r in raw:
+                    m = gs.map_record_allowed_fields(
+                        r,
+                        api_keys=SAM_KEYS,
+                        fetch_desc=False,  # keep refresh FAST
+                    )
+                    nid = (m.get("notice_id") or "").strip()
+                    if not nid or nid in existing:
+                        continue
 
-            inserted = insert_new_records_only(raw)
-            total_inserted += inserted
-            print(f"    inserted {inserted} new (cumulative inserted: {total_inserted})", flush=True)
+                    # Force link to public URL so clicks never need API key
+                    public_link = make_sam_public_url(nid, m.get("link"))
+                    row = {
+                        "pulled_at": now_iso,
+                        "notice_id": _stringify(m.get("notice_id")),
+                        "solicitation_number": _stringify(m.get("solicitation_number")),
+                        "title": _stringify(m.get("title")),
+                        "notice_type": _stringify(m.get("notice_type")),
+                        "posted_date": _stringify(m.get("posted_date")),
+                        "response_date": _stringify(m.get("response_date")),
+                        "archive_date": _stringify(m.get("archive_date")),
+                        "naics_code": _stringify(m.get("naics_code")),
+                        "set_aside_code": _stringify(m.get("set_aside_code")),
+                        # may be empty
+                        "description": _stringify(m.get("description")),
+                        "link": public_link,
+                        "pop_city": _stringify(m.get("pop_city")),
+                        "pop_state": _stringify(m.get("pop_state")),
+                        "pop_zip": _stringify(m.get("pop_zip")),
+                        "pop_country": _stringify(m.get("pop_country")),
+                        "pop_raw": _stringify(m.get("pop_raw")),
+                    }
+                    rows_to_insert.append(row)
+                    existing.add(nid)  # avoid repeats in same run
 
-            if count < PAGE_SIZE:
-                # last page
-                break
+                # Insert batch
+                if rows_to_insert:
+                    inserted = _insert_rows(conn, rows_to_insert)
+                    total_inserted += inserted
+                    rows_to_insert.clear()
 
-            offset += PAGE_SIZE
+                # Next page
+                offset += PAGE_SIZE
+                if total_seen >= MAX_RECORDS:
+                    break
 
-        print(f"Done. Total fetched: {total_fetched}, total inserted: {total_inserted}", flush=True)
+        print(f"Auto refresh success: inserted {total_inserted} new notices.")
+        if total_seen == 0:
+            print("Note: SAM.gov returned no records for the selected window.")
 
-        total_after, last_pulled2 = db_counts()
-        if total_after is not None:
-            print(f"DB after: {total_after} rows; last pulled_at: {last_pulled2}")
-
-        if total_inserted == 0 and total_fetched == 0:
-            print("DEBUG: SAM.gov returned 0 items. Possible reasons: no new postings in window, "
-                  "too-narrow server-side filters, or upstream hiccup.")
-
-        print("Auto-refresh job completed.")
-
-    except SamQuotaError:
-        print("ERROR: SAM.gov quota exceeded.")
-        sys.exit(2)
-    except SamAuthError:
-        print("ERROR: SAM.gov auth failed. Check SAM_KEYS secret.")
-        sys.exit(2)
-    except SamBadRequestError as e:
-        print(f"ERROR: Bad request to SAM.gov: {e}")
-        sys.exit(2)
     except Exception as e:
-        print("Auto refresh failed:", repr(e))
-        sys.exit(1)
+        print(f"Auto refresh failed: {e}")
+        sys.exit(2)
+
 
 if __name__ == "__main__":
     main()
