@@ -950,8 +950,13 @@ def insert_new_records_only(records) -> int:
         ) VALUES (
             :pulled_at, {", ".join(":"+c for c in COLS_TO_SAVE)}
         )
-        ON CONFLICT (notice_id) DO NOTHING
-    """)
+        ON CONFLICT (notice_id) DO UPDATE SET
+        pop_city    = COALESCE(NULLIF(EXCLUDED.pop_city, ''), solicitationraw.pop_city),
+        pop_state   = COALESCE(NULLIF(EXCLUDED.pop_state, ''), solicitationraw.pop_state),
+        pop_zip     = COALESCE(NULLIF(EXCLUDED.pop_zip, ''), solicitationraw.pop_zip),
+        pop_country = COALESCE(NULLIF(EXCLUDED.pop_country, ''), solicitationraw.pop_country),
+        pop_raw     = CASE WHEN EXCLUDED.pop_raw <> '' THEN EXCLUDED.pop_raw ELSE solicitationraw.pop_raw END
+        """)
 
     with engine.begin() as conn:
         conn.execute(sql, rows)  # bulk insert

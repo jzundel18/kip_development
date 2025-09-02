@@ -71,7 +71,7 @@ def insert_new_records_only(records) -> int:
     rows = []
     for r in records:
         # Fast path: don't fetch description here; backfill runs separately
-        m = gs.map_record_allowed_fields(r, api_keys=SAM_KEYS, fetch_desc=False)
+        m = gs.map_record_allowed_fields(r, api_keys=SAM_KEYS, fetch_desc=True)
         if (m.get("notice_type") or "").strip().lower() == "justification":
             continue
         nid = (m.get("notice_id") or "").strip()
@@ -90,8 +90,13 @@ def insert_new_records_only(records) -> int:
     sql = sa.text(f"""
         INSERT INTO solicitationraw ({", ".join(cols)})
         VALUES ({placeholders})
-        ON CONFLICT (notice_id) DO NOTHING
-    """)
+        ON CONFLICT (notice_id) DO UPDATE SET
+        pop_city    = COALESCE(NULLIF(EXCLUDED.pop_city, ''), solicitationraw.pop_city),
+        pop_state   = COALESCE(NULLIF(EXCLUDED.pop_state, ''), solicitationraw.pop_state),
+        pop_zip     = COALESCE(NULLIF(EXCLUDED.pop_zip, ''), solicitationraw.pop_zip),
+        pop_country = COALESCE(NULLIF(EXCLUDED.pop_country, ''), solicitationraw.pop_country),
+        pop_raw     = CASE WHEN EXCLUDED.pop_raw <> '' THEN EXCLUDED.pop_raw ELSE solicitationraw.pop_raw END
+        """)
     with engine.begin() as conn:
         conn.execute(sql, rows)
     return len(rows)
