@@ -101,6 +101,52 @@ def insert_new_records_only(records) -> int:
         conn.execute(sql, rows)
     return len(rows)
 
+# auto_refresh.py
+from sqlalchemy import text
+import get_relevant_solicitations as gs
+
+# ... after bulk insert succeeds ...
+with engine.connect() as conn:
+    new_rows = pd.read_sql_query(
+        "SELECT notice_id FROM solicitationraw WHERE pulled_at = :ts",
+        conn,
+        params={"ts": now_iso},  # same timestamp string you used when inserting
+    )
+
+# Limit backfill per run so you stay snappy & avoid quota spikes
+MAX_BACKFILL = 150  # tune: 50–200 is reasonable
+ids_to_backfill = [str(x) for x in new_rows["notice_id"].dropna().astype(str).tolist()][:MAX_BACKFILL]
+
+if ids_to_backfill:
+    updates = []
+    for nid in ids_to_backfill:
+        try:
+            data = gs.enrich_notice_fields(nid, SAM_KEYS)
+            # Skip empty updates (rare)
+            if not any(data.get(k) for k in ("description","pop_city","pop_state","pop_zip","pop_country")):
+                continue
+            updates.append({"notice_id": nid, **data})
+            # Tiny delay helps smooth rate limiting
+            time.sleep(0.05)
+        except Exception as e:
+            # Log and continue
+            print(f"backfill failed for {nid}: {e}")
+
+    if updates:
+        # Batch UPDATEs
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE solicitationraw
+                SET
+                    description = COALESCE(NULLIF(:description, ''), description),
+                    pop_city    = COALESCE(NULLIF(:pop_city, ''), pop_city),
+                    pop_state   = COALESCE(NULLIF(:pop_state, ''), pop_state),
+                    pop_zip     = COALESCE(NULLIF(:pop_zip, ''), pop_zip),
+                    pop_country = COALESCE(NULLIF(:pop_country, ''), pop_country),
+                    pop_raw     = COALESCE(NULLIF(:pop_raw, ''), pop_raw)
+                WHERE notice_id = :notice_id
+            """), updates)
+            
 def db_counts():
     try:
         with engine.connect() as conn:

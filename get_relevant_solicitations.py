@@ -705,3 +705,25 @@ def map_record_allowed_fields(
 
     mapped.update(pop)
     return mapped
+
+# get_relevant_solicitations.py
+
+
+def enrich_notice_fields(notice_id: str, api_keys: list[str]) -> dict:
+    """
+    Fetches per-notice details once and returns fields to backfill.
+    Returns keys: description, pop_city, pop_state, pop_zip, pop_country, pop_raw
+    """
+    # Prefer the entity payload for PoP (authoritative)
+    ent = fetch_notice_entity_v2(notice_id, api_keys)
+    pop = _extract_pop_from_notice_entity(ent) if ent else {
+        "pop_city": "", "pop_state": "", "pop_zip": "", "pop_country": "", "pop_raw": ""}
+
+    # Description: try search-by-id then entity attributes.description, then v1 noticedesc
+    # (re-use your existing function which tries multiple sources)
+    desc = fetch_notice_description(notice_id, api_keys)
+
+    return {
+        "description": desc or "",
+        **pop
+    }

@@ -936,13 +936,13 @@ def insert_new_records_only(records) -> int:
         conn.execute(sql, rows_to_insert)
 
     # 4) Fetch detail (PoP) ONLY for the new rows and UPDATE those columns
-    #    Use your mapper once with fetch_desc=True to get PoP safely.
+    #    Use your mapper once with fetch_desc=Trfue to get PoP safely.
     updates = []
     for r in records:
         nid = str(r.get("noticeId","") or r.get("notice_id","")).strip()
         if not nid or nid not in new_ids:
             continue
-        m = gs.map_record_allowed_fields(r, api_keys=SAM_KEYS, fetch_desc=True)
+        m = gs.map_record_allowed_fields(r, api_keys=SAM_KEYS, fetch_desc=False)
         updates.append({
             "notice_id": nid,
             "pop_city": _stringify(m.get("pop_city")),

@@ -1,331 +1,361 @@
 #!/usr/bin/env python3
-"""
-Backfill place-of-performance fields for existing solicitation rows using the SAM.gov *detail* API.
+# backfill_pop.py
+# Backfill ONLY Place-of-Performance fields for solicitationraw rows that are missing them.
+# - No description fetching
+# - Uses SAM.gov v2 detail by noticeid
+# - Key rotation + gentle throttling
+# - Safe updates, optional dry-run
 
-What it does:
-  - Ensures pop_* columns exist.
-  - Finds rows where all pop_* are empty/NULL.
-  - For each notice_id, calls the detail endpoint:
-        https://sam.gov/api/prod/opps/v2/opportunities/{noticeId}?api_key=...
-  - Extracts PoP and updates the row when found.
-
-Run:
-  python backfill_pop.py
-"""
-
+from __future__ import annotations
 import os
-import sys
+import re
 import time
 import json
-import random
-import logging
+import html
+import argparse
+from typing import Any, Dict, List, Optional, Tuple
+
 import requests
 import sqlalchemy as sa
-from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
-# -----------------------
-# Hardcoded config (as requested)
-# -----------------------
-# You can still override with env vars if you want.
-SUPABASE_DB_URL = os.getenv(
-    "SUPABASE_DB_URL",
-    "postgresql+psycopg2://postgres.ceemspukffoygxazsvix:Moolah123%21%21%21@aws-1-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
-)
+# --------------------------
+# 🔐 CONFIG: Keys & Database
+# --------------------------
 
-# rotate through these; can also set SAM_KEYS env to override
-HARDCODED_SAM_KEYS = [
+# Hardcode your SAM keys here (comma-separated list)
+SAM_KEYS: List[str] = [
     "2WWQnuvYVj7cI3qozS5xC0Y2SgGITC7NGWtmqebq",
     "qV4oW8tKis4kinR7oXIBlnTDlJx9Tyf4Se8Tmmmx"
 ]
-SAM_KEYS = [k.strip() for k in os.getenv("SAM_KEYS", "").split(",")
-            if k.strip()] or HARDCODED_SAM_KEYS
-if not SAM_KEYS:
-    print("No SAM API keys configured.", file=sys.stderr)
-    sys.exit(1)
 
-SAM_DETAIL_URL_TMPL = "https://api.sam.gov/prod/opportunities/v2/opportunities/{notice_id}"
+HARD_LIMIT = 50
 
-# -----------------------
-# Logging
-# -----------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
+# Prefer env var if present; otherwise you can hardcode your Supabase/Postgres URL.
+# Example:
+# DB_URL = "postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME"
+DB_URL = (
+    "postgresql+psycopg2://postgres.ceemspukffoygxazsvix:Moolah123%21%21%21@aws-1-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
 )
 
-# -----------------------
-# DB
-# -----------------------
-engine = sa.create_engine(SUPABASE_DB_URL, pool_pre_ping=True, future=True)
+# HTTP
+SAM_SEARCH_URL_V2 = "https://api.sam.gov/prod/opportunities/v2/search"
+
+USER_AGENT = "kip_pop_backfill/1.0"
+HTTP_TIMEOUT = 30
+SLEEP_BETWEEN_CALLS = 0.25  # seconds (be polite)
 
 
-def ensure_pop_columns():
-    """Add pop_* columns if missing."""
-    with engine.begin() as conn:
-        # Create columns if they don't exist (TEXT is fine)
-        for col, typ in [
-            ("pop_city", "TEXT"),
-            ("pop_state", "TEXT"),
-            ("pop_zip", "TEXT"),
-            ("pop_country", "TEXT"),
-            ("pop_raw", "TEXT"),
-        ]:
-            try:
-                conn.execute(
-                    text(f'ALTER TABLE solicitationraw ADD COLUMN IF NOT EXISTS "{col}" {typ}'))
-            except Exception:
-                # Some Postgres versions lack IF NOT EXISTS for columns; try a guarded add
-                try:
-                    conn.execute(
-                        text(f"SELECT {col} FROM solicitationraw LIMIT 1"))
-                except Exception:
-                    conn.execute(
-                        text(f'ALTER TABLE solicitationraw ADD COLUMN "{col}" {typ}'))
+# --------------------------
+# Small utils
+# --------------------------
+
+def _mask_key(k: str) -> str:
+    return f"...{k[-4:]}" if k else "(none)"
 
 
-def rows_needing_backfill():
-    """Return list of notice_ids where all pop_* are empty/NULL."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT notice_id
-            FROM solicitationraw
-            WHERE COALESCE(NULLIF(TRIM(pop_city), ''), '') = ''
-              AND COALESCE(NULLIF(TRIM(pop_state), ''), '') = ''
-              AND COALESCE(NULLIF(TRIM(pop_zip), ''), '') = ''
-              AND COALESCE(NULLIF(TRIM(pop_country), ''), '') = ''
-        """)).fetchall()
-    return [r[0] for r in rows if r and r[0]]
-
-# -----------------------
-# SAM helpers
-# -----------------------
-
-
-_seen_debug = 0
-
-
-def sam_get_detail(notice_id: str, api_key: str) -> dict | None:
-    """
-    Fetch the *detail* record for a notice_id.
-    Handles 429 rate limits by raising a sentinel exception.
-    """
-    global _seen_debug
-    url = SAM_DETAIL_URL_TMPL.format(notice_id=notice_id)
-    params = {"api_key": api_key}
-
-    r = requests.get(url, params=params, timeout=25)
-    if r.status_code == 429:
-        raise requests.HTTPError("RATE_LIMIT")
-    if r.status_code == 404:
-        logging.info("Detail not found (404) for %s", notice_id)
-        return None
+def _s(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
     try:
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        logging.warning("HTTP error for %s: %s (body=%r)",
-                        notice_id, e, r.text[:300])
-        return None
-
-    data = {}
-    try:
-        data = r.json() if r.content else {}
+        return json.dumps(v, ensure_ascii=False)
     except Exception:
-        logging.warning("Non-JSON response for %s: %r",
-                        notice_id, r.text[:300])
-        return None
-
-    # Show a quick peek at the first couple payloads
-    if _seen_debug < 3:
-        _seen_debug += 1
-        logging.info("Got detail for %s; top-level keys: %s",
-                     notice_id, ", ".join(list(data.keys())[:10]))
-
-    return data
+        return str(v)
 
 
-def _first_nonempty(*vals) -> str:
-    for v in vals:
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return ""
+def _host_from_link(u: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(u).netloc or "").lower()
+    except Exception:
+        return ""
 
 
-def extract_pop(detail: dict) -> dict:
-    """
-    Extract place-of-performance from a detail payload.
-    Returns dict with keys: pop_city, pop_state, pop_zip, pop_country, pop_raw
-    """
-    if not isinstance(detail, dict):
-        return blank_pop()
+def _get_engine() -> Engine:
+    # If you want to hardcode Postgres, uncomment and set the line below:
+    # db_url = "postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME"
+    db_url = DB_URL
+    if db_url.startswith("postgresql+psycopg2://"):
+        return sa.create_engine(
+            db_url,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=2,
+            connect_args={"sslmode": "require"},
+        )
+    return sa.create_engine(db_url, pool_pre_ping=True)
 
-    # Common spot:
-    # detail["placeOfPerformance"]["address"] -> {city, state, zip, country}
-    pop = detail.get("placeOfPerformance") or {}
-
-    # Some payloads put the raw address fields at the same level
-    addr = {}
-    if isinstance(pop, dict):
-        addr = pop.get("address") if isinstance(
-            pop.get("address"), dict) else {}
-    if not addr and isinstance(pop, dict):
-        # try alternative shapes
-        addr = {
-            "city": pop.get("city") or pop.get("cityName"),
-            "state": pop.get("state") or pop.get("stateCode") or pop.get("stateProvince"),
-            "zip": pop.get("zip") or pop.get("zipCode") or pop.get("postalCode"),
-            "country": pop.get("country") or pop.get("countryCode") or pop.get("countryName"),
-        }
-
-    # Top-level fallbacks (rare)
-    if not any(addr.values()):
-        addr = detail.get("popAddress") if isinstance(
-            detail.get("popAddress"), dict) else addr
-
-    city = _first_nonempty(addr.get("city"), addr.get("cityName"))
-    state = _first_nonempty(addr.get("state"), addr.get(
-        "stateCode"), addr.get("stateProvince"))
-    zipc = _first_nonempty(addr.get("zip"), addr.get(
-        "zipCode"), addr.get("postalCode"))
-    country = _first_nonempty(addr.get("country"), addr.get(
-        "countryCode"), addr.get("countryName"))
-
-    # Some payloads store country code under placeOfPerformance.countryCode
-    if not country and isinstance(pop, dict):
-        country = _first_nonempty(pop.get("countryCode"), pop.get("country"))
-
-    if not (city or state or zipc or country):
-        return blank_pop()
-
-    raw_parts = []
-    if city:
-        raw_parts.append(city)
-    if state:
-        raw_parts.append(state)
-    raw = ", ".join(raw_parts)
-    if zipc:
-        raw = (raw + f" {zipc}").strip()
-    if country and country.upper() not in ("US", "USA", "UNITED STATES", "UNITED-STATES"):
-        raw = (raw + f" ({country})").strip()
-
-    return {
-        "pop_city": city,
-        "pop_state": state,
-        "pop_zip": zipc,
-        "pop_country": country,
-        "pop_raw": raw,
-    }
+# --------------------------
+# SAM.gov detail fetch (v2)
+# --------------------------
 
 
-def blank_pop() -> dict:
-    return {"pop_city": "", "pop_state": "", "pop_zip": "", "pop_country": "", "pop_raw": ""}
-
-
-def update_row(nid: str, pop: dict) -> None:
-    with engine.begin() as conn:
-        conn.execute(text("""
-            UPDATE solicitationraw
-            SET pop_city = :city,
-                pop_state = :state,
-                pop_zip = :zip,
-                pop_country = :country,
-                pop_raw = :raw
-            WHERE notice_id = :nid
-        """), {
-            "city": pop.get("pop_city", ""),
-            "state": pop.get("pop_state", ""),
-            "zip": pop.get("pop_zip", ""),
-            "country": pop.get("pop_country", ""),
-            "raw": pop.get("pop_raw", ""),
-            "nid": nid
-        })
-
-
-def key_rotator():
+def _rotate_keys(keys: List[str]):
     while True:
-        for k in SAM_KEYS:
+        for k in keys:
             yield k
 
-# -----------------------
+
+def _http_get(url: str, params: dict, key: str, timeout: int = HTTP_TIMEOUT) -> requests.Response:
+    headers = {"User-Agent": USER_AGENT}
+    return requests.get(url, params={**params, "api_key": key}, headers=headers, timeout=timeout)
+
+
+def fetch_notice_detail_v2(notice_id: str, api_keys: List[str]) -> Dict[str, Any]:
+    """
+    Fetch a single record using the v2 search endpoint by noticeid.
+    Returns {} on failure.
+    """
+    if not notice_id or not api_keys:
+        return {}
+    rot = _rotate_keys(api_keys)
+    for _ in range(len(api_keys)):
+        key = next(rot)
+        try:
+            r = _http_get(SAM_SEARCH_URL_V2, {
+                          "noticeid": notice_id, "limit": 1}, key)
+            if r.status_code == 429:
+                time.sleep(1.0)
+                continue
+            r.raise_for_status()
+            data = r.json() if r.headers.get("Content-Type",
+                                             "").startswith("application/json") else {}
+            items = data.get("opportunitiesData") or data.get("data") or []
+            if isinstance(items, list) and items:
+                return items[0]
+            return {}
+        except Exception:
+            time.sleep(0.5)
+            continue
+    return {}
+
+# --------------------------
+# POP extraction
+# --------------------------
+
+
+def _extract_pop_from_obj(obj: dict | None) -> dict:
+    """
+    Try several common containers/field names to get city/state/zip/country.
+    Returns dict with possibly empty strings.
+    """
+    if not isinstance(obj, dict):
+        return {}
+
+    candidates = []
+    for k in (
+        "placeOfPerformance",
+        "place_of_performance",
+        "placeOfPerformanceAddress",
+        "primaryPlaceOfPerformance",
+        "popAddress",
+        "placeOfPerformanceLocation",
+        "place_of_performance_location",
+        "placeOfPerformanceCityState",
+    ):
+        v = obj.get(k)
+        if isinstance(v, dict):
+            candidates.append(v)
+
+    # Sometimes appears in lists
+    for k in ("addresses", "locations", "placeOfPerformanceAddresses"):
+        v = obj.get(k)
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            candidates.append(v[0])
+
+    # allow using the object itself if it looks like an address
+    candidates.append(obj)
+
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        city = c.get("city") or c.get("cityName") or (
+            c.get("address") or {}).get("city")
+        state = (
+            c.get("state") or c.get("stateCode") or (
+                c.get("address") or {}).get("state")
+            or c.get("stateProvince") or c.get("stateProvinceCode")
+        )
+        zipc = (
+            c.get("zip") or c.get("zipCode") or c.get("postalCode")
+            or (c.get("address") or {}).get("postalCode")
+        )
+        country = (
+            c.get("country") or c.get("countryCode") or c.get("countryName")
+            or (c.get("address") or {}).get("country")
+        )
+        if city or state or zipc or country:
+            return {
+                "pop_city": _s(city).strip(),
+                "pop_state": _s(state).strip(),
+                "pop_zip": _s(zipc).strip(),
+                "pop_country": _s(country).strip(),
+            }
+
+    return {}
+
+
+def _build_pop_raw(pop: dict) -> str:
+    parts = []
+    if pop.get("pop_city"):
+        parts.append(pop["pop_city"])
+    if pop.get("pop_state"):
+        parts.append(pop["pop_state"])
+    raw = ", ".join(parts)
+    if pop.get("pop_zip"):
+        raw = (raw + f" {pop['pop_zip']}".rstrip()).strip()
+    if pop.get("pop_country") and pop["pop_country"].upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
+        raw = (raw + f" ({pop['pop_country']})").strip()
+    return raw
+
+
+def extract_place_of_performance(rec: dict) -> dict:
+    """
+    Pulls POP from the v2 detail payload (preferred) and, if not found,
+    tries some shallow fallbacks on the same object.
+    Returns dict with keys: pop_city, pop_state, pop_zip, pop_country, pop_raw
+    """
+    pop = _extract_pop_from_obj(rec)
+
+    # If still nothing, look for obvious top-level fields (rare)
+    if not (pop.get("pop_city") or pop.get("pop_state") or pop.get("pop_zip") or pop.get("pop_country")):
+        city = rec.get("city")
+        state = rec.get("state") or rec.get("stateCode")
+        zipc = rec.get("zip") or rec.get("zipCode") or rec.get("postalCode")
+        country = rec.get("country") or rec.get(
+            "countryCode") or rec.get("countryName")
+        if city or state or zipc or country:
+            pop = {
+                "pop_city": _s(city).strip(),
+                "pop_state": _s(state).strip(),
+                "pop_zip": _s(zipc).strip(),
+                "pop_country": _s(country).strip(),
+            }
+
+    # finalize
+    for k in ("pop_city", "pop_state", "pop_zip", "pop_country"):
+        pop.setdefault(k, "")
+    pop["pop_raw"] = _build_pop_raw(pop)
+    return pop
+
+# --------------------------
+# DB work
+# --------------------------
+
+
+SQL_SELECT_MISSING = """
+SELECT notice_id
+FROM solicitationraw
+WHERE COALESCE(NULLIF(pop_city, ''), NULLIF(pop_state, ''), NULLIF(pop_zip, ''), NULLIF(pop_country, '')) IS NULL
+ORDER BY pulled_at DESC
+LIMIT :limit
+"""
+
+SQL_UPDATE_POP = """
+UPDATE solicitationraw
+SET pop_city = :pop_city,
+    pop_state = :pop_state,
+    pop_zip = :pop_zip,
+    pop_country = :pop_country,
+    pop_raw = :pop_raw
+WHERE notice_id = :notice_id
+"""
+
+
+def pick_targets(conn: sa.engine.Connection, limit: int) -> List[str]:
+    rows = conn.execute(sa.text(SQL_SELECT_MISSING), {
+                        "limit": int(limit)}).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+def update_pop(conn: sa.engine.Connection, notice_id: str, pop: dict) -> int:
+    params = {
+        "notice_id": notice_id,
+        "pop_city": pop.get("pop_city", ""),
+        "pop_state": pop.get("pop_state", ""),
+        "pop_zip": pop.get("pop_zip", ""),
+        "pop_country": pop.get("pop_country", ""),
+        "pop_raw": pop.get("pop_raw", ""),
+    }
+    res = conn.execute(sa.text(SQL_UPDATE_POP), params)
+    return res.rowcount or 0
+
+# --------------------------
 # Main
-# -----------------------
+# --------------------------
 
 
 def main():
-    logging.info("DB: %s", SUPABASE_DB_URL)
-    ensure_pop_columns()
+    parser = argparse.ArgumentParser(
+        description="Backfill ONLY Place-of-Performance (POP) fields for missing rows.")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Do not write to DB; just log what would change")
+    args = parser.parse_args()
 
-    todo = rows_needing_backfill()
-    if not todo:
-        logging.info("No rows need backfill.")
+    if not SAM_KEYS:
+        print("ERROR: No SAM keys configured. Edit SAM_KEYS in this file.")
         return
 
-    logging.info("Found %d rows with empty PoP.", len(todo))
+    engine = _get_engine()
 
-    rot = key_rotator()
-    updated = 0
-    skipped = 0
-    failures = 0
-
-    # Exponential backoff settings
-    base_sleep = 0.2
-    max_sleep = 12.0
-    backoff = base_sleep
-
-    for i, nid in enumerate(todo, 1):
-        api_key = next(rot)
-
+    # Validate the table exists
+    with engine.connect() as conn:
         try:
-            detail = sam_get_detail(nid, api_key)
-        except requests.HTTPError:
-            # 429: back off, rotate key, and retry this nid once
-            backoff = min(max_sleep, backoff * 2)  # exponential
-            sleep_for = backoff + random.uniform(0, 0.5)
-            logging.warning(
-                "Rate limited (notice_id=%s). Sleeping %.1fs then continuing…", nid, sleep_for)
-            time.sleep(sleep_for)
-            # try again with next key
-            api_key = next(rot)
-            detail = sam_get_detail(nid, api_key)
-
-        if not isinstance(detail, dict) or not detail:
-            skipped += 1
-            if i % 25 == 0:
-                logging.info("Progress %d/%d (updated=%d, skipped=%d, failures=%d)",
-                             i, len(todo), updated, skipped, failures)
-            # small jitter so we don't hammer
-            time.sleep(0.15 + random.uniform(0, 0.1))
-            continue
-
-        pop = extract_pop(detail)
-        if not any(v.strip() for v in pop.values()):
-            # no PoP in detail record
-            skipped += 1
-            if i % 25 == 0:
-                logging.info("Progress %d/%d (updated=%d, skipped=%d, failures=%d)",
-                             i, len(todo), updated, skipped, failures)
-            time.sleep(0.15 + random.uniform(0, 0.1))
-            continue
-
-        try:
-            update_row(nid, pop)
-            updated += 1
-            # reset backoff when successful
-            backoff = base_sleep
+            conn.execute(sa.text("SELECT 1 FROM solicitationraw LIMIT 1"))
         except Exception as e:
-            failures += 1
-            logging.warning("DB update failed (notice_id=%s): %s", nid, e)
+            print("ERROR: solicitationraw table not found or DB connection failed.")
+            print(e)
+            return
 
-        if i % 25 == 0:
-            logging.info("Progress %d/%d (updated=%d, skipped=%d, failures=%d)",
-                         i, len(todo), updated, skipped, failures)
+    # Do updates inside a transaction
+    with engine.begin() as conn:
+        targets = pick_targets(conn, HARD_LIMIT)
+        if not targets:
+            print("Nothing to backfill — all rows have POP or no eligible rows found.")
+            return
 
-        # polite pacing
-        time.sleep(0.12 + random.uniform(0, 0.15))
+        print(f"Found {len(targets)} notices missing POP. Fetching v2 details…")
 
-    logging.info("Done. Updated=%d, Skipped(no PoP)=%d, Failures=%d",
-                 updated, skipped, failures)
+        updated = 0
+        skipped = 0
+        errors = 0
 
+        for i, nid in enumerate(targets, start=1):
+            try:
+                detail = fetch_notice_detail_v2(nid, SAM_KEYS)
+                if not detail:
+                    skipped += 1
+                    print(
+                        f"[{i}/{len(targets)}] {nid}: no detail returned; skipped")
+                    time.sleep(SLEEP_BETWEEN_CALLS)
+                    continue
 
+                pop = extract_place_of_performance(detail)
+
+                if not (pop.get("pop_city") or pop.get("pop_state") or pop.get("pop_zip") or pop.get("pop_country")):
+                    skipped += 1
+                    print(
+                        f"[{i}/{len(targets)}] {nid}: no POP fields present; skipped")
+                    time.sleep(SLEEP_BETWEEN_CALLS)
+                    continue
+
+                if args.dry_run:
+                    print(f"[{i}/{len(targets)}] {nid}: (dry-run) POP -> {pop}")
+                else:
+                    n = update_pop(conn, nid, pop)
+                    updated += n
+                    print(f"[{i}/{len(targets)}] {nid}: updated POP -> {pop}")
+
+                time.sleep(SLEEP_BETWEEN_CALLS)
+
+            except Exception as e:
+                errors += 1
+                print(f"[{i}/{len(targets)}] {nid}: ERROR {e}")
+                time.sleep(0.6)
+
+        print(f"Done. Updated={updated}, Skipped={skipped}, Errors={errors}")
+        
 if __name__ == "__main__":
     main()
