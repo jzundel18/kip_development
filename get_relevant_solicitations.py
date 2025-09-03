@@ -460,17 +460,39 @@ def _pick_response_date(rec: dict, detail: dict) -> str:
     return "None"
 
 
+# Replace your current _first_nonempty with this version (handles lists cleanly)
 def _first_nonempty(obj: Dict[str, Any], *keys: str, default: str = "None") -> str:
-    for k in keys:
-        v = obj.get(k)
+    """
+    Return a plain string. If value is a dict, prefer name/text/value/code.
+    If it's a list, take the first non-empty element (recursively flattened).
+    Never returns JSON blobs.
+    """
+    def _flatten(v):
+        if v is None:
+            return ""
+        if isinstance(v, list):
+            for it in v:
+                s = _flatten(it)
+                if s:
+                    return s
+            return ""
         if isinstance(v, dict):
-            # pick common subkeys if dict
-            for sub in ("name", "value", "code", "text"):
-                if v.get(sub):
-                    return str(v[sub])
-            continue
-        if v is not None and str(v).strip() != "":
-            return str(v)
+            for k in ("name", "text", "value", "code"):
+                if k in v and v[k] not in (None, "", []):
+                    return str(v[k]).strip()
+            # last resort: scan nested
+            for vv in v.values():
+                s = _flatten(vv)
+                if s:
+                    return s
+            return ""
+        return str(v).strip()
+
+    for k in keys:
+        if k in obj:
+            s = _flatten(obj[k])
+            if s:
+                return s
     return default
 
 # ---------- Place of Performance extraction ----------
@@ -691,8 +713,7 @@ def map_record_allowed_fields(
     response_date = _pick_response_date(rec, search_detail)
 
     # description: prefer inline; if missing/URL, use detail/entity, then noticedesc
-    description = _s(_first_nonempty(
-        rec, "description", "synopsis", default=""))
+    description = _first_nonempty(rec, "description", "synopsis", default="")
 
     def _looks_like_placeholder_or_url(t) -> bool:
         if t is None:
