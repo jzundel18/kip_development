@@ -474,145 +474,178 @@ def _first_nonempty(obj: Dict[str, Any], *keys: str, default: str = "None") -> s
     return default
 
 # ---------- Place of Performance extraction ----------
+# --- add this helper near your other small helpers ---
+
+
+def _flatten_name_like(val: Any) -> str:
+    """
+    Return a plain string for SAM.gov PoP fields.
+    - dict: prefer 'name' -> 'text' -> 'value' -> 'code'
+    - list: use first non-empty element (recursively)
+    - scalar: str(val)
+    Always returns a stripped string; never JSON.
+    """
+    if val is None:
+        return ""
+    # lists: pick first usable
+    if isinstance(val, list):
+        for it in val:
+            s = _flatten_name_like(it)
+            if s:
+                return s.strip()
+        return ""
+    # dicts: prefer human-readable keys
+    if isinstance(val, dict):
+        for k in ("name", "text", "value", "code"):
+            if k in val and val[k] not in (None, "", []):
+                return str(val[k]).strip()
+        # sometimes nested: {"city":{"name":"..."}}
+        for v in val.values():
+            s = _flatten_name_like(v)
+            if s:
+                return s.strip()
+        return ""
+    # scalars
+    return str(val).strip()
+
+# ---------- replace your existing _extract_pop_from_notice_entity with this ----------
 
 
 def _extract_pop_from_notice_entity(detail_json: dict) -> dict:
     """
-    Extract PoP from the official entity payload:
-    data.attributes.placeOfPerformance.address{ city{name}, state{code|name}, zip, country{code|name} }
-    Returns {pop_city, pop_state, pop_zip, pop_country, pop_raw} with empty strings if not found.
+    Extract PoP from entity payload:
+      data.attributes.placeOfPerformance.address.{city,state,country,zip}
+    Fields can be strings or objects { code|name }.
+    Returns {pop_city, pop_state, pop_zip, pop_country, pop_raw} as plain strings.
     """
-    def _sv(x):
-        if x is None:
-            return ""
-        s = str(x).strip()
-        return "" if s.lower() in ("none", "n/a", "na") else s
-
     out = {"pop_city": "", "pop_state": "",
            "pop_zip": "", "pop_country": "", "pop_raw": ""}
+
     try:
         attrs = (detail_json.get("data") or {}).get("attributes") or {}
         addr = (attrs.get("placeOfPerformance") or {}).get("address") or {}
-        # city can be string or object { name }
-        city = addr.get("city")
-        city_name = (city or {}).get(
-            "name") if isinstance(city, dict) else city
-        # state can be string or object { code|name }
-        state = addr.get("state")
-        state_code = (state or {}).get(
-            "code") if isinstance(state, dict) else None
-        state_name = (state or {}).get(
-            "name") if isinstance(state, dict) else None
-        # country can be string or object { code|name }
-        country = addr.get("country")
-        country_code = (country or {}).get(
-            "code") if isinstance(country, dict) else None
-        country_name = (country or {}).get(
-            "name") if isinstance(country, dict) else None
-        # zip variants
-        zip_code = addr.get("zip") or addr.get(
+
+        city_raw = addr.get("city")
+        state_raw = addr.get("state")
+        country_raw = addr.get("country")
+        zip_raw = addr.get("zip") or addr.get(
             "zipCode") or addr.get("postalCode")
 
-        out["pop_city"] = _sv(city_name)
-        out["pop_state"] = _sv(state_code or state_name)
-        out["pop_zip"] = _sv(zip_code)
-        out["pop_country"] = _sv(country_code or country_name)
+        city = _flatten_name_like(city_raw)
+        state = _flatten_name_like(state_raw)
+        country = _flatten_name_like(country_raw)
+        zipc = _flatten_name_like(zip_raw)
 
+        out["pop_city"] = city
+        out["pop_state"] = state
+        out["pop_zip"] = zipc
+        out["pop_country"] = country
+
+        # pretty pop_raw
         bits = []
-        if out["pop_city"]:
-            bits.append(out["pop_city"])
-        if out["pop_state"]:
-            bits.append(out["pop_state"])
+        if city:
+            bits.append(city)
+        if state:
+            bits.append(state)
         raw = ", ".join(bits)
-        if out["pop_zip"]:
-            raw = (raw + f" {out['pop_zip']}".rstrip()).strip()
-        if out["pop_country"] and out["pop_country"].upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
-            raw = (raw + f" ({out['pop_country']})").strip()
+        if zipc:
+            raw = (raw + f" {zipc}".rstrip()).strip()
+        if country and country.upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
+            raw = (raw + f" ({country})").strip()
         out["pop_raw"] = raw
     except Exception:
+        # leave defaults
         pass
+
     return out
+
+# ---------- replace your existing _extract_place_of_performance with this ----------
 
 
 def _extract_place_of_performance(rec: dict, detail: dict | None = None) -> dict:
     """
-    Fallback heuristic when entity payload is unavailable.
-    Returns normalized dict: {"pop_city","pop_state","pop_zip","pop_country","pop_raw"}.
+    Heuristic PoP extraction from search detail / legacy shapes.
+    Returns plain strings (never JSON) for all pop_* fields.
     """
     def _from_obj(obj: dict | None) -> dict:
         if not isinstance(obj, dict):
             return {}
-        # potential containers
+
         candidates = []
+        # common containers
         for k in (
-            "placeOfPerformance",
-            "place_of_performance",
-            "placeOfPerformanceAddress",
-            "primaryPlaceOfPerformance",
-            "popAddress",
-            "placeOfPerformanceLocation",
-            "place_of_performance_location",
-            "placeOfPerformanceCityState",
+            "placeOfPerformance", "place_of_performance",
+            "placeOfPerformanceAddress", "primaryPlaceOfPerformance",
+            "popAddress", "placeOfPerformanceLocation",
+            "place_of_performance_location", "placeOfPerformanceCityState",
         ):
             v = obj.get(k)
             if isinstance(v, dict):
                 candidates.append(v)
-        # addresses list
+
+        # lists of addresses
         for k in ("addresses", "locations", "placeOfPerformanceAddresses"):
             v = obj.get(k)
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 candidates.append(v[0])
 
-        # also allow using the object itself if it already looks like an address
+        # sometimes the object itself is address-shaped
         candidates.append(obj)
 
-        best = {}
         for c in candidates:
             if not isinstance(c, dict):
                 continue
-            city = _safe_str(
-                c.get("city") or c.get("cityName") or (c.get("address") or {}).get("city")
+
+            city = _flatten_name_like(
+                c.get("city") or c.get("cityName") or (
+                    c.get("address") or {}).get("city")
             )
-            state = _safe_str(
-                c.get("state") or c.get("stateCode") or (c.get("address") or {}).get("state") or
-                c.get("stateProvince") or c.get("stateProvinceCode")
+            state = _flatten_name_like(
+                c.get("state") or c.get("stateCode") or (
+                    c.get("address") or {}).get("state")
+                or c.get("stateProvince") or c.get("stateProvinceCode")
             )
-            zipc = _safe_str(
-                c.get("zip") or c.get("zipCode") or c.get("postalCode") or (c.get("address") or {}).get("postalCode")
+            zipc = _flatten_name_like(
+                c.get("zip") or c.get("zipCode") or c.get("postalCode")
+                or (c.get("address") or {}).get("postalCode")
             )
-            country = _safe_str(
-                c.get("country") or c.get("countryCode") or c.get("countryName") or (c.get("address") or {}).get("country")
+            country = _flatten_name_like(
+                c.get("country") or c.get(
+                    "countryCode") or c.get("countryName")
+                or (c.get("address") or {}).get("country")
             )
-            # heuristic: if at least state or city is present, accept
+
             if city or state or zipc or country:
-                best = {"pop_city": _s(city),
-                        "pop_state": _s(state),
-                        "pop_zip": _s(zipc),
-                        "pop_country": _s(country)}
-                break
-        return best
+                # build raw
+                parts = []
+                if city:
+                    parts.append(city)
+                if state:
+                    parts.append(state)
+                raw = ", ".join(parts)
+                if zipc:
+                    raw = (raw + f" {zipc}".rstrip()).strip()
+                if country and country.upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
+                    raw = (raw + f" ({country})").strip()
 
-    pop = {}
-    pop.update(_from_obj(rec))
+                return {
+                    "pop_city": city,
+                    "pop_state": state,
+                    "pop_zip": zipc,
+                    "pop_country": country,
+                    "pop_raw": raw,
+                }
+
+        return {}
+
+    pop = _from_obj(rec)
     if not (pop.get("pop_city") or pop.get("pop_state") or pop.get("pop_zip") or pop.get("pop_country")):
-        pop.update(_from_obj(detail or {}))
+        pop = _from_obj(detail or {})
 
-    # build raw pretty string
-    parts = []
-    if pop.get("pop_city"):
-        parts.append(pop["pop_city"])
-    if pop.get("pop_state"):
-        parts.append(pop["pop_state"])
-    raw = ", ".join(parts)
-    if pop.get("pop_zip"):
-        raw = (raw + f" {pop['pop_zip']}".rstrip()).strip()
-    if pop.get("pop_country") and pop["pop_country"].upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
-        raw = (raw + f" ({pop['pop_country']})").strip()
-
-    pop["pop_raw"] = raw
-    # ensure all keys exist
+    # ensure keys exist
     for k in ("pop_city", "pop_state", "pop_zip", "pop_country", "pop_raw"):
         pop.setdefault(k, "")
+
     return pop
 
 # ---------- Main mapper ----------
