@@ -211,61 +211,61 @@ def get_sam_raw_v3(
     if not raw_records:
         return []
 
-def _match(rec: Dict[str, Any]) -> bool:
-    # enforce notice_id match if supplied
-    if filters.get("notice_id"):
-        rid = _safe_str(rec.get("noticeId") or rec.get("id"))
-        if rid != _safe_str(filters["notice_id"]):
+    def _match(rec: Dict[str, Any]) -> bool:
+        # enforce notice_id match if supplied
+        if filters.get("notice_id"):
+            rid = _safe_str(rec.get("noticeId") or rec.get("id"))
+            if rid != _safe_str(filters["notice_id"]):
+                return False
+
+        # Normalize all possibly-object fields to strings
+        nt = _safe_str(rec.get("noticeType") or rec.get("type")).lower()
+
+        # Drop known non-target types
+        if nt == "justification":
+            return False
+        if "award" in nt:
             return False
 
-    # Normalize all possibly-object fields to strings
-    nt = _safe_str(rec.get("noticeType") or rec.get("type")).lower()
+        # Normalize filters safely
+        nts = [ _safe_str(t).lower() for t in (filters.get("notice_types") or []) if _safe_str(t) ]
+        kws = [ _safe_str(k).lower() for k in (filters.get("keywords_or") or []) if _safe_str(k) ]
+        naics_targets = [ _safe_str(n) for n in (filters.get("naics") or []) if _safe_str(n) ]
+        sas = [ _safe_str(s).lower() for s in (filters.get("set_asides") or []) if _safe_str(s) ]
 
-    # Drop known non-target types
-    if nt == "justification":
-        return False
-    if "award" in nt:
-        return False
+        if nts:
+            if not nt or not any(t in nt for t in nts):
+                return False
 
-    # Normalize filters safely
-    nts = [ _safe_str(t).lower() for t in (filters.get("notice_types") or []) if _safe_str(t) ]
-    kws = [ _safe_str(k).lower() for k in (filters.get("keywords_or") or []) if _safe_str(k) ]
-    naics_targets = [ _safe_str(n) for n in (filters.get("naics") or []) if _safe_str(n) ]
-    sas = [ _safe_str(s).lower() for s in (filters.get("set_asides") or []) if _safe_str(s) ]
+        if kws:
+            title = _safe_str(rec.get("title")).lower()
+            desc  = _safe_str(rec.get("description") or rec.get("synopsis")).lower()
+            blob = f"{title} {desc}".strip()
+            if not any(k in blob for k in kws):
+                return False
 
-    if nts:
-        if not nt or not any(t in nt for t in nts):
-            return False
+        if naics_targets:
+            rec_naics = _safe_str(rec.get("naicsCode") or rec.get("naics"))
+            if not rec_naics or rec_naics not in naics_targets:
+                return False
 
-    if kws:
-        title = _safe_str(rec.get("title")).lower()
-        desc  = _safe_str(rec.get("description") or rec.get("synopsis")).lower()
-        blob = f"{title} {desc}".strip()
-        if not any(k in blob for k in kws):
-            return False
+        if sas:
+            rec_sa = _safe_str(rec.get("setAsideCode") or rec.get("setAside")).lower()
+            if not rec_sa or not any(sa in rec_sa for sa in sas):
+                return False
 
-    if naics_targets:
-        rec_naics = _safe_str(rec.get("naicsCode") or rec.get("naics"))
-        if not rec_naics or rec_naics not in naics_targets:
-            return False
+        due_before = filters.get("due_before")
+        if due_before:
+            raw = (
+                rec.get("dueDate") or rec.get("responseDueDate") or
+                rec.get("closeDate") or rec.get("responseDate") or
+                rec.get("responseDateTime") or ""
+            )
+            resp_norm = _normalize_date(_safe_str(raw))
+            if resp_norm != "None" and resp_norm > str(due_before):
+                return False
 
-    if sas:
-        rec_sa = _safe_str(rec.get("setAsideCode") or rec.get("setAside")).lower()
-        if not rec_sa or not any(sa in rec_sa for sa in sas):
-            return False
-
-    due_before = filters.get("due_before")
-    if due_before:
-        raw = (
-            rec.get("dueDate") or rec.get("responseDueDate") or
-            rec.get("closeDate") or rec.get("responseDate") or
-            rec.get("responseDateTime") or ""
-        )
-        resp_norm = _normalize_date(_safe_str(raw))
-        if resp_norm != "None" and resp_norm > str(due_before):
-            return False
-
-    return True
+        return True
 
 
 def get_raw_sam_solicitations(limit: int, api_keys: List[str]) -> List[Dict[str, Any]]:
@@ -743,70 +743,6 @@ def map_record_allowed_fields(
     # Final clean
     if description.lower() in ("none","n/a","na"):
         description = ""
-
-
-    def _looks_like_placeholder_or_url(t) -> bool:
-        if t is None:
-            return True
-        s = _s(t).strip().lower()
-        return s in ("none", "n/a", "na") or s.startswith("http://") or s.startswith("https://")
-
-    if _looks_like_placeholder_or_url(description):
-        detail_text = ""
-        # try search detail text fields
-        for k in ("description", "synopsis", "longDescription", "fullDescription", "additionalInfo"):
-            val = (search_detail or {}).get(k)
-            if val and str(val).strip():
-                detail_text = re.sub(r"\s+", " ", str(val)).strip()
-                break
-        # try entity attributes.description
-        if not detail_text and entity_detail:
-            try:
-                attrs = (entity_detail.get("data") or {}).get(
-                    "attributes") or {}
-                val = attrs.get("description")
-                if val and str(val).strip():
-                    detail_text = re.sub(r"\s+", " ", str(val)).strip()
-            except Exception:
-                pass
-        # try legacy v1 noticedesc
-        if not detail_text and fetch_desc and api_keys and notice_id != "None":
-            detail_text = fetch_notice_description(notice_id, api_keys)
-
-        description = detail_text if detail_text else ""
-
-    # Final safety: normalize placeholders that may have slipped through
-    if description and description.strip().lower() in ("none", "n/a", "na"):
-        description = ""
-
-    # --- Place of Performance ---
-    pop = {"pop_city": "", "pop_state": "",
-           "pop_zip": "", "pop_country": "", "pop_raw": ""}
-    if entity_detail:
-        pop = _extract_pop_from_notice_entity(entity_detail)
-    # fallback to heuristic if entity was empty/absent
-    if not any(pop.values()):
-        pop = _extract_place_of_performance(rec, search_detail)
-
-    mapped = {
-        "notice_id": _stringify(notice_id),
-        "solicitation_number": _stringify(solicitation_number),
-        "title": _stringify(title),
-        "notice_type": _stringify(notice_type),
-        "posted_date": _stringify(posted_date),
-        "response_date": _stringify(response_date),
-        "archive_date": _stringify(archive_date),
-        "naics_code": _stringify(naics_code),
-        "set_aside_code": _stringify(set_aside_code),
-        "description": _stringify(description),
-        "link": _stringify(link),
-    }
-
-    mapped.update(pop)
-    return mapped
-
-# get_relevant_solicitations.py
-
 
 def enrich_notice_fields(notice_id: str, api_keys: list[str]) -> dict:
     """
