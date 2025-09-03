@@ -213,64 +213,70 @@ def get_sam_raw_v3(
 
     # ---------- filter helper ----------
     def _match(rec: Dict[str, Any]) -> bool:
-        # enforce notice_id match if supplied
+        # --- basic type/notice filtering ---
+        # specific notice_id requested?
         if filters.get("notice_id"):
             rid = str(rec.get("noticeId") or rec.get("id") or "").strip()
             if rid != str(filters["notice_id"]).strip():
                 return False
 
-        r_type_raw = str(rec.get("noticeType") or rec.get("type") or "")
-        if r_type_raw.strip().lower() == "justification":
+        # normalize the record's notice type once
+        nt = str(rec.get("noticeType") or rec.get("type") or "").strip().lower()
+
+        # drop justifications and awards
+        if nt == "justification":
             return False
-        # Drop Award Notices
-        nt = str(rec.get("noticeType") or rec.get(
-            "type") or "").strip().lower()
         if "award" in nt:
             return False
 
-        # (existing filters you already had)
-        nts = filters.get("notice_types") or []
-        if nts:
-            r_type = nt
-            if not r_type or not any(t.lower() in r_type for t in nts):
-                return False
+        # --- sanitize filters to strings (robust against dicts/None) ---
+        nts = [str(t).strip().lower()
+            for t in (filters.get("notice_types") or []) if str(t).strip()]
+        kws = [str(k).strip().lower()
+            for k in (filters.get("keywords_or") or []) if str(k).strip()]
+        naics_targets = [str(n).strip()
+                        for n in (filters.get("naics") or []) if str(n).strip()]
+        sas = [str(s).strip().lower()
+            for s in (filters.get("set_asides") or []) if str(s).strip()]
+        due_before = filters.get("due_before")
 
-        kws = [k.strip().lower()
-               for k in (filters.get("keywords_or") or []) if k.strip()]
+        # notice types (substring ok)
+        if nts and not any(t in nt for t in nts):
+            return False
+
+        # keyword OR over title+description/synopsis
         if kws:
             title = str(rec.get("title") or "").lower()
-            desc = str(rec.get("description")
-                       or rec.get("synopsis") or "").lower()
+            desc = str(rec.get("description") or rec.get("synopsis") or "").lower()
             blob = f"{title} {desc}"
             if not any(k in blob for k in kws):
                 return False
 
-        naics_targets = [n for n in (filters.get("naics") or []) if n]
+        # NAICS exact match (string compare)
         if naics_targets:
-            rec_naics = str(rec.get("naicsCode")
-                            or rec.get("naics") or "").strip()
+            rec_naics = str(rec.get("naicsCode") or rec.get("naics") or "").strip()
             if not rec_naics or rec_naics not in naics_targets:
                 return False
 
-        sas = filters.get("set_asides") or []
+        # set-asides (substring ok)
         if sas:
             rec_sa = str(rec.get("setAsideCode")
-                         or rec.get("setAside") or "").lower()
-            if not rec_sa or not any(sa.lower() in rec_sa for sa in sas):
+                        or rec.get("setAside") or "").lower()
+            if not rec_sa or not any(sa in rec_sa for sa in sas):
                 return False
 
-        due_before = filters.get("due_before")
+        # due before (normalize date strings)
         if due_before:
-            raw = (rec.get("dueDate") or rec.get("responseDueDate") or
-                   rec.get("closeDate") or rec.get("responseDate") or
-                   rec.get("responseDateTime") or "")
+            raw = (
+                rec.get("dueDate") or rec.get("responseDueDate") or
+                rec.get("closeDate") or rec.get("responseDate") or
+                rec.get("responseDateTime") or ""
+            )
             resp_norm = _normalize_date(raw)
             if resp_norm != "None" and resp_norm > str(due_before):
                 return False
 
         return True
-
-    return [r for r in raw_records if _match(r)]
 
 
 def get_raw_sam_solicitations(limit: int, api_keys: List[str]) -> List[Dict[str, Any]]:
