@@ -211,72 +211,61 @@ def get_sam_raw_v3(
     if not raw_records:
         return []
 
-    # ---------- filter helper ----------
-    def _match(rec: Dict[str, Any]) -> bool:
-        # --- basic type/notice filtering ---
-        # specific notice_id requested?
-        if filters.get("notice_id"):
-            rid = str(rec.get("noticeId") or rec.get("id") or "").strip()
-            if rid != str(filters["notice_id"]).strip():
-                return False
-
-        # normalize the record's notice type once
-        nt = str(rec.get("noticeType") or rec.get("type") or "").strip().lower()
-
-        # drop justifications and awards
-        if nt == "justification":
-            return False
-        if "award" in nt:
+def _match(rec: Dict[str, Any]) -> bool:
+    # enforce notice_id match if supplied
+    if filters.get("notice_id"):
+        rid = _safe_str(rec.get("noticeId") or rec.get("id"))
+        if rid != _safe_str(filters["notice_id"]):
             return False
 
-        # --- sanitize filters to strings (robust against dicts/None) ---
-        nts = [str(t).strip().lower()
-            for t in (filters.get("notice_types") or []) if str(t).strip()]
-        kws = [str(k).strip().lower()
-            for k in (filters.get("keywords_or") or []) if str(k).strip()]
-        naics_targets = [str(n).strip()
-                        for n in (filters.get("naics") or []) if str(n).strip()]
-        sas = [str(s).strip().lower()
-            for s in (filters.get("set_asides") or []) if str(s).strip()]
-        due_before = filters.get("due_before")
+    # Normalize all possibly-object fields to strings
+    nt = _safe_str(rec.get("noticeType") or rec.get("type")).lower()
 
-        # notice types (substring ok)
-        if nts and not any(t in nt for t in nts):
+    # Drop known non-target types
+    if nt == "justification":
+        return False
+    if "award" in nt:
+        return False
+
+    # Normalize filters safely
+    nts = [ _safe_str(t).lower() for t in (filters.get("notice_types") or []) if _safe_str(t) ]
+    kws = [ _safe_str(k).lower() for k in (filters.get("keywords_or") or []) if _safe_str(k) ]
+    naics_targets = [ _safe_str(n) for n in (filters.get("naics") or []) if _safe_str(n) ]
+    sas = [ _safe_str(s).lower() for s in (filters.get("set_asides") or []) if _safe_str(s) ]
+
+    if nts:
+        if not nt or not any(t in nt for t in nts):
             return False
 
-        # keyword OR over title+description/synopsis
-        if kws:
-            title = str(rec.get("title") or "").lower()
-            desc = str(rec.get("description") or rec.get("synopsis") or "").lower()
-            blob = f"{title} {desc}"
-            if not any(k in blob for k in kws):
-                return False
+    if kws:
+        title = _safe_str(rec.get("title")).lower()
+        desc  = _safe_str(rec.get("description") or rec.get("synopsis")).lower()
+        blob = f"{title} {desc}".strip()
+        if not any(k in blob for k in kws):
+            return False
 
-        # NAICS exact match (string compare)
-        if naics_targets:
-            rec_naics = str(rec.get("naicsCode") or rec.get("naics") or "").strip()
-            if not rec_naics or rec_naics not in naics_targets:
-                return False
+    if naics_targets:
+        rec_naics = _safe_str(rec.get("naicsCode") or rec.get("naics"))
+        if not rec_naics or rec_naics not in naics_targets:
+            return False
 
-        # set-asides (substring ok)
-        if sas:
-            rec_sa = str(rec.get("setAsideCode")
-                        or rec.get("setAside") or "").lower()
-            if not rec_sa or not any(sa in rec_sa for sa in sas):
-                return False
+    if sas:
+        rec_sa = _safe_str(rec.get("setAsideCode") or rec.get("setAside")).lower()
+        if not rec_sa or not any(sa in rec_sa for sa in sas):
+            return False
 
-        # due before (normalize date strings)
-        if due_before:
-            raw = (
-                rec.get("dueDate") or rec.get("responseDueDate") or
-                rec.get("closeDate") or rec.get("responseDate") or
-                rec.get("responseDateTime") or ""
-            )
-            resp_norm = _normalize_date(raw)
-            if resp_norm != "None" and resp_norm > str(due_before):
-                return False
+    due_before = filters.get("due_before")
+    if due_before:
+        raw = (
+            rec.get("dueDate") or rec.get("responseDueDate") or
+            rec.get("closeDate") or rec.get("responseDate") or
+            rec.get("responseDateTime") or ""
+        )
+        resp_norm = _normalize_date(_safe_str(raw))
+        if resp_norm != "None" and resp_norm > str(due_before):
+            return False
 
-        return True
+    return True
 
 
 def get_raw_sam_solicitations(limit: int, api_keys: List[str]) -> List[Dict[str, Any]]:
@@ -619,7 +608,7 @@ def _extract_place_of_performance(rec: dict, detail: dict | None = None) -> dict
 
         # sometimes the object itself is address-shaped
         candidates.append(obj)
-
+        best: dict = {}
         for c in candidates:
             if not isinstance(c, dict):
                 continue
@@ -644,40 +633,50 @@ def _extract_place_of_performance(rec: dict, detail: dict | None = None) -> dict
             )
 
             if city or state or zipc or country:
-                # build raw
-                parts = []
-                if city:
-                    parts.append(city)
-                if state:
-                    parts.append(state)
-                raw = ", ".join(parts)
-                if zipc:
-                    raw = (raw + f" {zipc}".rstrip()).strip()
-                if country and country.upper() not in ("USA", "US", "UNITED STATES", "UNITED-STATES"):
-                    raw = (raw + f" ({country})").strip()
-
-                return {
-                    "pop_city": city,
-                    "pop_state": state,
-                    "pop_zip": zipc,
-                    "pop_country": country,
-                    "pop_raw": raw,
+                best = {
+                    "pop_city":    _safe_str(city),
+                    "pop_state":   _safe_str(state),
+                    "pop_zip":     _safe_str(zipc),
+                    "pop_country": _safe_str(country),
                 }
+                break
 
-        return {}
+        return best
+
 
     pop = _from_obj(rec)
     if not (pop.get("pop_city") or pop.get("pop_state") or pop.get("pop_zip") or pop.get("pop_country")):
         pop = _from_obj(detail or {})
+    parts = []
+    if pop.get("pop_city"):
+        parts.append(pop["pop_city"])
+    if pop.get("pop_state"):
+        parts.append(pop["pop_state"])
+    raw = ", ".join(parts)
+    if pop.get("pop_zip"):
+        raw = (raw + f" {pop['pop_zip']}".rstrip()).strip()
+    if pop.get("pop_country") and pop["pop_country"].upper() not in {"USA","US","UNITED STATES","UNITED-STATES"}:
+        raw = (raw + f" ({pop['pop_country']})").strip()
 
-    # ensure keys exist
-    for k in ("pop_city", "pop_state", "pop_zip", "pop_country", "pop_raw"):
-        pop.setdefault(k, "")
-
-    return pop
+    # Ensure all keys exist and are strings
+    out = {
+        "pop_city":    pop.get("pop_city", "") or "",
+        "pop_state":   pop.get("pop_state", "") or "",
+        "pop_zip":     pop.get("pop_zip", "") or "",
+        "pop_country": pop.get("pop_country", "") or "",
+        "pop_raw":     raw,
+    }
+    return out
 
 # ---------- Main mapper ----------
 
+
+def _take_text_field(obj: dict, keys: list[str]) -> str:
+    """Return first non-empty text from obj[key], unwrapping dicts like {'text':..., 'name':..., 'value':...}."""
+    for k in keys:
+        if k in obj and obj[k] not in (None, "", []):
+            return _safe_str(obj[k])  # <— uses name/text/value/ code if dict
+    return ""
 
 def map_record_allowed_fields(
     rec: Dict[str, Any],
@@ -719,7 +718,32 @@ def map_record_allowed_fields(
     response_date = _pick_response_date(rec, search_detail)
 
     # description: prefer inline; if missing/URL, use detail/entity, then noticedesc
-    description = _first_nonempty(rec, "description", "synopsis", default="")
+    description = _take_text_field(rec, ["description", "synopsis"])
+    if not description or description.lower().startswith(("http://","https://")) or description.lower() in ("none","n/a","na"):
+        detail_text = ""
+        # 2) try search-detail text fields
+        if search_detail:
+            detail_text = _take_text_field(
+                search_detail,
+                ["description","synopsis","longDescription","fullDescription","additionalInfo"]
+            )
+        # 3) try entity attributes.description
+        if not detail_text and entity_detail:
+            try:
+                attrs = (entity_detail.get("data") or {}).get("attributes") or {}
+                detail_text = _safe_str(attrs.get("description"))
+            except Exception:
+                pass
+        # 4) fallback to v1 noticedesc
+        if not detail_text and fetch_desc and api_keys and notice_id != "None":
+            detail_text = fetch_notice_description(notice_id, api_keys)
+
+        description = detail_text or ""
+
+    # Final clean
+    if description.lower() in ("none","n/a","na"):
+        description = ""
+
 
     def _looks_like_placeholder_or_url(t) -> bool:
         if t is None:
