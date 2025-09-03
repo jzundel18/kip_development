@@ -38,6 +38,16 @@ _DATE_ISO_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 _DATE_US_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
 
 
+def _safe_str(val: Any) -> str:
+    """Normalize SAM.gov values: prefer 'name'/'text' if dicts, else plain string."""
+    if val is None:
+        return ""
+    if isinstance(val, dict):
+        for sub in ("name", "text", "value", "code"):
+            if val.get(sub):
+                return str(val[sub]).strip()
+        return ""
+    return str(val).strip()
 def _normalize_date(val: str) -> str:
     """
     Return YYYY-MM-DD if we can, else 'None' if empty/placeholder, else original string.
@@ -560,14 +570,19 @@ def _extract_place_of_performance(rec: dict, detail: dict | None = None) -> dict
         for c in candidates:
             if not isinstance(c, dict):
                 continue
-            city = c.get("city") or c.get("cityName") or (
-                c.get("address") or {}).get("city")
-            state = (c.get("state") or c.get("stateCode") or (c.get("address") or {}).get("state") or
-                     c.get("stateProvince") or c.get("stateProvinceCode"))
-            zipc = c.get("zip") or c.get("zipCode") or c.get(
-                "postalCode") or (c.get("address") or {}).get("postalCode")
-            country = c.get("country") or c.get("countryCode") or c.get(
-                "countryName") or (c.get("address") or {}).get("country")
+            city = _safe_str(
+                c.get("city") or c.get("cityName") or (c.get("address") or {}).get("city")
+            )
+            state = _safe_str(
+                c.get("state") or c.get("stateCode") or (c.get("address") or {}).get("state") or
+                c.get("stateProvince") or c.get("stateProvinceCode")
+            )
+            zipc = _safe_str(
+                c.get("zip") or c.get("zipCode") or c.get("postalCode") or (c.get("address") or {}).get("postalCode")
+            )
+            country = _safe_str(
+                c.get("country") or c.get("countryCode") or c.get("countryName") or (c.get("address") or {}).get("country")
+            )
             # heuristic: if at least state or city is present, accept
             if city or state or zipc or country:
                 best = {"pop_city": _s(city),

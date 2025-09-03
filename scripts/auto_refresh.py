@@ -234,6 +234,5 @@ def main():
         print(f"Auto refresh failed: {e}")
         sys.exit(2)
 
-
 if __name__ == "__main__":
     main()
