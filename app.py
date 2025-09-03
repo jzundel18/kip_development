@@ -969,11 +969,10 @@ def insert_new_records_only(records) -> int:
     return len(rows_to_insert)
 
 def query_filtered_df(filters: dict) -> pd.DataFrame:
-    # Pull a superset of columns; we'll hide some in the UI
     base_cols = ["pulled_at","notice_id","solicitation_number","title","notice_type",
                  "posted_date","response_date","archive_date",
                  "naics_code","set_aside_code","description","link",
-                "pop_city","pop_state","pop_zip","pop_country","pop_raw"]
+                 "pop_city","pop_state","pop_zip","pop_country","pop_raw"]
 
     with engine.connect() as conn:
         df = pd.read_sql_query(f"SELECT {', '.join(base_cols)} FROM solicitationraw", conn)
@@ -981,28 +980,33 @@ def query_filtered_df(filters: dict) -> pd.DataFrame:
     if df.empty:
         return df
 
+    # ---- ALWAYS coerce to string before any .str/ .lower calls ----
+    for c in ["title","description","notice_type","set_aside_code","naics_code"]:
+        if c in df.columns:
+            df[c] = df[c].astype(str)   # <- this prevents dict.lower() crashes
+
     # keyword OR filter
-    kws = [k.lower() for k in (filters.get("keywords_or") or []) if k]
+    kws = [str(k).lower() for k in (filters.get("keywords_or") or []) if k]
     if kws:
-        title = df["title"].fillna("")
-        desc  = df["description"].fillna("")
-        blob = (title + " " + desc).str.lower()
+        blob = (df["title"] + " " + df["description"]).str.lower()
         df = df[blob.apply(lambda t: any(k in t for k in kws))]
 
     # NAICS filter
-    naics = [re.sub(r"[^\d]","", x) for x in (filters.get("naics") or []) if x]
+    naics = [re.sub(r"[^\d]","", str(x)) for x in (filters.get("naics") or []) if x]
     if naics:
         df = df[df["naics_code"].isin(naics)]
 
-    # set-aside filter
-    sas = filters.get("set_asides") or []
+    # set-aside filter (normalize both sides)
+    sas = [str(s).lower() for s in (filters.get("set_asides") or []) if s]
     if sas:
-        df = df[df["set_aside_code"].fillna("").str.lower().apply(lambda s: any(sa.lower() in s for sa in sas))]
+        sseries = df["set_aside_code"].str.lower()
+        df = df[sseries.apply(lambda s: any(sa in s for sa in sas))]
 
-    # notice types
-    nts = filters.get("notice_types") or []
+    # notice types (normalize both sides)
+    nts = [str(nt).lower() for nt in (filters.get("notice_types") or []) if nt]
     if nts:
-        df = df[df["notice_type"].fillna("").str.lower().apply(lambda s: any(nt.lower() in s for nt in nts))]
+        nseries = df["notice_type"].str.lower()
+        df = df[nseries.apply(lambda s: any(nt in s for nt in nts))]
 
     # due before
     due_before = filters.get("due_before")
@@ -2099,8 +2103,7 @@ with tab5:
             naics_mask = df_all["naics_code"].fillna("").astype(str).str.startswith(rd_naics_prefixes)
 
             # Keyword signals in title/description
-            text = (df_all["title"].fillna("") + " " + df_all["description"].fillna("")).str.lower()
-            kw_any = [
+            text = (df_all["title"].astype(str) + " " + df_all["description"].astype(str)).str.lower()            kw_any = [
                 "research", "r&d", "r and d", "development", "sbir", "sttr",
                 "prototype", "prototyping", "broad agency announcement", "baa",
                 "technology demonstration", "feasibility study", "study", "innovative",

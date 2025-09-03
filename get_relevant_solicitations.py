@@ -38,15 +38,7 @@ _DATE_US_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
 
 
 def _safe_str(val: Any) -> str:
-    """Normalize SAM.gov values: prefer 'name'/'text' if dicts, else plain string."""
-    if val is None:
-        return ""
-    if isinstance(val, dict):
-        for sub in ("name", "text", "value", "code"):
-            if val.get(sub):
-                return str(val[sub]).strip()
-        return ""
-    return str(val).strip()
+    return _to_str(val)
 
 
 def _normalize_date(val: Any) -> str:
@@ -106,6 +98,35 @@ def _stringify(v) -> str:
     except Exception:
         return str(v).strip()
 
+
+def _to_str(val: Any) -> str:
+    """Flatten dicts/lists and return a plain string. Never a JSON blob."""
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        for it in val:
+            s = _to_str(it)
+            if s:
+                return s
+        return ""
+    if isinstance(val, dict):
+        for k in ("name", "text", "value", "code"):
+            if k in val and val[k] not in (None, "", []):
+                return str(val[k]).strip()
+        for v in val.values():
+            s = _to_str(v)
+            if s:
+                return s
+        return ""
+    return str(val).strip()
+
+
+def _lower(val: Any) -> str:
+    return _to_str(val).lower()
+
+
+def _upper(val: Any) -> str:
+    return _to_str(val).upper()
 # --- HTTP core with key rotation ---
 
 
@@ -268,7 +289,7 @@ def _rotate_keys(keys: List[str]):
 
 
 def _http_get(url: str, params: dict, key: str, timeout: int = 30) -> requests.Response:
-    headers = {"User-Agent": "kip_external/1.0"}
+    headers = {"User-Agent": "kip_development/1.0"}
     return requests.get(url, params={**params, "api_key": key}, headers=headers, timeout=timeout)
 
 
