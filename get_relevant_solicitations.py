@@ -140,11 +140,12 @@ def _request_sam(params: Dict[str, Any], api_keys: List[str]) -> Dict[str, Any]:
             full_params["api_key"] = key
             resp = requests.get(SAM_BASE_URL, params=full_params, timeout=30)
 
-            txt = ""
+            txt: Any = ""
             try:
                 j = resp.json()
                 if isinstance(j, dict):
-                    txt = (j.get("message") or j.get("error") or "") or ""
+                    raw_txt = (j.get("message") or j.get("error") or j.get("errors") or "")
+                    txt = _safe_str(raw_txt)
             except Exception:
                 pass
 
@@ -154,7 +155,8 @@ def _request_sam(params: Dict[str, Any], api_keys: List[str]) -> Dict[str, Any]:
                 continue
 
             if resp.status_code in (401, 403):
-                if any(s in (txt or "").lower() for s in ["exceeded", "limit", "quota"]):
+                t = _safe_str(txt).lower()
+                if any(s in t for s in ["exceeded", "limit", "quota"]):
                     errors.append(
                         f"{_mask_key(key)} → {resp.status_code} quota/limit. {txt}")
                 else:
@@ -177,7 +179,7 @@ def _request_sam(params: Dict[str, Any], api_keys: List[str]) -> Dict[str, Any]:
             continue
 
     if errors:
-        if any(("quota" in e.lower() or "limit" in e.lower() or "429" in e) for e in errors):
+        if any(("quota" in str(e).lower() or "limit" in str(e).lower() or "429" in str(e)) for e in errors):
             raise SamQuotaError(
                 "All SAM.gov keys appear rate-limited / out of daily quota.")
         raise SamAuthError(
@@ -534,6 +536,31 @@ def _take_text_field(obj: dict, keys: list[str]) -> str:
             return _safe_str(obj[k])
     return ""
 
+
+def _pick_response_date(rec: Dict[str, Any], search_detail: Dict[str, Any] | None) -> str:
+    """
+    Pick a reasonable 'response due' date from the record and/or the v2 search detail.
+    Returns ISO 'YYYY-MM-DD' or "None" if nothing usable is present.
+    """
+    candidates = [
+        rec.get("responseDateTime"),
+        rec.get("responseDate"),
+        rec.get("dueDate"),
+        rec.get("closeDate"),
+        rec.get("awardDate"),
+    ]
+    if search_detail:
+        candidates.extend([
+            search_detail.get("responseDateTime"),
+            search_detail.get("responseDate"),
+            search_detail.get("dueDate"),
+            search_detail.get("closeDate"),
+        ])
+    for c in candidates:
+        d = _normalize_date(c)
+        if d and d != "None":
+            return d
+    return "None"
 
 def map_record_allowed_fields(
     rec: Dict[str, Any],
