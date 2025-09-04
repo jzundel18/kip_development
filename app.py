@@ -31,7 +31,6 @@ import find_relevant_suppliers as fs
 import generate_proposal as gp
 import get_relevant_solicitations as gs
 import secrets as pysecrets
-import models
 
 # =========================
 # Configuration & Secrets

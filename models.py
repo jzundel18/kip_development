@@ -3,7 +3,7 @@ import pickle
 import hashlib
 from typing import Optional
 from sqlmodel import SQLModel, Field
-import OpenAI
+from openai import OpenAI
 
 class SolicitationRaw(SQLModel, table=True):
     __tablename__ = "solicitationraw"
