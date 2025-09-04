@@ -35,15 +35,18 @@ import secrets as pysecrets
 # =========================
 # Configuration & Secrets
 # =========================
-warnings.filterwarnings("ignore", message="This declarative base already contains a class with the same class name", category=SAWarning)
+warnings.filterwarnings(
+    "ignore", message="This declarative base already contains a class with the same class name", category=SAWarning)
 SQLModel.metadata.clear()
 
 st.set_page_config(page_title="KIP", layout="wide")
+
 
 def get_secret(name, default=None):
     if name in st.secrets:
         return st.secrets[name]
     return os.getenv(name, default)
+
 
 # Load secrets
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
@@ -70,6 +73,7 @@ if missing:
 # =========================
 DB_URL = st.secrets.get("SUPABASE_DB_URL") or "sqlite:///app.db"
 
+
 @st.cache_resource
 def get_optimized_engine(db_url: str):
     """Create optimized database engine with connection pooling"""
@@ -91,6 +95,7 @@ def get_optimized_engine(db_url: str):
         )
     else:
         return create_engine(db_url, pool_pre_ping=True)
+
 
 engine = get_optimized_engine(DB_URL)
 
@@ -133,6 +138,8 @@ if "sup_df" not in st.session_state:
 # =========================
 # Utility Functions
 # =========================
+
+
 def _stringify(v) -> str:
     if v is None:
         return ""
@@ -143,6 +150,7 @@ def _stringify(v) -> str:
     except Exception:
         return str(v)
 
+
 def _s(v) -> str:
     """Return a safe string for downstream parsers (handles None/NaN/NaT)."""
     try:
@@ -151,6 +159,7 @@ def _s(v) -> str:
     except Exception:
         pass
     return "" if v is None else str(v)
+
 
 def _host(u: str) -> str:
     try:
@@ -162,14 +171,17 @@ def _host(u: str) -> str:
     except Exception:
         return ""
 
+
 def normalize_naics_input(text_in: str) -> list[str]:
     if not text_in:
         return []
     values = re.split(r"[,\s]+", text_in.strip())
     return [v for v in (re.sub(r"[^\d]", "", x) for x in values) if v]
 
+
 def parse_keywords_or(text_in: str) -> list[str]:
     return [k.strip() for k in text_in.split(",") if k.strip()]
+
 
 def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
     """Return a human-viewable SAM.gov URL for this notice."""
@@ -181,6 +193,8 @@ def make_sam_public_url(notice_id: str, link: str | None = None) -> str:
 # =========================
 # Database Optimization
 # =========================
+
+
 def optimize_database():
     """Add indexes and optimize database for faster queries"""
     try:
@@ -206,6 +220,7 @@ def optimize_database():
                 """))
     except Exception as e:
         st.warning(f"Database optimization note: {e}")
+
 
 # Call optimization once per session
 if "db_optimized" not in st.session_state:
@@ -235,8 +250,10 @@ except Exception as e:
 # Create unique indexes
 try:
     with engine.begin() as conn:
-        conn.execute(sa.text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email);"))
-        conn.execute(sa.text("CREATE UNIQUE INDEX IF NOT EXISTS uq_company_profile_user ON company_profile (user_id);"))
+        conn.execute(
+            sa.text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email);"))
+        conn.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_profile_user ON company_profile (user_id);"))
 except Exception as e:
     st.warning(f"User/profile table migration note: {e}")
 
@@ -261,23 +278,28 @@ try:
     insp = inspect(engine)
     existing_cols = {c["name"] for c in insp.get_columns("solicitationraw")}
     missing_cols = [c for c in REQUIRED_COLS if c not in existing_cols]
-    
+
     if missing_cols:
         with engine.begin() as conn:
             for col in missing_cols:
-                conn.execute(sa.text(f'ALTER TABLE solicitationraw ADD COLUMN "{col}" {REQUIRED_COLS[col]}'))
-    
+                conn.execute(
+                    sa.text(f'ALTER TABLE solicitationraw ADD COLUMN "{col}" {REQUIRED_COLS[col]}'))
+
     with engine.begin() as conn:
-        conn.execute(sa.text("CREATE UNIQUE INDEX IF NOT EXISTS uq_solicitationraw_notice_id ON solicitationraw (notice_id)"))
+        conn.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_solicitationraw_notice_id ON solicitationraw (notice_id)"))
 except Exception as e:
     st.warning(f"Migration note: {e}")
 
 # =========================
 # Authentication Functions
 # =========================
+
+
 def _hash_password(pw: str) -> str:
     salt = bcrypt.gensalt(rounds=12)
     return bcrypt.hashpw(pw.encode("utf-8"), salt).decode("utf-8")
+
 
 def _check_password(pw: str, pw_hash: str) -> bool:
     try:
@@ -285,8 +307,10 @@ def _check_password(pw: str, pw_hash: str) -> bool:
     except Exception:
         return False
 
+
 def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 def _issue_remember_me_token(user_id: int, days: int = None) -> str:
     days = days or int(get_secret("COOKIE_DAYS", 30))
@@ -300,6 +324,7 @@ def _issue_remember_me_token(user_id: int, days: int = None) -> str:
             VALUES (:uid, :th, :exp, :now)
         """), {"uid": user_id, "th": tok_hash, "exp": exp.isoformat(), "now": now.isoformat()})
     return raw
+
 
 def _validate_remember_me_token(raw: str) -> Optional[int]:
     if not raw:
@@ -322,15 +347,21 @@ def _validate_remember_me_token(raw: str) -> Optional[int]:
         return None
     return int(row["user_id"])
 
+
 def _revoke_all_tokens_for_user(user_id: int) -> None:
     with engine.begin() as conn:
-        conn.execute(sa.text("DELETE FROM auth_tokens WHERE user_id = :uid"), {"uid": user_id})
+        conn.execute(sa.text("DELETE FROM auth_tokens WHERE user_id = :uid"), {
+                     "uid": user_id})
+
 
 def get_user_by_email(email: str):
     with engine.connect() as conn:
-        sql = sa.text("SELECT id, email, password_hash FROM users WHERE email = :e")
-        row = conn.execute(sql, {"e": email.strip().lower()}).mappings().first()
+        sql = sa.text(
+            "SELECT id, email, password_hash FROM users WHERE email = :e")
+        row = conn.execute(
+            sql, {"e": email.strip().lower()}).mappings().first()
         return dict(row) if row else None
+
 
 def create_user(email: str, password: str) -> Optional[int]:
     email = email.strip().lower()
@@ -341,11 +372,13 @@ def create_user(email: str, password: str) -> Optional[int]:
                 INSERT INTO users (email, password_hash, created_at)
                 VALUES (:email, :ph, :ts) RETURNING id
             """)
-            new_id = conn.execute(sql, {"email": email, "ph": pw_hash, "ts": datetime.now(timezone.utc).isoformat()}).scalar_one()
+            new_id = conn.execute(sql, {"email": email, "ph": pw_hash, "ts": datetime.now(
+                timezone.utc).isoformat()}).scalar_one()
             return int(new_id)
         except Exception as e:
             st.error(f"Could not create user: {e}")
             return None
+
 
 def get_profile(user_id: int) -> Optional[dict]:
     with engine.connect() as conn:
@@ -355,6 +388,7 @@ def get_profile(user_id: int) -> Optional[dict]:
         """)
         row = conn.execute(sql, {"uid": user_id}).mappings().first()
         return dict(row) if row else None
+
 
 def upsert_profile(user_id: int, company_name: str, description: str, city: str, state: str) -> None:
     with engine.begin() as conn:
@@ -370,13 +404,15 @@ def upsert_profile(user_id: int, company_name: str, description: str, city: str,
                 VALUES (:uid, :cn, :d, :c, :s, :ts, :ts)
             """), {"uid": user_id, "cn": company_name, "d": description, "c": city, "s": state, "ts": now})
 
+
 # Auto-login from remember-me cookie
 if st.session_state.user is None:
     raw_cookie = cookies.get(get_secret("COOKIE_NAME", "kip_auth"))
     uid = _validate_remember_me_token(raw_cookie) if raw_cookie else None
     if uid:
         with engine.connect() as conn:
-            row = conn.execute(sa.text("SELECT id, email FROM users WHERE id = :uid"), {"uid": uid}).mappings().first()
+            row = conn.execute(sa.text("SELECT id, email FROM users WHERE id = :uid"), {
+                               "uid": uid}).mappings().first()
         if row:
             st.session_state.user = {"id": row["id"], "email": row["email"]}
             st.session_state.profile = get_profile(row["id"])
@@ -385,12 +421,16 @@ if st.session_state.user is None:
 # =========================
 # AI & Embedding Functions
 # =========================
+
+
 def _embed_texts(texts: list[str], api_key: str) -> np.ndarray:
     client = OpenAI(api_key=api_key)
-    resp = client.embeddings.create(model="text-embedding-3-small", input=texts)
+    resp = client.embeddings.create(
+        model="text-embedding-3-small", input=texts)
     X = np.array([d.embedding for d in resp.data], dtype=np.float32)
     X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)  # L2 normalize
     return X
+
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def cached_company_embeddings(_companies: pd.DataFrame, api_key: str) -> dict:
@@ -401,23 +441,27 @@ def cached_company_embeddings(_companies: pd.DataFrame, api_key: str) -> dict:
     X = _embed_texts(texts, api_key)
     return {"df": _companies.copy(), "X": X}
 
+
 def ai_downselect_df(company_desc: str, df: pd.DataFrame, api_key: str,
                      threshold: float = 0.20, top_k: int | None = None) -> pd.DataFrame:
     """Embedding-based similarity between company_desc and (title + description)."""
     if df.empty:
         return df
 
-    texts = (df["title"].fillna("") + " " + df["description"].fillna("")).str.slice(0, 2000).tolist()
+    texts = (df["title"].fillna("") + " " +
+             df["description"].fillna("")).str.slice(0, 2000).tolist()
     try:
         client = OpenAI(api_key=api_key)
-        q = client.embeddings.create(model="text-embedding-3-small", input=[company_desc])
+        q = client.embeddings.create(
+            model="text-embedding-3-small", input=[company_desc])
         Xq = np.array(q.data[0].embedding, dtype=np.float32)
 
         X_list = []
         batch_size = 500
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i+batch_size]
-            r = client.embeddings.create(model="text-embedding-3-small", input=batch)
+            r = client.embeddings.create(
+                model="text-embedding-3-small", input=batch)
             X_list.extend([d.embedding for d in r.data])
         X = np.array(X_list, dtype=np.float32)
 
@@ -431,25 +475,30 @@ def ai_downselect_df(company_desc: str, df: pd.DataFrame, api_key: str,
         if top_k is not None and top_k > 0:
             df = df.sort_values("ai_score", ascending=False).head(int(top_k))
         else:
-            df = df[df["ai_score"] >= float(threshold)].sort_values("ai_score", ascending=False)
+            df = df[df["ai_score"] >= float(threshold)].sort_values(
+                "ai_score", ascending=False)
 
         return df.reset_index(drop=True)
 
     except Exception as e:
-        st.warning(f"AI downselect unavailable ({e}). Falling back to keyword filter.")
+        st.warning(
+            f"AI downselect unavailable ({e}). Falling back to keyword filter.")
         kws = [w.lower() for w in re.findall(r"[a-zA-Z0-9]{4,}", company_desc)]
         if not kws:
             return df
-        blob = (df["title"].fillna("") + " " + df["description"].fillna("")).str.lower()
+        blob = (df["title"].fillna("") + " " +
+                df["description"].fillna("")).str.lower()
         mask = blob.apply(lambda t: any(k in t for k in kws))
         return df[mask].reset_index(drop=True)
+
 
 def _chunk(lst, size):
     for i in range(0, len(lst), size):
         yield lst[i:i+size]
 
+
 def ai_make_blurbs_fast(df: pd.DataFrame, api_key: str, model: str = "gpt-4o-mini",
-                       max_items: int = 50, chunk_size: int = 20, timeout_seconds: int = 30) -> dict[str, str]:
+                        max_items: int = 50, chunk_size: int = 20, timeout_seconds: int = 30) -> dict[str, str]:
     """Faster version with smaller batches and timeout"""
     if df is None or df.empty:
         return {}
@@ -467,7 +516,8 @@ def ai_make_blurbs_fast(df: pd.DataFrame, api_key: str, model: str = "gpt-4o-min
     system_msg = "Write 6-8 word summaries of what each solicitation needs. Be extremely concise and skip agency names."
 
     for batch in _chunk(items, chunk_size):
-        user_msg = {"items": batch, "format": 'Return JSON: {"blurbs":[{"notice_id":"...","blurb":"..."}]}'}
+        user_msg = {
+            "items": batch, "format": 'Return JSON: {"blurbs":[{"notice_id":"...","blurb":"..."}]}'}
         try:
             resp = client.chat.completions.create(
                 model=model,
@@ -493,6 +543,8 @@ def ai_make_blurbs_fast(df: pd.DataFrame, api_key: str, model: str = "gpt-4o-min
 # =========================
 # AI Matrix Scorer
 # =========================
+
+
 @dataclass
 class MatrixComponent:
     key: str
@@ -501,30 +553,35 @@ class MatrixComponent:
     description: str
     hints: list[str]
 
+
 class AIMatrixScorer:
     """Uses LLM to score each component 0..1, then returns ONE weighted score (0..100)"""
-    
+
     def __init__(self):
         self.components: list[MatrixComponent] = [
             MatrixComponent(
                 key="tech_core", label="Technical Capability / Core Services", weight=25.0,
                 description="How well does the company's core capabilities align with what the solicitation needs?",
-                hints=['manufacturing', 'engineering', 'software', 'consulting', 'maintenance', 'installation', 'repair', 'testing', 'inspection', 'training']
+                hints=['manufacturing', 'engineering', 'software', 'consulting',
+                       'maintenance', 'installation', 'repair', 'testing', 'inspection', 'training']
             ),
             MatrixComponent(
                 key="tech_industry", label="Technical Capability / Industry Expertise", weight=20.0,
                 description="Does the company have relevant industry domain experience for this solicitation?",
-                hints=['aerospace', 'defense', 'medical', 'automotive', 'energy', 'construction', 'IT', 'cybersecurity', 'telecommunications', 'logistics']
+                hints=['aerospace', 'defense', 'medical', 'automotive', 'energy',
+                       'construction', 'IT', 'cybersecurity', 'telecommunications', 'logistics']
             ),
             MatrixComponent(
                 key="biz_size", label="Business Qualifications / Business Size", weight=10.0,
                 description="Does the company appear to qualify for any set-aside or business-size constraints?",
-                hints=['small business', '8A', 'WOSB', 'EDWOSB', 'HUBZone', 'SDVOSB', 'SDB']
+                hints=['small business', '8A', 'WOSB',
+                       'EDWOSB', 'HUBZone', 'SDVOSB', 'SDB']
             ),
             MatrixComponent(
                 key="geo", label="Geographic / Location Alignment", weight=8.0,
                 description="How well does the company match the place of performance or geographic constraints?",
-                hints=['state', 'city', 'region', 'nationwide', 'remote', 'on-site']
+                hints=['state', 'city', 'region',
+                       'nationwide', 'remote', 'on-site']
             ),
             MatrixComponent(
                 key="naics", label="NAICS Alignment", weight=7.0,
@@ -541,7 +598,8 @@ class AIMatrixScorer:
             "city": (company_profile.get("city") or "").strip(),
             "state": (company_profile.get("state") or "").strip(),
         }
-        components_view = [{"key": c.key, "label": c.label, "weight": c.weight, "description": c.description, "hints": c.hints} for c in self.components]
+        components_view = [{"key": c.key, "label": c.label, "weight": c.weight,
+                            "description": c.description, "hints": c.hints} for c in self.components]
 
         system = (
             "You are an expert federal contracting analyst. "
@@ -572,10 +630,10 @@ class AIMatrixScorer:
     def score_batch(self, items: list[dict], company_profile: dict, api_key: str, model: str = "gpt-4o-mini") -> dict:
         if not items:
             return {}
-        
+
         client = OpenAI(api_key=api_key)
         messages, _ = self._prompt_for_batch(company_profile, items)
-        
+
         try:
             r = client.chat.completions.create(
                 model=model,
@@ -592,7 +650,7 @@ class AIMatrixScorer:
             nid = str(row.get("notice_id", "")).strip()
             comps = row.get("components") or []
             ws = float(row.get("weighted_score", 0))
-            
+
             breakdown = []
             by_key = {c.key: c for c in self.components}
             for c in comps:
@@ -600,23 +658,28 @@ class AIMatrixScorer:
                 s = float(c.get("score", 0))
                 why = (c.get("why") or "").strip()
                 w = by_key.get(k).weight if k in by_key else 0.0
-                breakdown.append({"key": k, "score": s, "why": why, "weight": w})
-            
-            out[nid] = {"score": max(0.0, min(100.0, ws)), "breakdown": breakdown}
+                breakdown.append(
+                    {"key": k, "score": s, "why": why, "weight": w})
+
+            out[nid] = {"score": max(0.0, min(100.0, ws)),
+                        "breakdown": breakdown}
         return out
 
+
 def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_key: str,
-                                 top_k: int = 10, model: str = "gpt-4o-mini", max_candidates: int = 60) -> list[dict]:
+                                  top_k: int = 10, model: str = "gpt-4o-mini", max_candidates: int = 60) -> list[dict]:
     """Uses embeddings pre-trim + AI matrix scorer to produce ONE score (0..100) per solicitation."""
     if df is None or df.empty:
         return []
 
     company_desc = (company_profile.get("description") or "").strip()
-    pretrim = ai_downselect_df(company_desc, df, api_key, top_k=min(max_candidates, max(20, 12*int(top_k))))
+    pretrim = ai_downselect_df(company_desc, df, api_key, top_k=min(
+        max_candidates, max(20, 12*int(top_k))))
     if pretrim.empty:
         return []
 
-    cols = ["notice_id", "title", "description", "naics_code", "set_aside_code", "response_date", "posted_date", "link", "pop_city", "pop_state"]
+    cols = ["notice_id", "title", "description", "naics_code", "set_aside_code",
+            "response_date", "posted_date", "link", "pop_city", "pop_state"]
     use = pretrim[[c for c in cols if c in pretrim.columns]].copy()
 
     scorer = AIMatrixScorer()
@@ -624,7 +687,8 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
     batch_size = 25
     for i in range(0, len(use), batch_size):
         part = use.iloc[i:i+batch_size].to_dict(orient="records")
-        scored = scorer.score_batch(part, company_profile=company_profile, api_key=api_key, model=model)
+        scored = scorer.score_batch(
+            part, company_profile=company_profile, api_key=api_key, model=model)
         results.update(scored)
 
     if not results:
@@ -632,12 +696,16 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
 
     df_scored = pretrim.copy()
     df_scored["__nid"] = df_scored["notice_id"].astype(str)
-    df_scored["__score"] = df_scored["__nid"].map(lambda nid: results.get(nid, {}).get("score", 0.0))
-    df_scored["__breakdown"] = df_scored["__nid"].map(lambda nid: results.get(nid, {}).get("breakdown", []))
+    df_scored["__score"] = df_scored["__nid"].map(
+        lambda nid: results.get(nid, {}).get("score", 0.0))
+    df_scored["__breakdown"] = df_scored["__nid"].map(
+        lambda nid: results.get(nid, {}).get("breakdown", []))
 
-    df_scored = df_scored.sort_values("__score", ascending=False).head(int(top_k)).reset_index(drop=True)
+    df_scored = df_scored.sort_values("__score", ascending=False).head(
+        int(top_k)).reset_index(drop=True)
 
-    blurbs = ai_make_blurbs_fast(df_scored, api_key, model="gpt-4o-mini", max_items=min(50, len(df_scored)))
+    blurbs = ai_make_blurbs_fast(
+        df_scored, api_key, model="gpt-4o-mini", max_items=min(50, len(df_scored)))
     out = []
     for r in df_scored.to_dict(orient="records"):
         nid = str(r.get("notice_id", ""))
@@ -651,6 +719,7 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
         })
     return out
 
+
 def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, company_profile: Dict[str, str], api_key: str, top_k: int = 10) -> list[dict]:
     prof = dict(company_profile or {})
     prof["description"] = company_desc or prof.get("description", "") or ""
@@ -659,27 +728,30 @@ def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, 
 # =========================
 # Database Query Functions
 # =========================
+
+
 def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFrame:
     """Optimized version with better SQL and limits"""
     where_conditions = []
     params = {}
-    
+
     where_conditions.append("LOWER(notice_type) != 'justification'")
-    
+
     # NAICS filter
-    naics = [re.sub(r"[^\d]","", str(x)) for x in (filters.get("naics") or []) if x]
+    naics = [re.sub(r"[^\d]", "", str(x))
+             for x in (filters.get("naics") or []) if x]
     if naics:
         placeholders = ",".join([f":naics_{i}" for i in range(len(naics))])
         where_conditions.append(f"naics_code IN ({placeholders})")
         for i, n in enumerate(naics):
             params[f"naics_{i}"] = n
-    
+
     # Date filter
     due_before = filters.get("due_before")
     if due_before:
         where_conditions.append("response_date <= :due_before")
         params["due_before"] = str(due_before)
-    
+
     # Set-aside filter
     sas = [str(s).lower() for s in (filters.get("set_asides") or []) if s]
     if sas:
@@ -688,7 +760,7 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
             sa_conditions.append(f"LOWER(set_aside_code) LIKE :setaside_{i}")
             params[f"setaside_{i}"] = f"%{sa}%"
         where_conditions.append(f"({' OR '.join(sa_conditions)})")
-    
+
     # Notice types
     nts = [str(nt).lower() for nt in (filters.get("notice_types") or []) if nt]
     if nts:
@@ -697,17 +769,19 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
             nt_conditions.append(f"LOWER(notice_type) LIKE :noticetype_{i}")
             params[f"noticetype_{i}"] = f"%{nt}%"
         where_conditions.append(f"({' OR '.join(nt_conditions)})")
-    
-    where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-    
+
+    where_clause = " AND ".join(
+        where_conditions) if where_conditions else "1=1"
+
     # Keywords
     kws = [str(k).lower() for k in (filters.get("keywords_or") or []) if k]
     if kws and engine.url.get_dialect().name == 'postgresql':
         keyword_query = " | ".join(kws)
-        where_conditions.append("to_tsvector('english', title || ' ' || description) @@ to_tsquery(:keyword_query)")
+        where_conditions.append(
+            "to_tsvector('english', title || ' ' || description) @@ to_tsquery(:keyword_query)")
         params["keyword_query"] = keyword_query
         where_clause = " AND ".join(where_conditions)
-    
+
     sql = f"""
         SELECT notice_id, solicitation_number, title, notice_type, posted_date, response_date, archive_date,
                naics_code, set_aside_code, description, link, pop_city, pop_state, pop_zip, pop_country, pop_raw
@@ -716,15 +790,15 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
         ORDER BY posted_date DESC NULLS LAST
         LIMIT :limit_rows
     """
-    
+
     params["limit_rows"] = min(limit, 5000)
-    
+
     with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn, params=params)
-    
+
     if df.empty:
         return df
-    
+
     # Handle keyword filtering for non-PostgreSQL
     if kws and engine.url.get_dialect().name != 'postgresql':
         for c in ["title", "description"]:
@@ -732,8 +806,9 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
                 df[c] = df[c].astype(str)
         blob = (df["title"] + " " + df["description"]).str.lower()
         df = df[blob.apply(lambda t: any(k in t for k in kws))]
-    
+
     return df.reset_index(drop=True)
+
 
 def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=[c for c in ["notice_id", "description", "link"] if c in df.columns], errors="ignore")
@@ -741,12 +816,15 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 # UI Components
 # =========================
+
+
 def render_sidebar_header():
     with st.sidebar:
         st.markdown("---")
         if st.session_state.user:
             prof = st.session_state.profile or {}
-            company_name = (prof.get("company_name") or "").strip() or "Your Company"
+            company_name = (prof.get("company_name")
+                            or "").strip() or "Your Company"
             st.markdown(f"### {company_name}")
             st.caption(f"Signed in as {st.session_state.user['email']}")
             if st.button("⚙️ Account Settings", key="sb_go_settings", use_container_width=True):
@@ -758,6 +836,7 @@ def render_sidebar_header():
                 st.session_state.view = "auth"
                 st.rerun()
         st.markdown("---")
+
 
 def render_single_score_results(ranked_results: List[Dict]):
     if not ranked_results:
@@ -785,7 +864,9 @@ def render_single_score_results(ranked_results: List[Dict]):
             st.subheader("Scoring Rationale")
             b = item.get("breakdown") or []
             for comp in b:
-                st.write(f"- {comp['key']}: {comp['score']:.2f} — {comp.get('why','')}")
+                st.write(
+                    f"- {comp['key']}: {comp['score']:.2f} — {comp.get('why','')}")
+
 
 def render_auth_screen():
     st.title("Welcome to KIP")
@@ -796,7 +877,8 @@ def render_auth_screen():
     with c1:
         st.subheader("Log in")
         le = st.text_input("Email", key="login_email_full")
-        lp = st.text_input("Password", type="password", key="login_password_full")
+        lp = st.text_input("Password", type="password",
+                           key="login_password_full")
         remember_me = st.checkbox("Remember me for 30 days", value=True)
         if st.button("Log in", key="btn_login_full", use_container_width=True):
             u = get_user_by_email(le or "")
@@ -811,7 +893,8 @@ def render_auth_screen():
                 st.success("Logged in.")
 
                 if remember_me:
-                    raw_token = _issue_remember_me_token(u["id"], days=int(get_secret("COOKIE_DAYS", 30)))
+                    raw_token = _issue_remember_me_token(
+                        u["id"], days=int(get_secret("COOKIE_DAYS", 30)))
                     cookie_name = get_secret("COOKIE_NAME", "kip_auth")
                     cookies[cookie_name] = raw_token
                     cookies.save()
@@ -820,8 +903,10 @@ def render_auth_screen():
     with c2:
         st.subheader("Sign up")
         se = st.text_input("Email", key="signup_email_full")
-        sp = st.text_input("Password", type="password", key="signup_password_full")
-        sp2 = st.text_input("Confirm password", type="password", key="signup_password2_full")
+        sp = st.text_input("Password", type="password",
+                           key="signup_password_full")
+        sp2 = st.text_input("Confirm password",
+                            type="password", key="signup_password2_full")
         if st.button("Create account", key="btn_signup_full", type="primary", use_container_width=True):
             if not se or not sp:
                 st.error("Email and password are required.")
@@ -832,10 +917,12 @@ def render_auth_screen():
             else:
                 uid = create_user(se, sp)
                 if uid:
-                    upsert_profile(uid, company_name="", description="", city="", state="")
+                    upsert_profile(uid, company_name="",
+                                   description="", city="", state="")
                     st.success("Account created. Please log in on the left.")
                 else:
                     st.error("Could not create account. Check server logs.")
+
 
 def render_account_settings():
     st.title("Account Settings")
@@ -866,8 +953,10 @@ def render_account_settings():
     st.subheader("Company Profile")
 
     prof = st.session_state.profile or {}
-    company_name = st.text_input("Company name", value=prof.get("company_name", ""))
-    description = st.text_area("Company description", value=prof.get("description", ""), height=140)
+    company_name = st.text_input(
+        "Company name", value=prof.get("company_name", ""))
+    description = st.text_area(
+        "Company description", value=prof.get("description", ""), height=140)
     city = st.text_input("City", value=prof.get("city", "") or "")
     state = st.text_input("State", value=prof.get("state", "") or "")
 
@@ -877,13 +966,16 @@ def render_account_settings():
             if not company_name.strip() or not description.strip():
                 st.error("Company name and description are required.")
             else:
-                upsert_profile(st.session_state.user["id"], company_name.strip(), description.strip(), city.strip(), state.strip())
-                st.session_state.profile = get_profile(st.session_state.user["id"])
+                upsert_profile(st.session_state.user["id"], company_name.strip(
+                ), description.strip(), city.strip(), state.strip())
+                st.session_state.profile = get_profile(
+                    st.session_state.user["id"])
                 st.success("Profile saved.")
     with cols[1]:
         if st.button("Back to app", key="btn_back_to_app"):
             st.session_state.view = "main"
             st.rerun()
+
 
 # =========================
 # View Router
@@ -914,7 +1006,8 @@ with colR1:
 with colR2:
     try:
         with engine.connect() as conn:
-            cnt = pd.read_sql_query("SELECT COUNT(*) AS c FROM solicitationraw", conn)["c"].iloc[0]
+            cnt = pd.read_sql_query(
+                "SELECT COUNT(*) AS c FROM solicitationraw", conn)["c"].iloc[0]
         st.metric("Rows in DB", int(cnt))
     except Exception:
         st.metric("Rows in DB", 0)
@@ -924,7 +1017,7 @@ with colR2:
 # =========================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1) Solicitation Match",
-    "2) Supplier Suggestions", 
+    "2) Supplier Suggestions",
     "3) Proposal Draft",
     "4) Partner Matches",
     "5) Internal Use"
@@ -935,20 +1028,26 @@ with tab1:
 
     colA, colB, colC = st.columns([1, 1, 1])
     with colA:
-        limit_results = st.number_input("Max results to show", min_value=1, max_value=5000, value=20)
+        limit_results = st.number_input(
+            "Max results to show", min_value=1, max_value=5000, value=20)
     with colB:
-        keywords_raw = st.text_input("Filter keywords (OR, comma-separated)", value="")
+        keywords_raw = st.text_input(
+            "Filter keywords (OR, comma-separated)", value="")
     with colC:
-        naics_raw = st.text_input("Filter by NAICS (comma-separated)", value="")
+        naics_raw = st.text_input(
+            "Filter by NAICS (comma-separated)", value="")
 
     with st.expander("More filters (optional)"):
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
-            set_asides = st.multiselect("Set-aside code", ["SBA", "WOSB", "EDWOSB", "HUBZone", "SDVOSB", "8A", "SDB"])
+            set_asides = st.multiselect(
+                "Set-aside code", ["SBA", "WOSB", "EDWOSB", "HUBZone", "SDVOSB", "8A", "SDB"])
         with col2:
-            due_before = st.date_input("Due before (optional)", value=None, format="YYYY-MM-DD")
+            due_before = st.date_input(
+                "Due before (optional)", value=None, format="YYYY-MM-DD")
         with col3:
-            notice_types = st.multiselect("Notice types", ["Solicitation", "Combined Synopsis/Solicitation", "Sources Sought", "Special Notice", "SRCSGT", "RFI"])
+            notice_types = st.multiselect("Notice types", [
+                                          "Solicitation", "Combined Synopsis/Solicitation", "Sources Sought", "Special Notice", "SRCSGT", "RFI"])
 
     filters = {
         "keywords_or": parse_keywords_or(keywords_raw),
@@ -960,23 +1059,28 @@ with tab1:
 
     st.subheader("Company profile for matching")
     saved_desc = (st.session_state.get("profile") or {}).get("description", "")
-    use_saved = st.checkbox("Use saved company profile", value=bool(saved_desc))
-    
+    use_saved = st.checkbox("Use saved company profile",
+                            value=bool(saved_desc))
+
     if use_saved and saved_desc:
         st.info("Using your saved company profile description.")
         company_desc = saved_desc
-        st.text_area("Company description (from Account → Company Profile)", value=saved_desc, height=120, disabled=True)
+        st.text_area("Company description (from Account → Company Profile)",
+                     value=saved_desc, height=120, disabled=True)
     else:
-        company_desc = st.text_area("Brief company description (temporary)", value="", height=120)
+        company_desc = st.text_area(
+            "Brief company description (temporary)", value="", height=120)
 
     st.session_state.company_desc = company_desc or ""
-    use_ai_downselect = st.checkbox("Use AI to downselect based on description", value=False)
-    top_k_select = st.number_input("How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1) if use_ai_downselect else 5
+    use_ai_downselect = st.checkbox(
+        "Use AI to downselect based on description", value=False)
+    top_k_select = st.number_input("How many AI-ranked matches?", min_value=1,
+                                   max_value=50, value=5, step=1) if use_ai_downselect else 5
 
     if st.button("Show top results", type="primary", key="btn_show_results"):
         try:
             df = query_filtered_df_optimized(filters, limit=2000)
-            
+
             if df.empty:
                 st.warning("No solicitations match your filters.")
                 st.session_state.sol_df = None
@@ -985,18 +1089,23 @@ with tab1:
                 status_text = st.empty()
 
                 if use_ai_downselect and company_desc.strip():
-                    status_text.text("🔍 Finding most relevant solicitations...")
+                    status_text.text(
+                        "🔍 Finding most relevant solicitations...")
                     progress_bar.progress(20)
 
-                    pretrim = ai_downselect_df(company_desc.strip(), df, OPENAI_API_KEY, top_k=min(100, max(20, 8*int(top_k_select))))
+                    pretrim = ai_downselect_df(company_desc.strip(), df, OPENAI_API_KEY, top_k=min(
+                        100, max(20, 8*int(top_k_select))))
                     progress_bar.progress(50)
 
                     if pretrim.empty:
-                        st.info("AI pre-filter found no matches. Showing manual results.")
+                        st.info(
+                            "AI pre-filter found no matches. Showing manual results.")
                         show_df = df.head(int(limit_results))
                         status_text.text("📝 Generating summaries...")
-                        blurbs = ai_make_blurbs_fast(show_df, OPENAI_API_KEY, max_items=20)
-                        show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"])
+                        blurbs = ai_make_blurbs_fast(
+                            show_df, OPENAI_API_KEY, max_items=20)
+                        show_df["blurb"] = show_df["notice_id"].astype(
+                            str).map(blurbs).fillna(show_df["title"])
                         progress_bar.progress(100)
                     else:
                         status_text.text("🎯 Ranking by company fit...")
@@ -1010,34 +1119,46 @@ with tab1:
                             'company_name': prof.get('company_name', '')
                         }
 
-                        enhanced_ranked = ai_score_and_rank_solicitations_by_fit(pretrim, company_desc.strip(), company_profile, OPENAI_API_KEY, top_k=int(top_k_select))
+                        enhanced_ranked = ai_score_and_rank_solicitations_by_fit(
+                            pretrim, company_desc.strip(), company_profile, OPENAI_API_KEY, top_k=int(top_k_select))
                         progress_bar.progress(90)
 
                         if enhanced_ranked:
-                            id_order = [x["notice_id"] for x in enhanced_ranked]
-                            top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
-                            preorder = {nid: i for i, nid in enumerate(id_order)}
-                            top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
-                            top_df = top_df.sort_values("_order").drop(columns=["_order"])
+                            id_order = [x["notice_id"]
+                                        for x in enhanced_ranked]
+                            top_df = pretrim[pretrim["notice_id"].astype(
+                                str).isin(id_order)].copy()
+                            preorder = {nid: i for i,
+                                        nid in enumerate(id_order)}
+                            top_df["_order"] = top_df["notice_id"].astype(
+                                str).map(preorder)
+                            top_df = top_df.sort_values(
+                                "_order").drop(columns=["_order"])
 
                             status_text.text("📝 Generating summaries...")
-                            blurbs = ai_make_blurbs_fast(top_df, OPENAI_API_KEY, max_items=int(top_k_select))
-                            top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs)
+                            blurbs = ai_make_blurbs_fast(
+                                top_df, OPENAI_API_KEY, max_items=int(top_k_select))
+                            top_df["blurb"] = top_df["notice_id"].astype(
+                                str).map(blurbs)
 
                             show_df = top_df
                             progress_bar.progress(100)
 
-                            st.success(f"Top {len(top_df)} matches by company fit:")
+                            st.success(
+                                f"Top {len(top_df)} matches by company fit:")
                             render_single_score_results(enhanced_ranked)
 
-                            st.session_state.topn_df = top_df.reset_index(drop=True)
+                            st.session_state.topn_df = top_df.reset_index(
+                                drop=True)
                             st.session_state.sol_df = top_df.copy()
                             st.session_state.enhanced_ranked = enhanced_ranked
                         else:
                             st.info("Enhanced ranking found no results.")
                             show_df = df.head(int(limit_results))
-                            blurbs = ai_make_blurbs_fast(show_df, OPENAI_API_KEY, max_items=20)
-                            show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs)
+                            blurbs = ai_make_blurbs_fast(
+                                show_df, OPENAI_API_KEY, max_items=20)
+                            show_df["blurb"] = show_df["notice_id"].astype(
+                                str).map(blurbs)
 
                     progress_bar.empty()
                     status_text.empty()
@@ -1045,18 +1166,23 @@ with tab1:
                     show_df = df.head(int(limit_results))
                     if len(show_df) > 0:
                         with st.spinner("Generating summaries..."):
-                            blurbs = ai_make_blurbs_fast(show_df, OPENAI_API_KEY, max_items=min(50, len(show_df)))
-                            show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"])
+                            blurbs = ai_make_blurbs_fast(
+                                show_df, OPENAI_API_KEY, max_items=min(50, len(show_df)))
+                            show_df["blurb"] = show_df["notice_id"].astype(
+                                str).map(blurbs).fillna(show_df["title"])
 
                 if 'show_df' in locals():
                     st.session_state.sol_df = show_df
-                    show_df["sam_url"] = show_df.apply(lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")), axis=1)
+                    show_df["sam_url"] = show_df.apply(lambda r: make_sam_public_url(
+                        str(r.get("notice_id", "")), r.get("link", "")), axis=1)
 
                     if not (use_ai_downselect and company_desc.strip() and 'enhanced_ranked' in locals() and enhanced_ranked):
                         st.subheader(f"Solicitations ({len(show_df)})")
-                        st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
+                        st.dataframe(_hide_notice_and_description(
+                            show_df), use_container_width=True)
 
-                    st.download_button("Download results as CSV", show_df.to_csv(index=False).encode("utf-8"), file_name="solicitation_results.csv", mime="text/csv")
+                    st.download_button("Download results as CSV", show_df.to_csv(index=False).encode(
+                        "utf-8"), file_name="solicitation_results.csv", mime="text/csv")
 
         except Exception as e:
             st.error(f"Error processing request: {e}")
@@ -1076,23 +1202,28 @@ with tab5:
     st.caption("Quick presets that filter/rank solicitations with AI. Results appear below in relevance order with short blurbs.")
 
     # Configuration
-    internal_top_k = st.number_input("How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1, key="internal_top_k")
+    internal_top_k = st.number_input(
+        "How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1, key="internal_top_k")
     max_candidates_cap = st.number_input("Max candidates to consider before AI ranking", min_value=20, max_value=1000, value=300, step=20,
-                                        help="We first pre-trim with embeddings, then rank with the LLM.", key="internal_max_candidates")
+                                         help="We first pre-trim with embeddings, then rank with the LLM.", key="internal_max_candidates")
 
     # Preset buttons
     c1, c2, c3 = st.columns(3)
     with c1:
-        run_machine_shop = st.button("Solicitations for Machine Shop", type="primary", use_container_width=True, key="iu_btn_machine")
+        run_machine_shop = st.button("Solicitations for Machine Shop",
+                                     type="primary", use_container_width=True, key="iu_btn_machine")
     with c2:
-        run_services = st.button("Solicitations for Services", type="primary", use_container_width=True, key="iu_btn_services") 
+        run_services = st.button("Solicitations for Services", type="primary",
+                                 use_container_width=True, key="iu_btn_services")
     with c3:
-        run_research = st.button("R&D Solicitations", type="primary", use_container_width=True, key="iu_btn_research")
+        run_research = st.button(
+            "R&D Solicitations", type="primary", use_container_width=True, key="iu_btn_research")
 
     def compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
         # Get all solicitations
-        df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [], "due_before": None, "notice_types": []})
+        df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [
+        ], "due_before": None, "notice_types": []})
         if df_all.empty:
             st.warning("No solicitations in the database to evaluate.")
             return None
@@ -1100,17 +1231,21 @@ with tab5:
         # Optional: restrict to research-type before AI ranking
         if research_only:
             rd_naics_prefixes = ("5417",)  # R&D NAICS codes
-            naics_mask = df_all["naics_code"].fillna("").astype(str).str.startswith(rd_naics_prefixes)
-            
-            text = (df_all["title"].astype(str) + " " + df_all["description"].astype(str)).str.lower()
-            kw_any = ["research", "r&d", "development", "sbir", "sttr", "prototype", "baa", "technology demonstration", 
-                     "feasibility study", "innovative", "scientific", "laboratory", "experimentation"]
+            naics_mask = df_all["naics_code"].fillna("").astype(
+                str).str.startswith(rd_naics_prefixes)
+
+            text = (df_all["title"].astype(str) + " " +
+                    df_all["description"].astype(str)).str.lower()
+            kw_any = ["research", "r&d", "development", "sbir", "sttr", "prototype", "baa", "technology demonstration",
+                      "feasibility study", "innovative", "scientific", "laboratory", "experimentation"]
             kw_mask = text.apply(lambda t: any(k in t for k in kw_any))
-            
+
             nt = df_all["notice_type"].fillna("").str.lower()
-            nt_mask = nt.str.contains("baa") | nt.str.contains("sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
-            
-            df_all = df_all[naics_mask | kw_mask | nt_mask].reset_index(drop=True)
+            nt_mask = nt.str.contains("baa") | nt.str.contains(
+                "sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
+
+            df_all = df_all[naics_mask | kw_mask |
+                            nt_mask].reset_index(drop=True)
             if df_all.empty:
                 st.info("No likely research-type opportunities found.")
                 return None
@@ -1124,15 +1259,17 @@ with tab5:
             company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
 
         # Pre-trim with embeddings
-        pretrim_cap = min(int(max_candidates_cap), max(20, 12 * int(internal_top_k)))
-        pretrim = ai_downselect_df(company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
+        pretrim_cap = min(int(max_candidates_cap),
+                          max(20, 12 * int(internal_top_k)))
+        pretrim = ai_downselect_df(
+            company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
         if pretrim.empty:
             st.info("AI pre-filter returned nothing.")
             return None
 
         # AI ranking
         ranked = ai_rank_solicitations_by_fit(df=pretrim, company_desc=company_desc_internal, api_key=OPENAI_API_KEY,
-                                            top_k=int(internal_top_k), max_candidates=min(len(pretrim), 60))
+                                              top_k=int(internal_top_k), max_candidates=min(len(pretrim), 60))
         if not ranked:
             st.info("AI ranking returned no results.")
             return None
@@ -1140,16 +1277,21 @@ with tab5:
         # Order by ranking
         id_order = [x["notice_id"] for x in ranked]
         preorder = {nid: i for i, nid in enumerate(id_order)}
-        top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
+        top_df = pretrim[pretrim["notice_id"].astype(
+            str).isin(id_order)].copy()
         top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-        top_df = top_df.sort_values("__order").drop_duplicates(subset=["notice_id"]).drop(columns="__order").reset_index(drop=True)
+        top_df = top_df.sort_values("__order").drop_duplicates(
+            subset=["notice_id"]).drop(columns="__order").reset_index(drop=True)
 
         # Add blurbs and scores
-        blurbs = ai_make_blurbs_fast(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
-        top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
+        blurbs = ai_make_blurbs_fast(
+            top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
+        top_df["blurb"] = top_df["notice_id"].astype(str).map(
+            blurbs).fillna(top_df["title"].fillna(""))
         reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
         score_by_id = {x["notice_id"]: x.get("score", 0) for x in ranked}
-        top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
+        top_df["fit_score"] = top_df["notice_id"].astype(
+            str).map(score_by_id).fillna(0).astype(float)
 
         return {"top_df": top_df, "reason_by_id": reason_by_id}
 
@@ -1158,7 +1300,7 @@ with tab5:
         data = st.session_state.iu_results
         if not data:
             return
-            
+
         key_salt = st.session_state.iu_key_salt or ""
         top_df = data["top_df"]
         reason_by_id = data["reason_by_id"]
@@ -1168,9 +1310,10 @@ with tab5:
             st.session_state.iu_open_nid = str(top_df.iloc[0]["notice_id"])
 
         st.success(f"Top {len(top_df)} matches by relevance:")
-        
+
         for idx, row in enumerate(top_df.itertuples(index=False), start=1):
-            hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
+            hdr = (getattr(row, "blurb", None) or getattr(
+                row, "title", None) or "Untitled")
             nid = str(getattr(row, "notice_id", ""))
 
             expanded = (st.session_state.get("iu_open_nid") == nid)
@@ -1178,13 +1321,17 @@ with tab5:
                 left, right = st.columns([2, 1])
 
                 with left:
-                    st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                    st.write(
+                        f"**Notice Type:** {getattr(row, 'notice_type', '')}")
                     st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                    st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                    st.write(
+                        f"**Response Due:** {getattr(row, 'response_date', '')}")
                     st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                    st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                    
-                    link = make_sam_public_url(str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                    st.write(
+                        f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+
+                    link = make_sam_public_url(
+                        str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
                     st.write(f"[Open on SAM.gov]({link})")
 
                     reason = reason_by_id.get(nid, "")
@@ -1195,14 +1342,16 @@ with tab5:
                     # Branch based on mode
                     if st.session_state.get("iu_mode") == "rd":
                         # Research mode - show research direction
-                        direction = ai_research_direction(getattr(row, "title", ""), getattr(row, "description", ""), OPENAI_API_KEY)
+                        direction = ai_research_direction(
+                            getattr(row, "title", ""), getattr(row, "description", ""), OPENAI_API_KEY)
                         st.markdown("**Proposed Research Direction:**")
                         st.write(direction)
                     else:
                         # Services/Machine shop mode - show vendor finder
-                        btn_label = "Find 3 potential vendors (SerpAPI)" if st.session_state.get("iu_mode") == "machine" else "Find 3 local service providers"
+                        btn_label = "Find 3 potential vendors (SerpAPI)" if st.session_state.get(
+                            "iu_mode") == "machine" else "Find 3 local service providers"
                         btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-                        
+
                         if st.button(btn_label, key=btn_key):
                             sol_dict = {
                                 "notice_id": nid,
@@ -1216,27 +1365,34 @@ with tab5:
                             }
 
                             # Extract locality
-                            locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(getattr(row, "pop_state", ""))}
+                            locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
+                                getattr(row, "pop_state", ""))}
                             if not _has_locality(locality):
-                                locality = _extract_locality(f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
+                                locality = _extract_locality(
+                                    f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
 
                             # Set status message
                             if _has_locality(locality):
-                                where = ", ".join([x for x in [locality.get("city", ""), locality.get("state", "")] if x])
-                                st.session_state.vendor_notes[nid] = f"Place of performance: {where}"
+                                where = ", ".join(
+                                    [x for x in [locality.get("city", ""), locality.get("state", "")] if x])
+                                st.session_state.vendor_notes[
+                                    nid] = f"Place of performance: {where}"
                                 st.session_state.vendor_errors.pop(nid, None)
                             else:
                                 st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
 
                             # Find vendors
-                            vendors_df, note = find_service_vendors_for_opportunity(sol_dict, OPENAI_API_KEY, SERP_API_KEY, top_n=3)
+                            vendors_df, note = find_service_vendors_for_opportunity(
+                                sol_dict, OPENAI_API_KEY, SERP_API_KEY, top_n=3)
 
                             if vendors_df is None or vendors_df.empty:
                                 loc_msg = ""
                                 if _has_locality(locality):
-                                    where = ", ".join([x for x in [locality.get("city", ""), locality.get("state", "")] if x]) or locality.get("state", "")
+                                    where = ", ".join([x for x in [locality.get("city", ""), locality.get(
+                                        "state", "")] if x]) or locality.get("state", "")
                                     loc_msg = f" for the specified locality ({where})"
-                                st.session_state.vendor_errors[nid] = f"No service providers found{loc_msg}."
+                                st.session_state.vendor_errors[
+                                    nid] = f"No service providers found{loc_msg}."
                             else:
                                 st.session_state.vendor_errors.pop(nid, None)
 
@@ -1262,9 +1418,11 @@ with tab5:
                             location = (v.get("location") or "").strip()
                             reason_txt = (v.get("reason") or "").strip()
 
-                            display_name = raw_name or _company_name_from_url(website) or "Unnamed Vendor"
+                            display_name = raw_name or _company_name_from_url(
+                                website) or "Unnamed Vendor"
                             if website:
-                                st.markdown(f"- **[{display_name}]({website})**")
+                                st.markdown(
+                                    f"- **[{display_name}]({website})**")
                             else:
                                 st.markdown(f"- **{display_name}**")
                             if location:
@@ -1273,18 +1431,19 @@ with tab5:
                                 st.write(reason_txt)
                     else:
                         if not err_msg:
-                            st.caption("No vendors yet. Click the button to fetch.")
+                            st.caption(
+                                "No vendors yet. Click the button to fetch.")
 
     # Handle preset button clicks
     if run_machine_shop:
         st.session_state.iu_key_salt = uuid.uuid4().hex
         st.session_state.iu_mode = "machine"
         preset_desc = ("We are pursuing solicitations where a MACHINE SHOP would fabricate or machine parts for us. "
-                      "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
-                      "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
-                      "Prefer solicitations with part drawings, specs, materials (aluminum, steel, titanium), and tangible manufactured items.")
+                       "Strong fits include CNC machining, milling, turning, drilling, precision tolerances, "
+                       "metal or plastic fabrication, weldments, assemblies, and production of custom components per drawings. "
+                       "Prefer solicitations with part drawings, specs, materials (aluminum, steel, titanium), and tangible manufactured items.")
         negative_hint = ("Pure services, staffing-only, software-only, consulting, training, janitorial, IT, "
-                        "or anything that does not involve fabricating or machining a physical part.")
+                         "or anything that does not involve fabricating or machining a physical part.")
         with st.spinner("Finding best-matching solicitations..."):
             data = compute_internal_results(preset_desc, negative_hint)
         st.session_state.iu_results = data
@@ -1294,9 +1453,9 @@ with tab5:
         st.session_state.iu_key_salt = uuid.uuid4().hex
         st.session_state.iu_mode = "services"
         preset_desc = ("We are pursuing solicitations where a SERVICES COMPANY performs the work for us. "
-                      "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
-                      "operations support, professional services, and other labor-based or outcome-based services "
-                      "delivered under SOW/Performance Work Statement.")
+                       "Strong fits include maintenance, installation, inspection, logistics, training, field services, "
+                       "operations support, professional services, and other labor-based or outcome-based services "
+                       "delivered under SOW/Performance Work Statement.")
         negative_hint = "Manufacturing-only or pure product buys without a material services component."
         with st.spinner("Finding best-matching solicitations..."):
             data = compute_internal_results(preset_desc, negative_hint)
@@ -1307,11 +1466,13 @@ with tab5:
         st.session_state.iu_key_salt = uuid.uuid4().hex
         st.session_state.iu_mode = "rd"
         preset_desc = ("We are pursuing research and development (R&D) opportunities aligned with our capabilities. "
-                      "Strong fits include applied research, technology maturation, prototyping, experimentation, "
-                      "testing and evaluation, studies, and early-stage development tasks.")
-        negative_hint = ("Commodity/product-only buys, routine MRO, janitorial, IT support, or other non-research services.")
+                       "Strong fits include applied research, technology maturation, prototyping, experimentation, "
+                       "testing and evaluation, studies, and early-stage development tasks.")
+        negative_hint = (
+            "Commodity/product-only buys, routine MRO, janitorial, IT support, or other non-research services.")
         with st.spinner("Finding best-matching research solicitations..."):
-            data = compute_internal_results(preset_desc, negative_hint, research_only=True)
+            data = compute_internal_results(
+                preset_desc, negative_hint, research_only=True)
         st.session_state.iu_results = data
         st.rerun()
 
@@ -1322,9 +1483,10 @@ with tab5:
     if st.session_state.iu_results and isinstance(st.session_state.iu_results.get("top_df"), pd.DataFrame):
         top_df = st.session_state.iu_results["top_df"]
         st.download_button(f"Download Internal Use Results (Top-{int(internal_top_k)})",
-                          top_df.to_csv(index=False).encode("utf-8"),
-                          file_name=f"internal_top{int(internal_top_k)}.csv",
-                          mime="text/csv")
-    
+                           top_df.to_csv(index=False).encode("utf-8"),
+                           file_name=f"internal_top{int(internal_top_k)}.csv",
+                           mime="text/csv")
+
     st.markdown("---")
-    st.caption("DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
+    st.caption(
+        "DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
