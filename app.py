@@ -687,40 +687,27 @@ class AIMatrixScorer:
             "state": (company_profile.get("state") or "").strip(),
         }
 
+        # Much simpler prompt to avoid JSON issues
         system = (
-            "You are an expert federal contracting analyst. Score how well each solicitation fits this company.\n\n"
-            "SCORING RULES:\n"
-            "- Score each component 1-10 (1=very poor fit, 5=fair fit, 10=excellent fit)\n"
-            "- Set-aside: 9-10 if company qualifies, 5-6 if unrestricted, 1-3 if excluded\n"
-            "- Geographic: 8-10 same state, 6-7 regional, 4-5 national, 1-3 poor location\n"
-            "- NAICS: 9-10 exact match, 6-8 related, 3-5 applicable, 1-2 unrelated\n\n"
-            "Return valid JSON only:\n"
-            '{"results":[{"notice_id":"ID","components":[{"key":"tech_core","score":7,"reasoning":"brief reason"}],"weighted_score":75}]}\n\n'
-            "Keep reasoning under 10 words per component."
+            "Score each solicitation 1-10 for company fit. Return only valid JSON:\n"
+            '{"results":[{"notice_id":"123","score":7,"reason":"brief"}]}'
         )
 
-        user_data = {
-            "company": company_view,
-            "components": [{"key": c.key, "label": c.label, "weight": c.weight} for c in self.components],
-            "solicitations": [{
-                "notice_id": str(x.get("notice_id", "")),
-                "title": (x.get("title") or "")[:250],  # Shorter for token efficiency
-                "description": (x.get("description") or "")[:800],  # Much shorter
-                "naics_code": str(x.get("naics_code") or ""),
-                "set_aside_code": str(x.get("set_aside_code") or ""),
-                "pop_city": str(x.get("pop_city") or ""),
-                "pop_state": str(x.get("pop_state") or "")
-            } for x in items],
-        }
+        # Simplified user message - no complex nested structure
+        user_content = f"Company: {company_view['description'][:200]}\n\nSolicitations:\n"
+        for item in items:
+            user_content += f"ID: {item.get('notice_id')}\nTitle: {item.get('title', '')[:100]}\nNAICS: {item.get('naics_code', '')}\n\n"
+        
+        user_content += "Return JSON with notice_id, score (1-10), and brief reason for each."
 
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(user_data)}
+            {"role": "user", "content": user_content}
         ]
         return messages, []
 
     def score_batch(self, items: list[dict], company_profile: dict, api_key: str, model: str = "gpt-4o-mini") -> dict:
-        """Score a batch of solicitations using the enhanced matrix with robust error handling."""
+        """Simplified scoring to avoid JSON issues"""
         if not items:
             return {}
 
@@ -730,72 +717,51 @@ class AIMatrixScorer:
         try:
             response = client.chat.completions.create(
                 model=model,
-                response_format={"type": "json_object"},
                 messages=messages,
-                temperature=0.1,
-                max_tokens=3000,
-                timeout=45  # Increased timeout
+                temperature=0.0,  # Zero temperature for consistency
+                max_tokens=1000,  # Reduced tokens
+                timeout=30
             )
             content = response.choices[0].message.content or "{}"
-            
-            # Robust JSON cleaning
+
+            # More aggressive JSON cleaning
             content = content.strip()
-            
-            # Find the actual JSON boundaries
-            start = content.find('{')
-            end = content.rfind('}') + 1
-            
-            if start >= 0 and end > start:
-                content = content[start:end]
-            else:
-                raise json.JSONDecodeError("No valid JSON found", content, 0)
-            
-            # Try to fix common JSON issues
-            content = self._fix_json_issues(content)
-            
+            if not content.startswith('{'):
+                # Find first { and last }
+                start = content.find('{')
+                end = content.rfind('}') + 1
+                if start >= 0 and end > start:
+                    content = content[start:end]
+
+            # Replace single quotes with double quotes
+            content = content.replace("'", '"')
+
             data = json.loads(content)
-            
-        except json.JSONDecodeError as e:
-            st.warning(f"JSON parsing failed at position {e.pos}: {str(e)[:100]}...")
-            return self._fallback_scoring(items, company_profile)
+
         except Exception as e:
-            st.warning(f"AI scoring failed: {str(e)[:100]}...")
+            st.warning(f"AI scoring failed, using fallback: {str(e)[:50]}...")
             return self._fallback_scoring(items, company_profile)
 
-        # Process results
+        # Process simplified results
         scored_results = {}
         for result in (data.get("results") or []):
             notice_id = str(result.get("notice_id", "")).strip()
-            components = result.get("components") or []
-            weighted_score = float(result.get("weighted_score", 0))
+            # Simple 1-10 score converted to 0-100
+            score = float(result.get("score", 50))
+            reason = str(result.get("reason", "AI assessment"))
 
-            # Build component breakdown with human-readable labels
-            breakdown = []
-            component_lookup = {c.key: c for c in self.components}
+            # Convert 1-10 score to our 0-100 scale
+            final_score = max(0.0, min(100.0, score * 10))
 
-            for comp in components:
-                key = str(comp.get("key", ""))
-                score = max(1, min(10, int(float(comp.get("score", 5)))))  # Robust score extraction
-                reasoning = str(comp.get("reasoning") or comp.get("why") or "").strip()
-
-                if key in component_lookup:
-                    component_info = component_lookup[key]
-                    breakdown.append({
-                        "key": key,
-                        "label": component_info.label,
-                        "score": score,
-                        "reasoning": reasoning,
-                        "weight": component_info.weight,
-                        "weighted_contribution": (score * component_info.weight / self.total_weight) * 10
-                    })
-
-            # Recalculate weighted score to ensure accuracy
-            if breakdown:
-                calculated_score = sum(
-                    comp["score"] * comp["weight"] for comp in breakdown) / self.total_weight * 10
-                final_score = max(0.0, min(100.0, calculated_score))
-            else:
-                final_score = max(0.0, min(100.0, weighted_score))
+            # Create simplified breakdown
+            breakdown = [{
+                "key": "overall_fit",
+                "label": "Overall Company Fit",
+                "score": int(score),
+                "reasoning": reason,
+                "weight": 100.0,
+                "weighted_contribution": final_score
+            }]
 
             scored_results[notice_id] = {
                 "score": final_score,
@@ -1005,7 +971,7 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
     # Score in very small batches for reliability
     scorer = AIMatrixScorer()
     results: dict[str, dict] = {}
-    batch_size = 3  # Very small batches to avoid JSON issues
+    batch_size = 1  # Very small batches to avoid JSON issues
 
     for i in range(0, len(use_df), batch_size):
         batch_df = use_df.iloc[i:i+batch_size]
