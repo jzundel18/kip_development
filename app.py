@@ -1076,9 +1076,9 @@ with tab5:
     st.caption("Quick presets that filter/rank solicitations with AI. Results appear below in relevance order with short blurbs.")
 
     # Configuration
-    internal_top_k = st.number_input("How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1)
+    internal_top_k = st.number_input("How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1, key="internal_top_k")
     max_candidates_cap = st.number_input("Max candidates to consider before AI ranking", min_value=20, max_value=1000, value=300, step=20,
-                                        help="We first pre-trim with embeddings, then rank with the LLM.")
+                                        help="We first pre-trim with embeddings, then rank with the LLM.", key="internal_max_candidates")
 
     # Preset buttons
     c1, c2, c3 = st.columns(3)
