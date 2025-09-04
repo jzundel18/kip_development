@@ -1679,81 +1679,111 @@ with tab5:
             "R&D Solicitations", type="primary", use_container_width=True, key="iu_btn_research")
 
     def compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
-        """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
-        # Get all solicitations
-        df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [
-        ], "due_before": None, "notice_types": []})
+    """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
+    # Get all solicitations
+    df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [
+    ], "due_before": None, "notice_types": []})
+    if df_all.empty:
+        st.warning("No solicitations in the database to evaluate.")
+        return None
+
+    # Optional: restrict to research-type before AI ranking
+    if research_only:
+        rd_naics_prefixes = ("5417",)  # R&D NAICS codes
+        naics_mask = df_all["naics_code"].fillna("").astype(
+            str).str.startswith(rd_naics_prefixes)
+
+        text = (df_all["title"].astype(str) + " " +
+                df_all["description"].astype(str)).str.lower()
+        kw_any = ["research", "r&d", "development", "sbir", "sttr", "prototype", "baa", "technology demonstration",
+                  "feasibility study", "innovative", "scientific", "laboratory", "experimentation"]
+        kw_mask = text.apply(lambda t: any(k in t for k in kw_any))
+
+        nt = df_all["notice_type"].fillna("").str.lower()
+        nt_mask = nt.str.contains("baa") | nt.str.contains(
+            "sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
+
+        df_all = df_all[naics_mask | kw_mask |
+                        nt_mask].reset_index(drop=True)
         if df_all.empty:
-            st.warning("No solicitations in the database to evaluate.")
+            st.info("No likely research-type opportunities found.")
             return None
 
-        # Optional: restrict to research-type before AI ranking
-        if research_only:
-            rd_naics_prefixes = ("5417",)  # R&D NAICS codes
-            naics_mask = df_all["naics_code"].fillna("").astype(
-                str).str.startswith(rd_naics_prefixes)
+    # Build company description for AI
+    base_desc = (st.session_state.get("company_desc") or "").strip()
+    company_desc_internal = preset_desc.strip()
+    if base_desc:
+        company_desc_internal = base_desc + "\n\n" + company_desc_internal
+    if negative_hint.strip():
+        company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
 
-            text = (df_all["title"].astype(str) + " " +
-                    df_all["description"].astype(str)).str.lower()
-            kw_any = ["research", "r&d", "development", "sbir", "sttr", "prototype", "baa", "technology demonstration",
-                      "feasibility study", "innovative", "scientific", "laboratory", "experimentation"]
-            kw_mask = text.apply(lambda t: any(k in t for k in kw_any))
+    # Pre-trim with embeddings
+    pretrim_cap = min(int(max_candidates_cap),
+                      max(20, 12 * int(internal_top_k)))
+    pretrim = ai_downselect_df(
+        company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
+    if pretrim.empty:
+        st.info("AI pre-filter returned nothing.")
+        return None
 
-            nt = df_all["notice_type"].fillna("").str.lower()
-            nt_mask = nt.str.contains("baa") | nt.str.contains(
-                "sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
+    # AI ranking - FIXED: Use the correct function name
+    prof = st.session_state.get('profile', {}) or {}
+    company_profile = {
+        'description': company_desc_internal,
+        'city': prof.get('city', ''),
+        'state': prof.get('state', ''),
+        'company_name': prof.get('company_name', '')
+    }
+    
+    ranked = ai_matrix_score_solicitations(
+        df=pretrim, 
+        company_profile=company_profile, 
+        api_key=OPENAI_API_KEY,
+        top_k=int(internal_top_k), 
+        model="gpt-4o-mini", 
+        max_candidates=min(len(pretrim), 60)
+    )
+    
+    if not ranked:
+        st.info("AI ranking returned no results.")
+        return None
 
-            df_all = df_all[naics_mask | kw_mask |
-                            nt_mask].reset_index(drop=True)
-            if df_all.empty:
-                st.info("No likely research-type opportunities found.")
-                return None
+    # Order by ranking
+    id_order = [x["notice_id"] for x in ranked]
+    preorder = {nid: i for i, nid in enumerate(id_order)}
+    top_df = pretrim[pretrim["notice_id"].astype(
+        str).isin(id_order)].copy()
+    top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
+    top_df = top_df.sort_values("__order").drop_duplicates(
+        subset=["notice_id"]).drop(columns="__order").reset_index(drop=True)
 
-        # Build company description for AI
-        base_desc = (st.session_state.get("company_desc") or "").strip()
-        company_desc_internal = preset_desc.strip()
-        if base_desc:
-            company_desc_internal = base_desc + "\n\n" + company_desc_internal
-        if negative_hint.strip():
-            company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
+    # Add blurbs and scores
+    blurbs = ai_make_blurbs_fast(
+        top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
+    top_df["blurb"] = top_df["notice_id"].astype(str).map(
+        blurbs).fillna(top_df["title"].fillna(""))
+    
+    # Extract reasons from the ranked results
+    reason_by_id = {}
+    for item in ranked:
+        nid = item.get("notice_id", "")
+        # Try to get a summary reason from the breakdown
+        breakdown = item.get("breakdown", [])
+        if breakdown:
+            # Get the top scoring components as the reason
+            top_components = sorted(breakdown, key=lambda x: x.get("score", 0), reverse=True)[:3]
+            reasons = [f"{comp.get('label', comp.get('key', ''))} ({comp.get('score', 0)}/10)" 
+                      for comp in top_components]
+            reason_by_id[nid] = f"Top matches: {', '.join(reasons)}"
+        else:
+            reason_by_id[nid] = item.get("blurb", "AI assessment")
+    
+    # Add fit scores from the ranked results
+    score_by_id = {x["notice_id"]: x.get("score", 0) for x in ranked}
+    top_df["fit_score"] = top_df["notice_id"].astype(
+        str).map(score_by_id).fillna(0).astype(float)
 
-        # Pre-trim with embeddings
-        pretrim_cap = min(int(max_candidates_cap),
-                          max(20, 12 * int(internal_top_k)))
-        pretrim = ai_downselect_df(
-            company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
-        if pretrim.empty:
-            st.info("AI pre-filter returned nothing.")
-            return None
-
-        # AI ranking
-        ranked = ai_rank_solicitations_by_fit(df=pretrim, company_desc=company_desc_internal, api_key=OPENAI_API_KEY,
-                                              top_k=int(internal_top_k), max_candidates=min(len(pretrim), 60))
-        if not ranked:
-            st.info("AI ranking returned no results.")
-            return None
-
-        # Order by ranking
-        id_order = [x["notice_id"] for x in ranked]
-        preorder = {nid: i for i, nid in enumerate(id_order)}
-        top_df = pretrim[pretrim["notice_id"].astype(
-            str).isin(id_order)].copy()
-        top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-        top_df = top_df.sort_values("__order").drop_duplicates(
-            subset=["notice_id"]).drop(columns="__order").reset_index(drop=True)
-
-        # Add blurbs and scores
-        blurbs = ai_make_blurbs_fast(
-            top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
-        top_df["blurb"] = top_df["notice_id"].astype(str).map(
-            blurbs).fillna(top_df["title"].fillna(""))
-        reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
-        score_by_id = {x["notice_id"]: x.get("score", 0) for x in ranked}
-        top_df["fit_score"] = top_df["notice_id"].astype(
-            str).map(score_by_id).fillna(0).astype(float)
-
-        return {"top_df": top_df, "reason_by_id": reason_by_id}
-
+    return {"top_df": top_df, "reason_by_id": reason_by_id}
     def render_internal_results():
         """Render the results with vendor finding functionality."""
         data = st.session_state.get('iu_results')
