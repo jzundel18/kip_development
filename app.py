@@ -1054,6 +1054,145 @@ class AIMatrixScorer:
 
         return '\n'.join(fixed_lines)
 
+def render_internal_results():
+    """Render the results with vendor finding functionality."""
+    data = st.session_state.get('iu_results')
+    if not data:
+        return
+
+    key_salt = st.session_state.iu_key_salt or ""
+    top_df = data["top_df"]
+    reason_by_id = data["reason_by_id"]
+
+    # Ensure one expander is open by default
+    if st.session_state.iu_open_nid is None and len(top_df):
+        st.session_state.iu_open_nid = str(top_df.iloc[0]["notice_id"])
+
+    st.success(f"Top {len(top_df)} matches by relevance:")
+
+    for idx, row in enumerate(top_df.itertuples(index=False), start=1):
+        hdr = (getattr(row, "blurb", None) or getattr(
+            row, "title", None) or "Untitled")
+        nid = str(getattr(row, "notice_id", ""))
+        fit_score = getattr(row, "fit_score", 75)
+
+        expanded = (st.session_state.get("iu_open_nid") == nid)
+        with st.expander(f"{idx}. {hdr}", expanded=expanded):
+            left, right = st.columns([2, 1])
+
+            with left:
+                st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
+                st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
+                st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
+                st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+
+                link = make_sam_public_url(
+                    str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
+                st.write(f"[Open on SAM.gov]({link})")
+
+                reason = reason_by_id.get(nid, "")
+                if reason:
+                    st.markdown("**Why this matched (AI):**")
+                    st.info(reason)
+
+                # Branch based on mode
+                if st.session_state.get("iu_mode") == "rd":
+                    # Research mode - show research direction
+                    direction = ai_research_direction(
+                        getattr(row, "title", ""), getattr(row, "description", ""), OPENAI_API_KEY)
+                    st.markdown("**Proposed Research Direction:**")
+                    st.write(direction)
+                else:
+                    # Services/Machine shop mode - show vendor finder
+                    btn_label = "Find 3 potential vendors (SerpAPI)" if st.session_state.get(
+                        "iu_mode") == "machine" else "Find 3 local service providers"
+                    btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
+
+                    if st.button(btn_label, key=btn_key):
+                        sol_dict = {
+                            "notice_id": nid,
+                            "title": getattr(row, "title", ""),
+                            "description": getattr(row, "description", ""),
+                            "naics_code": getattr(row, "naics_code", ""),
+                            "set_aside_code": getattr(row, "set_aside_code", ""),
+                            "response_date": getattr(row, "response_date", ""),
+                            "posted_date": getattr(row, "posted_date", ""),
+                            "link": getattr(row, "link", ""),
+                            "pop_city": getattr(row, "pop_city", ""),
+                            "pop_state": getattr(row, "pop_state", ""),
+                        }
+
+                        # Extract locality
+                        locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
+                            getattr(row, "pop_state", ""))}
+                        if not _has_locality(locality):
+                            locality = _extract_locality(
+                                f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
+
+                        # Set status message
+                        if _has_locality(locality):
+                            where = ", ".join(
+                                [x for x in [locality.get("city", ""), locality.get("state", "")] if x])
+                            st.session_state.vendor_notes[
+                                nid] = f"Place of performance: {where}"
+                            st.session_state.vendor_errors.pop(nid, None)
+                        else:
+                            st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
+
+                        # Find vendors
+                        vendors_df, note = find_service_vendors_for_opportunity(
+                            sol_dict, OPENAI_API_KEY, SERP_API_KEY, top_n=3)
+
+                        if vendors_df is None or vendors_df.empty:
+                            loc_msg = ""
+                            if _has_locality(locality):
+                                where = ", ".join([x for x in [locality.get("city", ""), locality.get(
+                                    "state", "")] if x]) or locality.get("state", "")
+                                loc_msg = f" for the specified locality ({where})"
+                            st.session_state.vendor_errors[
+                                nid] = f"No service providers found{loc_msg}."
+                        else:
+                            st.session_state.vendor_errors.pop(nid, None)
+
+                        st.session_state.vendor_suggestions[nid] = vendors_df
+                        st.rerun()
+
+            with right:
+                # Display status messages and vendor results
+                note_msg = st.session_state.vendor_notes.get(nid)
+                if note_msg:
+                    st.caption(note_msg)
+
+                err_msg = st.session_state.vendor_errors.get(nid)
+                if err_msg:
+                    st.info(err_msg)
+
+                vend_df = st.session_state.vendor_suggestions.get(nid)
+                if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
+                    st.markdown("**Vendor candidates**")
+                    for j, v in vend_df.iterrows():
+                        raw_name = (v.get("name") or "").strip()
+                        website = (v.get("website") or "").strip()
+                        location = (v.get("location") or "").strip()
+                        reason_txt = (v.get("reason") or "").strip()
+
+                        display_name = raw_name or _company_name_from_url(
+                            website) or "Unnamed Vendor"
+                        if website:
+                            st.markdown(
+                                f"- **[{display_name}]({website})**")
+                        else:
+                            st.markdown(f"- **{display_name}**")
+                        if location:
+                            st.caption(location)
+                        if reason_txt:
+                            st.write(reason_txt)
+                else:
+                    if not err_msg:
+                        st.caption(
+                            "No vendors yet. Click the button to fetch.")
+                        
 def render_enhanced_score_results(ranked_results: List[Dict]):
     """Enhanced results display with detailed component scoring"""
     if not ranked_results:
