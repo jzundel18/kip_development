@@ -74,7 +74,35 @@ if missing:
 # =========================
 DB_URL = st.secrets.get("SUPABASE_DB_URL") or "sqlite:///app.db"
 
+# Add these lines to your session state initialization section (around line 75-85)
+# Find where you have the other session state initializations and add these:
 
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "profile" not in st.session_state:
+    st.session_state.profile = None
+if "view" not in st.session_state:
+    st.session_state.view = "main" if st.session_state.user else "auth"
+if "vendor_notes" not in st.session_state:
+    st.session_state.vendor_notes = {}
+if "sol_df" not in st.session_state:
+    st.session_state.sol_df = None
+if "sup_df" not in st.session_state:
+    st.session_state.sup_df = None
+
+# ADD THESE NEW LINES:
+if "iu_open_nid" not in st.session_state:
+    st.session_state.iu_open_nid = None
+if "iu_key_salt" not in st.session_state:
+    st.session_state.iu_key_salt = ""
+if "iu_mode" not in st.session_state:
+    st.session_state.iu_mode = ""
+if "iu_results" not in st.session_state:
+    st.session_state.iu_results = None
+if "vendor_suggestions" not in st.session_state:
+    st.session_state.vendor_suggestions = {}
+if "vendor_errors" not in st.session_state:
+    st.session_state.vendor_errors = {}
 @st.cache_resource
 def get_optimized_engine(db_url: str):
     """Create optimized database engine with connection pooling"""
