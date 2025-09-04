@@ -1,4 +1,5 @@
 # app.py - Cleaned and Organized Version
+from typing import List, Dict, Any
 import os
 import re
 import json
@@ -552,6 +553,9 @@ def ai_make_blurbs_fast(df: pd.DataFrame, api_key: str, model: str = "gpt-4o-min
 # =========================
 
 
+# Enhanced AI Matrix Scorer - Replace the existing AIMatrixScorer class in app.py
+
+
 @dataclass
 class MatrixComponent:
     key: str
@@ -559,41 +563,99 @@ class MatrixComponent:
     weight: float
     description: str
     hints: list[str]
+    scoring_method: str = "llm_assessment"
 
 
 class AIMatrixScorer:
-    """Uses LLM to score each component 0..1, then returns ONE weighted score (0..100)"""
+    """Enhanced LLM-based scorer using complete scoring matrix with 1-10 scale per component"""
 
     def __init__(self):
         self.components: list[MatrixComponent] = [
+            # Technical Capability (40% total)
             MatrixComponent(
-                key="tech_core", label="Technical Capability / Core Services", weight=25.0,
-                description="How well does the company's core capabilities align with what the solicitation needs?",
-                hints=['manufacturing', 'engineering', 'software', 'consulting',
-                       'maintenance', 'installation', 'repair', 'testing', 'inspection', 'training']
+                key="tech_core",
+                label="Core Services & Capabilities",
+                weight=25.0,
+                description="How well does the company's primary services and capabilities align with what the solicitation requires?",
+                hints=['manufacturing', 'engineering', 'software', 'consulting', 'maintenance',
+                       'installation', 'repair', 'testing', 'inspection', 'training'],
+                scoring_method="keyword_match_weighted"
             ),
             MatrixComponent(
-                key="tech_industry", label="Technical Capability / Industry Expertise", weight=20.0,
-                description="Does the company have relevant industry domain experience for this solicitation?",
+                key="tech_industry",
+                label="Industry Domain Expertise",
+                weight=20.0,
+                description="Does the company have relevant industry domain knowledge and experience for this type of work?",
                 hints=['aerospace', 'defense', 'medical', 'automotive', 'energy',
-                       'construction', 'IT', 'cybersecurity', 'telecommunications', 'logistics']
+                       'construction', 'IT', 'cybersecurity', 'telecommunications', 'logistics'],
+                scoring_method="keyword_match_weighted"
             ),
             MatrixComponent(
-                key="biz_size", label="Business Qualifications / Business Size", weight=10.0,
-                description="Does the company appear to qualify for any set-aside or business-size constraints?",
-                hints=['small business', '8A', 'WOSB',
-                       'EDWOSB', 'HUBZone', 'SDVOSB', 'SDB']
+                key="tech_standards",
+                label="Technical Standards & Certifications",
+                weight=15.0,
+                description="Does the company demonstrate compliance with relevant technical standards, certifications, and quality systems?",
+                hints=['ISO', 'CMMI', 'FedRAMP', 'NIST', 'ANSI', 'DOD',
+                       'FDA', 'FAA', 'security clearance', 'quality management'],
+                scoring_method="keyword_match_binary"
+            ),
+
+            # Business Qualifications (20% total)
+            MatrixComponent(
+                key="biz_size",
+                label="Business Size & Set-Aside Eligibility",
+                weight=10.0,
+                description="Does the company qualify for relevant set-aside categories or business size requirements?",
+                hints=['small business', '8A', 'WOSB', 'SDVOSB',
+                       'HUBZone', 'SDB', 'minority owned', 'veteran owned'],
+                scoring_method="set_aside_alignment"
             ),
             MatrixComponent(
-                key="geo", label="Geographic / Location Alignment", weight=8.0,
-                description="How well does the company match the place of performance or geographic constraints?",
+                key="biz_performance",
+                label="Government Contracting Experience",
+                weight=10.0,
+                description="Does the company have relevant past performance with government contracts and federal agencies?",
+                hints=['GSA', 'contract', 'federal', 'government',
+                       'prime contractor', 'subcontractor', 'SEWP', 'CIO-SP3', 'OASIS'],
+                scoring_method="keyword_match_weighted"
+            ),
+
+            # Geographic & NAICS (15% total)
+            MatrixComponent(
+                key="geo_location",
+                label="Geographic Location Match",
+                weight=8.0,
+                description="How well does the company's location align with the place of performance or geographic preferences?",
                 hints=['state', 'city', 'region',
-                       'nationwide', 'remote', 'on-site']
+                       'nationwide', 'remote', 'on-site'],
+                scoring_method="location_proximity"
             ),
             MatrixComponent(
-                key="naics", label="NAICS Alignment", weight=7.0,
-                description="How well does the company appear aligned to the NAICS area of the solicitation?",
-                hints=['NAICS']
+                key="naics_alignment",
+                label="NAICS Code Alignment",
+                weight=7.0,
+                description="How well does the company's business align with the solicitation's NAICS code requirements?",
+                hints=['NAICS'],
+                scoring_method="naics_match"
+            ),
+
+            # Financial & Innovation (5% total)
+            MatrixComponent(
+                key="financial_capacity",
+                label="Financial Capacity",
+                weight=3.0,
+                description="Does the company appear to have sufficient financial strength and capacity for this contract size?",
+                hints=['revenue', 'capacity', 'bonding', 'financial strength'],
+                scoring_method="financial_capacity"
+            ),
+            MatrixComponent(
+                key="innovation",
+                label="Technology Innovation",
+                weight=2.0,
+                description="Does the company demonstrate advanced technology capabilities or innovation relevant to the solicitation?",
+                hints=['AI', 'machine learning', 'automation', 'IoT',
+                       'cloud', 'digital transformation', 'emerging technology'],
+                scoring_method="keyword_match_binary"
             ),
         ]
         self.total_weight = sum(c.weight for c in self.components)
@@ -605,24 +667,44 @@ class AIMatrixScorer:
             "city": (company_profile.get("city") or "").strip(),
             "state": (company_profile.get("state") or "").strip(),
         }
-        components_view = [{"key": c.key, "label": c.label, "weight": c.weight,
-                            "description": c.description, "hints": c.hints} for c in self.components]
+
+        components_view = [
+            {
+                "key": c.key,
+                "label": c.label,
+                "weight": c.weight,
+                "description": c.description,
+                "hints": c.hints,
+                "scoring_method": c.scoring_method
+            } for c in self.components
+        ]
 
         system = (
-            "You are an expert federal contracting analyst. "
-            "Score how well each solicitation fits THIS company on the provided components. "
-            "For EACH solicitation, return ONLY JSON with the following structure:\n"
-            '{"results": [{"notice_id": "string", "components": [{"key":"tech_core","score":0..1,"why":"short reason"}, ...], "weighted_score": 0..100}, ...]}\n'
-            "Rules: Set each component score in [0,1]. The overall weighted_score is sum(score_i * weight_i) * 100 / total_weight. Keep reasons brief."
+            "You are an expert federal contracting analyst. Score how well each solicitation fits THIS company on ALL provided scoring components.\n"
+            "IMPORTANT SCORING RULES:\n"
+            "- Score each component on a 1-10 scale where:\n"
+            "  • 1-2: Very poor fit, major misalignment\n"
+            "  • 3-4: Poor fit, significant gaps\n"
+            "  • 5-6: Fair fit, some alignment\n"
+            "  • 7-8: Good fit, strong alignment\n"
+            "  • 9-10: Excellent fit, perfect alignment\n"
+            "- Consider the scoring_method hints but use your judgment\n"
+            "- For set-aside alignment: 9-10 if company qualifies for solicitation's set-aside, 5-6 if unrestricted, 1-3 if excluded\n"
+            "- For geographic: 8-10 if in same state/region, 6-7 if regional proximity, 4-5 if national capability, 1-3 if poor location fit\n"
+            "- For NAICS: 9-10 if exact/very close match, 6-8 if related industry, 3-5 if somewhat applicable, 1-2 if unrelated\n"
+            "- The weighted_score will be calculated as: sum(component_score * weight) / total_weight\n\n"
+            "Return ONLY valid JSON with this exact structure:\n"
+            '{"results": [{"notice_id": "string", "components": [{"key":"tech_core","score":1-10,"reasoning":"brief explanation"}, ...], "weighted_score": 0-100}]}\n'
+            "Keep reasoning concise (1 sentence max per component)."
         )
 
-        user = {
+        user_data = {
             "company": company_view,
-            "components": components_view,
+            "scoring_components": components_view,
             "solicitations": [{
                 "notice_id": str(x.get("notice_id", "")),
-                "title": (x.get("title") or "")[:300],
-                "description": (x.get("description") or "")[:1500],
+                "title": (x.get("title") or "")[:400],
+                "description": (x.get("description") or "")[:2000],
                 "naics_code": str(x.get("naics_code") or ""),
                 "set_aside_code": str(x.get("set_aside_code") or ""),
                 "response_date": str(x.get("response_date") or ""),
@@ -632,99 +714,235 @@ class AIMatrixScorer:
                 "pop_state": str(x.get("pop_state") or "")
             } for x in items],
         }
-        return [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user)}], components_view
+
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user_data)}
+        ]
+        return messages, components_view
 
     def score_batch(self, items: list[dict], company_profile: dict, api_key: str, model: str = "gpt-4o-mini") -> dict:
+        """Score a batch of solicitations using the enhanced matrix. Uses gpt-4o-mini for cost efficiency."""
         if not items:
             return {}
 
         client = OpenAI(api_key=api_key)
-        messages, _ = self._prompt_for_batch(company_profile, items)
+        messages, components_info = self._prompt_for_batch(
+            company_profile, items)
 
         try:
-            r = client.chat.completions.create(
-                model=model,
+            response = client.chat.completions.create(
+                model=model,  # Use gpt-4o-mini for cost efficiency with good accuracy
                 response_format={"type": "json_object"},
                 messages=messages,
-                temperature=0.2,
+                temperature=0.1,  # Lower temperature for more consistent scoring
+                max_tokens=3000,  # Adequate tokens for detailed scoring
             )
-            data = json.loads(r.choices[0].message.content or "{}")
-        except Exception:
+            data = json.loads(response.choices[0].message.content or "{}")
+        except Exception as e:
+            st.warning(f"AI scoring failed: {e}")
             return {}
 
-        out = {}
-        for row in (data.get("results") or []):
-            nid = str(row.get("notice_id", "")).strip()
-            comps = row.get("components") or []
-            ws = float(row.get("weighted_score", 0))
+        # Process results
+        scored_results = {}
+        for result in (data.get("results") or []):
+            notice_id = str(result.get("notice_id", "")).strip()
+            components = result.get("components") or []
+            weighted_score = float(result.get("weighted_score", 0))
 
+            # Build component breakdown with human-readable labels
             breakdown = []
-            by_key = {c.key: c for c in self.components}
-            for c in comps:
-                k = str(c.get("key", ""))
-                s = float(c.get("score", 0))
-                why = (c.get("why") or "").strip()
-                w = by_key.get(k).weight if k in by_key else 0.0
-                breakdown.append(
-                    {"key": k, "score": s, "why": why, "weight": w})
+            component_lookup = {c.key: c for c in self.components}
 
-            out[nid] = {"score": max(0.0, min(100.0, ws)),
-                        "breakdown": breakdown}
-        return out
+            for comp in components:
+                key = str(comp.get("key", ""))
+                # Clamp to 1-10
+                score = max(1, min(10, int(comp.get("score", 5))))
+                reasoning = (comp.get("reasoning")
+                             or comp.get("why") or "").strip()
+
+                if key in component_lookup:
+                    component_info = component_lookup[key]
+                    breakdown.append({
+                        "key": key,
+                        "label": component_info.label,  # Human-readable label
+                        "score": score,
+                        "reasoning": reasoning,
+                        "weight": component_info.weight,
+                        # Show contribution to final score
+                        "weighted_contribution": (score * component_info.weight / self.total_weight) * 10
+                    })
+
+            # Recalculate weighted score to ensure accuracy
+            if breakdown:
+                calculated_score = sum(
+                    comp["score"] * comp["weight"] for comp in breakdown) / self.total_weight * 10
+                final_score = max(0.0, min(100.0, calculated_score))
+            else:
+                final_score = max(0.0, min(100.0, weighted_score))
+
+            scored_results[notice_id] = {
+                "score": final_score,
+                "breakdown": breakdown
+            }
+
+        return scored_results
 
 
+# Enhanced rendering function for the new scoring breakdown
+def render_enhanced_score_results(ranked_results: List[Dict]):
+    """Enhanced results display with detailed component scoring"""
+    if not ranked_results:
+        st.info("No results to display")
+        return
+
+    st.write(f"**Found {len(ranked_results)} ranked matches**")
+
+    for idx, item in enumerate(ranked_results):
+        nid = str(item.get('notice_id', ''))
+        title = item.get('title', 'Untitled')
+        score = float(item.get('score', 0.0))
+        blurb = (item.get('blurb') or "").strip()
+
+        # Color-code the score
+        if score >= 80:
+            score_color = "🟢"
+        elif score >= 60:
+            score_color = "🟡"
+        else:
+            score_color = "🔴"
+
+        header = f"#{idx+1}: {title} — {score_color} Score: {score:.1f}/100"
+        with st.expander(header, expanded=(idx == 0)):
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                st.write(f"**Notice ID:** {nid}")
+                if blurb:
+                    st.write(f"**Summary:** {blurb}")
+                st.markdown(f"**[View on SAM.gov]({item.get('link','')})**")
+
+            with col2:
+                # Overall score with color coding
+                if score >= 80:
+                    st.success(f"Overall Fit Score: {score:.1f}/100")
+                elif score >= 60:
+                    st.warning(f"Overall Fit Score: {score:.1f}/100")
+                else:
+                    st.error(f"Overall Fit Score: {score:.1f}/100")
+
+            # Detailed component breakdown
+            st.subheader("📊 Detailed Scoring Breakdown")
+            breakdown = item.get("breakdown") or []
+
+            if breakdown:
+                # Create a more visual breakdown
+                for comp in breakdown:
+                    score_val = comp.get('score', 0)
+                    label = comp.get('label', comp.get('key', 'Unknown'))
+                    reasoning = comp.get('reasoning', 'No reasoning provided')
+                    weight = comp.get('weight', 0)
+                    contribution = comp.get('weighted_contribution', 0)
+
+                    # Score bar visualization
+                    score_bar = "█" * int(score_val) + \
+                        "░" * (10 - int(score_val))
+
+                    # Color code the score
+                    if score_val >= 8:
+                        score_emoji = "🟢"
+                    elif score_val >= 6:
+                        score_emoji = "🟡"
+                    else:
+                        score_emoji = "🔴"
+
+                    with st.container():
+                        st.markdown(f"""
+                        **{label}** {score_emoji}  
+                        Score: {score_val}/10 `{score_bar}` (Weight: {weight}% → +{contribution:.1f} pts)  
+                        *{reasoning}*
+                        """)
+                        st.markdown("---")
+            else:
+                st.info("No detailed breakdown available")
+
+
+# Replace the existing ai_matrix_score_solicitations function
 def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_key: str,
                                   top_k: int = 10, model: str = "gpt-4o-mini", max_candidates: int = 60) -> list[dict]:
-    """Uses embeddings pre-trim + AI matrix scorer to produce ONE score (0..100) per solicitation."""
+    """Enhanced matrix scoring with complete scoring components and optimized processing"""
     if df is None or df.empty:
         return []
 
+    # Pre-filter with embeddings for speed
     company_desc = (company_profile.get("description") or "").strip()
-    pretrim = ai_downselect_df(company_desc, df, api_key, top_k=min(
-        max_candidates, max(20, 12*int(top_k))))
+    if company_desc:
+        # Use a more aggressive pre-filter to reduce LLM calls
+        pretrim = ai_downselect_df(company_desc, df, api_key, top_k=min(
+            max_candidates, max(30, 3 * int(top_k))))  # More aggressive pre-filtering
+    else:
+        pretrim = df.head(max_candidates)
+
     if pretrim.empty:
         return []
 
+    # Prepare data for scoring
     cols = ["notice_id", "title", "description", "naics_code", "set_aside_code",
             "response_date", "posted_date", "link", "pop_city", "pop_state"]
-    use = pretrim[[c for c in cols if c in pretrim.columns]].copy()
+    use_df = pretrim[[c for c in cols if c in pretrim.columns]].copy()
 
+    # Score in smaller batches for better reliability and speed
     scorer = AIMatrixScorer()
     results: dict[str, dict] = {}
-    batch_size = 25
-    for i in range(0, len(use), batch_size):
-        part = use.iloc[i:i+batch_size].to_dict(orient="records")
-        scored = scorer.score_batch(
-            part, company_profile=company_profile, api_key=api_key, model=model)
-        results.update(scored)
+    batch_size = 15  # Smaller batches for faster, more reliable processing
+
+    for i in range(0, len(use_df), batch_size):
+        batch_df = use_df.iloc[i:i+batch_size]
+        batch_items = batch_df.to_dict(orient="records")
+
+        try:
+            batch_results = scorer.score_batch(
+                batch_items, company_profile=company_profile,
+                api_key=api_key, model=model)
+            results.update(batch_results)
+        except Exception as e:
+            st.warning(f"Batch {i//batch_size + 1} scoring failed: {e}")
+            continue
 
     if not results:
         return []
 
-    df_scored = pretrim.copy()
-    df_scored["__nid"] = df_scored["notice_id"].astype(str)
-    df_scored["__score"] = df_scored["__nid"].map(
+    # Combine results with original data
+    enhanced_df = pretrim.copy()
+    enhanced_df["__nid"] = enhanced_df["notice_id"].astype(str)
+    enhanced_df["__score"] = enhanced_df["__nid"].map(
         lambda nid: results.get(nid, {}).get("score", 0.0))
-    df_scored["__breakdown"] = df_scored["__nid"].map(
+    enhanced_df["__breakdown"] = enhanced_df["__nid"].map(
         lambda nid: results.get(nid, {}).get("breakdown", []))
 
-    df_scored = df_scored.sort_values("__score", ascending=False).head(
+    # Sort and limit results
+    enhanced_df = enhanced_df.sort_values("__score", ascending=False).head(
         int(top_k)).reset_index(drop=True)
 
+    # Generate blurbs for top results
     blurbs = ai_make_blurbs_fast(
-        df_scored, api_key, model="gpt-4o-mini", max_items=min(50, len(df_scored)))
-    out = []
-    for r in df_scored.to_dict(orient="records"):
-        nid = str(r.get("notice_id", ""))
-        out.append({
+        enhanced_df, api_key, model="gpt-4o-mini",
+        max_items=min(20, len(enhanced_df)))
+
+    # Format final output
+    final_results = []
+    for _, row in enhanced_df.iterrows():
+        nid = str(row.get("notice_id", ""))
+        final_results.append({
             "notice_id": nid,
-            "title": r.get("title") or "Untitled",
-            "link": make_sam_public_url(nid, r.get("link", "")),
-            "score": float(r.get("__score", 0.0)),
-            "breakdown": r.get("__breakdown", []),
-            "blurb": blurbs.get(nid, r.get("title", ""))
+            "title": row.get("title") or "Untitled",
+            "link": make_sam_public_url(nid, row.get("link", "")),
+            "score": float(row.get("__score", 0.0)),
+            "breakdown": row.get("__breakdown", []),
+            "blurb": blurbs.get(nid, row.get("title", ""))
         })
-    return out
+
+    return final_results
 
 
 def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, company_profile: Dict[str, str], api_key: str, top_k: int = 10) -> list[dict]:
@@ -845,7 +1063,7 @@ def render_sidebar_header():
         st.markdown("---")
 
 
-def render_single_score_results(ranked_results: List[Dict]):
+def render_score_results(ranked_results: List[Dict]):
     if not ranked_results:
         st.info("No results to display")
         return
@@ -1153,7 +1371,7 @@ with tab1:
 
                             st.success(
                                 f"Top {len(top_df)} matches by company fit:")
-                            render_single_score_results(enhanced_ranked)
+                            render_enhanced_score_results(enhanced_ranked)
 
                             st.session_state.topn_df = top_df.reset_index(
                                 drop=True)
