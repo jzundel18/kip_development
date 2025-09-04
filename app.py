@@ -567,7 +567,14 @@ class MatrixComponent:
 
 
 # Enhanced AI Matrix Scorer - Replace the existing AIMatrixScorer class in app.py
+# Complete replacement for your AI Matrix Scorer section in app.py
+# Replace everything from the @dataclass MatrixComponent line through the ai_score_and_rank_solicitations_by_fit function
 
+from dataclasses import dataclass
+from typing import List, Dict, Any
+import json
+import streamlit as st
+from openai import OpenAI
 
 @dataclass
 class MatrixComponent:
@@ -577,7 +584,6 @@ class MatrixComponent:
     description: str
     hints: list[str]
     scoring_method: str = "llm_assessment"
-
 
 class AIMatrixScorer:
     """Enhanced LLM-based scorer using complete scoring matrix with 1-10 scale per component"""
@@ -681,48 +687,27 @@ class AIMatrixScorer:
             "state": (company_profile.get("state") or "").strip(),
         }
 
-        components_view = [
-            {
-                "key": c.key,
-                "label": c.label,
-                "weight": c.weight,
-                "description": c.description,
-                "hints": c.hints,
-                "scoring_method": c.scoring_method
-            } for c in self.components
-        ]
-
         system = (
-            "You are an expert federal contracting analyst. Score how well each solicitation fits THIS company on ALL provided scoring components.\n"
-            "IMPORTANT SCORING RULES:\n"
-            "- Score each component on a 1-10 scale where:\n"
-            "  • 1-2: Very poor fit, major misalignment\n"
-            "  • 3-4: Poor fit, significant gaps\n"
-            "  • 5-6: Fair fit, some alignment\n"
-            "  • 7-8: Good fit, strong alignment\n"
-            "  • 9-10: Excellent fit, perfect alignment\n"
-            "- Consider the scoring_method hints but use your judgment\n"
-            "- For set-aside alignment: 9-10 if company qualifies for solicitation's set-aside, 5-6 if unrestricted, 1-3 if excluded\n"
-            "- For geographic: 8-10 if in same state/region, 6-7 if regional proximity, 4-5 if national capability, 1-3 if poor location fit\n"
-            "- For NAICS: 9-10 if exact/very close match, 6-8 if related industry, 3-5 if somewhat applicable, 1-2 if unrelated\n"
-            "- The weighted_score will be calculated as: sum(component_score * weight) / total_weight\n\n"
-            "Return ONLY valid JSON with this exact structure:\n"
-            '{"results": [{"notice_id": "string", "components": [{"key":"tech_core","score":1-10,"reasoning":"brief explanation"}, ...], "weighted_score": 0-100}]}\n'
-            "Keep reasoning concise (1 sentence max per component)."
+            "You are an expert federal contracting analyst. Score how well each solicitation fits this company.\n\n"
+            "SCORING RULES:\n"
+            "- Score each component 1-10 (1=very poor fit, 5=fair fit, 10=excellent fit)\n"
+            "- Set-aside: 9-10 if company qualifies, 5-6 if unrestricted, 1-3 if excluded\n"
+            "- Geographic: 8-10 same state, 6-7 regional, 4-5 national, 1-3 poor location\n"
+            "- NAICS: 9-10 exact match, 6-8 related, 3-5 applicable, 1-2 unrelated\n\n"
+            "Return valid JSON only:\n"
+            '{"results":[{"notice_id":"ID","components":[{"key":"tech_core","score":7,"reasoning":"brief reason"}],"weighted_score":75}]}\n\n'
+            "Keep reasoning under 10 words per component."
         )
 
         user_data = {
             "company": company_view,
-            "scoring_components": components_view,
+            "components": [{"key": c.key, "label": c.label, "weight": c.weight} for c in self.components],
             "solicitations": [{
                 "notice_id": str(x.get("notice_id", "")),
-                "title": (x.get("title") or "")[:400],
-                "description": (x.get("description") or "")[:2000],
+                "title": (x.get("title") or "")[:250],  # Shorter for token efficiency
+                "description": (x.get("description") or "")[:800],  # Much shorter
                 "naics_code": str(x.get("naics_code") or ""),
                 "set_aside_code": str(x.get("set_aside_code") or ""),
-                "response_date": str(x.get("response_date") or ""),
-                "posted_date": str(x.get("posted_date") or ""),
-                "link": str(x.get("link") or ""),
                 "pop_city": str(x.get("pop_city") or ""),
                 "pop_state": str(x.get("pop_state") or "")
             } for x in items],
@@ -732,29 +717,50 @@ class AIMatrixScorer:
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(user_data)}
         ]
-        return messages, components_view
+        return messages, []
 
     def score_batch(self, items: list[dict], company_profile: dict, api_key: str, model: str = "gpt-4o-mini") -> dict:
-        """Score a batch of solicitations using the enhanced matrix. Uses gpt-4o-mini for cost efficiency."""
+        """Score a batch of solicitations using the enhanced matrix with robust error handling."""
         if not items:
             return {}
 
         client = OpenAI(api_key=api_key)
-        messages, components_info = self._prompt_for_batch(
-            company_profile, items)
+        messages, _ = self._prompt_for_batch(company_profile, items)
 
         try:
             response = client.chat.completions.create(
-                model=model,  # Use gpt-4o-mini for cost efficiency with good accuracy
+                model=model,
                 response_format={"type": "json_object"},
                 messages=messages,
-                temperature=0.1,  # Lower temperature for more consistent scoring
-                max_tokens=3000,  # Adequate tokens for detailed scoring
+                temperature=0.1,
+                max_tokens=3000,
+                timeout=45  # Increased timeout
             )
-            data = json.loads(response.choices[0].message.content or "{}")
+            content = response.choices[0].message.content or "{}"
+            
+            # Robust JSON cleaning
+            content = content.strip()
+            
+            # Find the actual JSON boundaries
+            start = content.find('{')
+            end = content.rfind('}') + 1
+            
+            if start >= 0 and end > start:
+                content = content[start:end]
+            else:
+                raise json.JSONDecodeError("No valid JSON found", content, 0)
+            
+            # Try to fix common JSON issues
+            content = self._fix_json_issues(content)
+            
+            data = json.loads(content)
+            
+        except json.JSONDecodeError as e:
+            st.warning(f"JSON parsing failed at position {e.pos}: {str(e)[:100]}...")
+            return self._fallback_scoring(items, company_profile)
         except Exception as e:
-            st.warning(f"AI scoring failed: {e}")
-            return {}
+            st.warning(f"AI scoring failed: {str(e)[:100]}...")
+            return self._fallback_scoring(items, company_profile)
 
         # Process results
         scored_results = {}
@@ -769,20 +775,17 @@ class AIMatrixScorer:
 
             for comp in components:
                 key = str(comp.get("key", ""))
-                # Clamp to 1-10
-                score = max(1, min(10, int(comp.get("score", 5))))
-                reasoning = (comp.get("reasoning")
-                             or comp.get("why") or "").strip()
+                score = max(1, min(10, int(float(comp.get("score", 5)))))  # Robust score extraction
+                reasoning = str(comp.get("reasoning") or comp.get("why") or "").strip()
 
                 if key in component_lookup:
                     component_info = component_lookup[key]
                     breakdown.append({
                         "key": key,
-                        "label": component_info.label,  # Human-readable label
+                        "label": component_info.label,
                         "score": score,
                         "reasoning": reasoning,
                         "weight": component_info.weight,
-                        # Show contribution to final score
                         "weighted_contribution": (score * component_info.weight / self.total_weight) * 10
                     })
 
@@ -801,6 +804,102 @@ class AIMatrixScorer:
 
         return scored_results
 
+    def _fix_json_issues(self, content: str) -> str:
+        """Attempt to fix common JSON formatting issues"""
+        # Remove any trailing commas before closing braces/brackets
+        content = re.sub(r',(\s*[}\]])', r'\1', content)
+        
+        # Fix unescaped quotes in strings (basic attempt)
+        # This is a simple heuristic and may not catch all cases
+        lines = content.split('\n')
+        fixed_lines = []
+        
+        for line in lines:
+            # If line contains "reasoning" or "why", try to fix unescaped quotes
+            if '"reasoning"' in line or '"why"' in line:
+                # Find the value part after the colon
+                if ':' in line:
+                    key_part, value_part = line.split(':', 1)
+                    # If the value part has unescaped quotes, try to fix them
+                    if value_part.count('"') > 2:  # More than just opening and closing quotes
+                        # Simple fix: escape internal quotes
+                        value_part = value_part.replace('"', '\\"', 1)  # Don't replace opening quote
+                        value_part = value_part[::-1].replace('"', '\\"', 1)[::-1]  # Don't replace closing quote
+                        line = key_part + ':' + value_part
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
+
+    def _fallback_scoring(self, items: list[dict], company_profile: dict) -> dict:
+        """Simple fallback scoring when AI fails"""
+        company_desc = (company_profile.get("description") or "").lower()
+        company_city = (company_profile.get("city") or "").lower()
+        company_state = (company_profile.get("state") or "").upper()
+        
+        fallback_results = {}
+        
+        for item in items:
+            notice_id = str(item.get("notice_id", ""))
+            title = (item.get("title") or "").lower()
+            description = (item.get("description") or "").lower()
+            naics = str(item.get("naics_code") or "")
+            set_aside = (item.get("set_aside_code") or "").lower()
+            pop_city = (item.get("pop_city") or "").lower()
+            pop_state = (item.get("pop_state") or "").upper()
+            
+            # Simple heuristic scoring for fallback
+            scores = []
+            
+            # Core services (basic keyword matching)
+            core_keywords = ['manufacturing', 'engineering', 'software', 'consulting', 'maintenance', 'installation']
+            core_score = 6  # default fair
+            if any(kw in company_desc for kw in core_keywords) and any(kw in title + " " + description for kw in core_keywords):
+                core_score = 8
+            scores.append(("tech_core", "Core Services & Capabilities", core_score, 25.0, "Keyword matching"))
+            
+            # Industry expertise (simplified)
+            industry_keywords = ['aerospace', 'defense', 'medical', 'automotive', 'IT', 'construction']
+            industry_score = 5
+            if any(kw in company_desc for kw in industry_keywords) and any(kw in title + " " + description for kw in industry_keywords):
+                industry_score = 7
+            scores.append(("tech_industry", "Industry Domain Expertise", industry_score, 20.0, "Industry matching"))
+            
+            # Add remaining components with default scores
+            remaining_components = [
+                ("tech_standards", "Technical Standards & Certifications", 5, 15.0),
+                ("biz_size", "Business Size & Set-Aside Eligibility", 6, 10.0),
+                ("biz_performance", "Government Contracting Experience", 5, 10.0),
+                ("geo_location", "Geographic Location Match", 8 if pop_state == company_state else 5, 8.0),
+                ("naics_alignment", "NAICS Code Alignment", 6, 7.0),
+                ("financial_capacity", "Financial Capacity", 6, 3.0),
+                ("innovation", "Technology Innovation", 5, 2.0),
+            ]
+            
+            for key, label, score, weight in remaining_components:
+                scores.append((key, label, score, weight, "Fallback heuristic"))
+            
+            # Build breakdown
+            breakdown = []
+            total_weighted = 0
+            for key, label, score, weight, reasoning in scores:
+                breakdown.append({
+                    "key": key,
+                    "label": label,
+                    "score": score,
+                    "reasoning": reasoning,
+                    "weight": weight,
+                    "weighted_contribution": (score * weight / self.total_weight) * 10
+                })
+                total_weighted += score * weight
+            
+            final_score = (total_weighted / self.total_weight) * 10
+            
+            fallback_results[notice_id] = {
+                "score": max(0.0, min(100.0, final_score)),
+                "breakdown": breakdown
+            }
+        
+        return fallback_results
 
 # Enhanced rendering function for the new scoring breakdown
 def render_enhanced_score_results(ranked_results: List[Dict]):
@@ -879,7 +978,6 @@ def render_enhanced_score_results(ranked_results: List[Dict]):
             else:
                 st.info("No detailed breakdown available")
 
-
 # Replace the existing ai_matrix_score_solicitations function
 def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_key: str,
                                   top_k: int = 10, model: str = "gpt-4o-mini", max_candidates: int = 60) -> list[dict]:
@@ -892,7 +990,7 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
     if company_desc:
         # Use a more aggressive pre-filter to reduce LLM calls
         pretrim = ai_downselect_df(company_desc, df, api_key, top_k=min(
-            max_candidates, max(30, 3 * int(top_k))))  # More aggressive pre-filtering
+            max_candidates, max(30, 3 * int(top_k))))
     else:
         pretrim = df.head(max_candidates)
 
@@ -904,10 +1002,10 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
             "response_date", "posted_date", "link", "pop_city", "pop_state"]
     use_df = pretrim[[c for c in cols if c in pretrim.columns]].copy()
 
-    # Score in smaller batches for better reliability and speed
+    # Score in very small batches for reliability
     scorer = AIMatrixScorer()
     results: dict[str, dict] = {}
-    batch_size = 8  # Much smaller batches to avoid JSON parsing issues
+    batch_size = 3  # Very small batches to avoid JSON issues
 
     for i in range(0, len(use_df), batch_size):
         batch_df = use_df.iloc[i:i+batch_size]
@@ -956,12 +1054,6 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
         })
 
     return final_results
-
-
-# Also need to update the call in Tab 1 - find this line:
-# render_single_score_results(enhanced_ranked)
-# and replace it with:
-# render_enhanced_score_results(enhanced_ranked)
 
 def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, company_profile: Dict[str, str], api_key: str, top_k: int = 10) -> list[dict]:
     prof = dict(company_profile or {})
