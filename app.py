@@ -27,6 +27,240 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Any
 import pandas as pd
 import numpy as np
+# ===== AI-driven Matrix Scorer =====
+from dataclasses import dataclass
+
+
+@dataclass
+class MatrixComponent:
+    key: str           # unique stable id, e.g. "Technical Capability_Core Services"
+    label: str         # human display
+    weight: float      # points (sum across components -> 100 when normalized)
+    description: str   # what to evaluate (clear instructions)
+    hints: list[str]   # example keywords/anchors (model may use or ignore)
+
+
+class AIMatrixScorer:
+    """
+    Uses the LLM to score each component 0..1, then returns ONE weighted score (0..100)
+    and an optional breakdown (kept internal / not shown if you only want one number).
+    """
+
+    def __init__(self):
+        self.components: list[MatrixComponent] = [
+            MatrixComponent(
+                key="tech_core",
+                label="Technical Capability / Core Services",
+                weight=25.0,
+                description=("How well does the company's core capabilities align with what the solicitation needs? "
+                             "Focus on deliverables, services, and tangible skills described."),
+                hints=['manufacturing', 'engineering', 'software', 'consulting',
+                       'maintenance', 'installation', 'repair', 'testing', 'inspection', 'training']
+            ),
+            MatrixComponent(
+                key="tech_industry",
+                label="Technical Capability / Industry Expertise",
+                weight=20.0,
+                description=(
+                    "Does the company have relevant industry domain experience for this solicitation?"),
+                hints=['aerospace', 'defense', 'medical', 'automotive', 'energy',
+                       'construction', 'IT', 'cybersecurity', 'telecommunications', 'logistics']
+            ),
+            MatrixComponent(
+                key="biz_size",
+                label="Business Qualifications / Business Size or Set-Aside Fit",
+                weight=10.0,
+                description=("Does the company appear to qualify for any set-aside or business-size constraints implied by the solicitation? "
+                             "If unrestricted/none, score neutral (≈0.5)."),
+                hints=['small business', '8A', 'WOSB',
+                       'EDWOSB', 'HUBZone', 'SDVOSB', 'SDB']
+            ),
+            MatrixComponent(
+                key="geo",
+                label="Geographic / Location Alignment",
+                weight=8.0,
+                description=("How well does the company match the place of performance or geographic constraints? "
+                             "If nationwide/remote acceptable, partial credit (~0.7)."),
+                hints=['state', 'city', 'region',
+                       'nationwide', 'remote', 'on-site']
+            ),
+            MatrixComponent(
+                key="naics",
+                label="NAICS Alignment",
+                weight=7.0,
+                description=("How well does the company appear aligned to the NAICS area of the solicitation? "
+                             "Infer from narrative if needed."),
+                hints=['NAICS']
+            ),
+        ]
+        self.total_weight = sum(c.weight for c in self.components)
+
+    def _prompt_for_batch(self, company_profile: dict, items: list[dict]) -> tuple[list[dict], list[dict]]:
+        """
+        Build messages for Chat Completions with response_format=json_object.
+        """
+        # Keep company text compact for the model
+        company_view = {
+            "company_name": (company_profile.get("company_name") or "").strip(),
+            "description": (company_profile.get("description") or "").strip(),
+            "city": (company_profile.get("city") or "").strip(),
+            "state": (company_profile.get("state") or "").strip(),
+        }
+        components_view = [
+            {
+                "key": c.key,
+                "label": c.label,
+                "weight": c.weight,
+                "description": c.description,
+                "hints": c.hints,
+            } for c in self.components
+        ]
+
+        system = (
+            "You are an expert federal contracting analyst. "
+            "Score how well each solicitation fits THIS company on the provided components. "
+            "For EACH solicitation, return ONLY JSON with the following structure:\n"
+            "{\n"
+            '  "results": [\n'
+            '    {\n'
+            '      "notice_id": "string",\n'
+            '      "components": [{"key":"tech_core","score":0..1,"why":"short reason"}, ...],\n'
+            '      "weighted_score": 0..100\n'
+            "    }, ...\n"
+            "  ]\n"
+            "}\n"
+            "Rules:\n"
+            "- Set each component score in [0,1] (0=no fit, 1=perfect fit). Avoid 1.0 unless clearly perfect.\n"
+            "- The overall weighted_score is sum(score_i * weight_i) * 100 / total_weight.\n"
+            "- Be consistent. Keep reasons brief and concrete."
+        )
+
+        user = {
+            "company": company_view,
+            "components": components_view,
+            "solicitations": [
+                {
+                    "notice_id": str(x.get("notice_id", "")),
+                    "title": (x.get("title") or "")[:300],
+                    "description": (x.get("description") or "")[:1500],
+                    "naics_code": str(x.get("naics_code") or ""),
+                    "set_aside_code": str(x.get("set_aside_code") or ""),
+                    "response_date": str(x.get("response_date") or ""),
+                    "posted_date": str(x.get("posted_date") or ""),
+                    "link": str(x.get("link") or ""),
+                    "pop_city": str(x.get("pop_city") or ""),
+                    "pop_state": str(x.get("pop_state") or "")
+                } for x in items
+            ],
+        }
+        return [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user)}], components_view
+
+    def score_batch(self, items: list[dict], company_profile: dict, api_key: str, model: str = "gpt-4o-mini") -> dict:
+        """
+        items: [{notice_id,title,description,naics_code,set_aside_code,...}]
+        returns: {notice_id: {"score": float 0..100, "breakdown":[{"key","score","why","weight"}]}}
+        """
+        if not items:
+            return {}
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        messages, _ = self._prompt_for_batch(company_profile, items)
+        try:
+            r = client.chat.completions.create(
+                model=model,
+                response_format={"type": "json_object"},
+                messages=messages,
+                temperature=0.2,
+            )
+            data = json.loads(r.choices[0].message.content or "{}")
+        except Exception as e:
+            # hard fail -> return empty; caller can fallback if desired
+            return {}
+
+        out = {}
+        for row in (data.get("results") or []):
+            nid = str(row.get("notice_id", "")).strip()
+            comps = row.get("components") or []
+            ws = float(row.get("weighted_score", 0))
+            # ensure we attach weights to breakdown for transparency (even if you won’t display them)
+            breakdown = []
+            by_key = {c.key: c for c in self.components}
+            for c in comps:
+                k = str(c.get("key", ""))
+                s = float(c.get("score", 0))
+                why = (c.get("why") or "").strip()
+                w = by_key.get(k).weight if k in by_key else 0.0
+                breakdown.append(
+                    {"key": k, "score": s, "why": why, "weight": w})
+            out[nid] = {"score": max(0.0, min(100.0, ws)),
+                        "breakdown": breakdown}
+        return out
+    
+def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_key: str,
+                                      top_k: int = 10, model: str = "gpt-4o-mini",
+                                      max_candidates: int = 60) -> list[dict]:
+    """
+    Uses embeddings pre-trim + AI matrix scorer to produce ONE score (0..100) per solicitation.
+    Returns ranked list: [{"notice_id","score","breakdown","title","link","blurb"}]
+    """
+    if df is None or df.empty:
+        return []
+
+    # Pre-trim with your existing embedding downselect so prompts stay small
+    company_desc = (company_profile.get("description") or "").strip()
+    pretrim = ai_downselect_df(company_desc, df, api_key, top_k=min(
+        max_candidates, max(20, 12*int(top_k))))
+    if pretrim.empty:
+        return []
+
+    # Prepare items for the scorer (include PoP fields if present)
+    cols = [
+        "notice_id", "title", "description", "naics_code", "set_aside_code",
+        "response_date", "posted_date", "link", "pop_city", "pop_state"
+    ]
+    use = pretrim[[c for c in cols if c in pretrim.columns]].copy()
+
+    scorer = AIMatrixScorer()
+    results: dict[str, dict] = {}
+    batch_size = 25
+    for i in range(0, len(use), batch_size):
+        part = use.iloc[i:i+batch_size].to_dict(orient="records")
+        scored = scorer.score_batch(
+            part, company_profile=company_profile, api_key=api_key, model=model)
+        results.update(scored)
+
+    if not results:
+        return []
+
+    # Attach titles/links; generate blurbs (short)
+    df_scored = pretrim.copy()
+    df_scored["__nid"] = df_scored["notice_id"].astype(str)
+    df_scored["__score"] = df_scored["__nid"].map(
+        lambda nid: results.get(nid, {}).get("score", 0.0))
+    df_scored["__breakdown"] = df_scored["__nid"].map(
+        lambda nid: results.get(nid, {}).get("breakdown", []))
+
+    # Keep best top_k
+    df_scored = df_scored.sort_values("__score", ascending=False).head(
+        int(top_k)).reset_index(drop=True)
+
+    # add blurbs and normalized public link
+    blurbs = ai_make_blurbs(
+        df_scored, api_key, model="gpt-4o-mini", max_items=min(50, len(df_scored)))
+    out = []
+    for r in df_scored.to_dict(orient="records"):
+        nid = str(r.get("notice_id", ""))
+        out.append({
+            "notice_id": nid,
+            "title": r.get("title") or "Untitled",
+            "link": make_sam_public_url(nid, r.get("link", "")),
+            "score": float(r.get("__score", 0.0)),
+            # you won’t show this unless you want to
+            "breakdown": r.get("__breakdown", []),
+            "blurb": blurbs.get(nid, r.get("title", ""))
+        })
+    return out
 
 class MatchScoringSystem:
     def __init__(self, scoring_matrix_path: str = "scoring_matrix.csv"):
@@ -371,101 +605,100 @@ class MatchScoringSystem:
         return '\n'.join(output)
 
 
-# Enhanced AI functions that now include scoring
-def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, company_profile: Dict[str, str], api_key: str, top_k: int = 10) -> list[dict]:
-    """
-    Enhanced version that includes detailed scoring matrix
-    """
-    scorer = MatchScoringSystem()
-    
-    # Get AI ranking first (existing functionality)
-    ranked = ai_rank_solicitations_by_fit(
+def ai_score_and_rank_solicitations_by_fit(
+    df: pd.DataFrame,
+    company_desc: str,
+    company_profile: Dict[str, str],
+    api_key: str,
+    top_k: int = 10
+) -> list[dict]:
+    # Ensure description is in the profile for the scorer
+    prof = dict(company_profile or {})
+    prof["description"] = company_desc or prof.get("description", "") or ""
+    return ai_matrix_score_solicitations(
         df=df,
-        company_desc=company_desc,
+        company_profile=prof,
         api_key=api_key,
-        top_k=int(top_k),           # use the function arg, not top_k_select
-        max_candidates=60,          # optional, keep or remove
-        model="gpt-4o-mini"         # optional, keep or remove
-    )    
-    # Add detailed scoring to each result
-    enhanced_results = []
-    for item in ranked:
-        notice_id = str(item.get('notice_id', ''))
-        
-        # Find the corresponding solicitation row
-        sol_row = df[df['notice_id'].astype(str) == notice_id]
-        if sol_row.empty:
-            continue
-        
-        sol_dict = sol_row.iloc[0].to_dict()
-        
-        # Calculate detailed score
-        matrix_score, breakdown = scorer.score_match(company_profile, sol_dict)
-        
-        # Add scoring details to the result
-        enhanced_item = item.copy()
-        enhanced_item['matrix_score'] = matrix_score
-        enhanced_item['scoring_breakdown'] = breakdown
-        enhanced_item['breakdown_text'] = scorer.format_scoring_breakdown(breakdown)
-        
-        enhanced_results.append(enhanced_item)
-    
-    return enhanced_results
+        top_k=int(top_k),
+        model="gpt-4o-mini",
+        max_candidates=60
+    )
 
-
-# Modified version of your existing ranking display function
-def render_enhanced_solicitation_results(ranked_results: List[Dict], reason_by_id: Dict[str, str]):
-    """
-    Enhanced version that displays scoring matrix results
-    """
+def render_single_score_results(ranked_results: List[Dict]):
     if not ranked_results:
         st.info("No results to display")
         return
-    
+
     st.write(f"**Found {len(ranked_results)} ranked matches**")
-    
     for idx, item in enumerate(ranked_results):
-        notice_id = str(item.get('notice_id', ''))
+        nid = str(item.get('notice_id', ''))
         title = item.get('title', 'Untitled')
-        ai_score = item.get('score', 0)
-        matrix_score = item.get('matrix_score', 0)
-        breakdown_text = item.get('breakdown_text', '')
-        
-        # Enhanced header with both scores
-        header = f"#{idx+1}: {title} (AI: {ai_score}%, Matrix: {matrix_score:.1f}%)"
-        
+        score = float(item.get('score', 0.0))  # the ONE score we keep
+        blurb = (item.get('blurb') or "").strip()
+
+        header = f"#{idx+1}: {title} — Score: {score:.1f}"
         with st.expander(header, expanded=(idx == 0)):
-            # Basic info
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.write(f"**Notice ID:** {notice_id}")
-                if 'blurb' in item:
-                    st.write(f"**Summary:** {item['blurb']}")
-                
-                reason = reason_by_id.get(notice_id, item.get('reason', ''))
-                if reason:
-                    st.write(f"**AI Analysis:** {reason}")
-                
-                # SAM.gov link
-                link = make_sam_public_url(notice_id, item.get('link', ''))
-                st.markdown(f"**[View on SAM.gov]({link})**")
-            
-            with col2:
-                # Score visualization
-                st.metric("AI Fit Score", f"{ai_score}%")
-                st.metric("Matrix Score", f"{matrix_score:.1f}%")
-            
-            # Detailed scoring breakdown
-            if breakdown_text:
-                st.subheader("Detailed Scoring Matrix")
-                st.text(breakdown_text)
-            
-            # Add separator
-            if idx < len(ranked_results) - 1:
-                st.divider()
+            left, right = st.columns([2, 1])
+            with left:
+                st.write(f"**Notice ID:** {nid}")
+                if blurb:
+                    st.write(f"**Summary:** {blurb}")
+                st.markdown(f"**[View on SAM.gov]({item.get('link','')})**")
+            with right:
+                st.metric("Fit Score", f"{score:.1f}")
 
+            # If you want to offer an optional “why” section:
+            # Uncomment to display per-component reasons (still one score visibly)
+            st.subheader("Scoring Rationale (components)")
+            b = item.get("breakdown") or []
+            for comp in b:
+                st.write(f"- {comp['key']}: {comp['score']:.2f} — {comp.get('why','')}")
+    # Build company_profile
+    prof = st.session_state.get('profile', {}) or {}
+    company_profile = {
+        'description': company_desc.strip(),
+        'city': prof.get('city', ''),
+        'state': prof.get('state', ''),
+        'company_name': prof.get('company_name', '')
+    }
 
+    # ONE-score AI ranking based on matrix components evaluated by the model
+    ranked_one_score = ai_score_and_rank_solicitations_by_fit(
+        pretrim,
+        company_desc.strip(),
+        company_profile,
+        OPENAI_API_KEY,
+        top_k=int(top_k_select)
+    )
+
+    if ranked_one_score:
+        # You can still build a DataFrame for download/etc. if you want
+        id_order = [x["notice_id"] for x in ranked_one_score]
+        top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
+        preorder = {nid: i for i, nid in enumerate(id_order)}
+        top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
+        top_df = top_df.sort_values("_order").drop(columns=["_order"])
+
+        # add blurbs and normalized link (already added in the result but keep df consistent)
+        blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
+        top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs)
+        top_df["sam_url"] = top_df.apply(lambda r: make_sam_public_url(str(r["notice_id"]), r.get("link","")), axis=1)
+
+        st.success(f"Top {len(top_df)} matches (single AI score):")
+        render_single_score_results(ranked_one_score)
+
+        st.session_state.topn_df = top_df.reset_index(drop=True)
+        st.session_state.enhanced_ranked = ranked_one_score
+
+        st.download_button(
+            f"Download Top-{int(top_k_select)} (AI single-score) as CSV",
+            top_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"top{int(top_k_select)}_single_score.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No matches found with current criteria")
+                
 # Integration point for your existing app.py
 def integrate_enhanced_scoring():
     """
