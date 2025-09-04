@@ -1,3 +1,6 @@
+import gc
+from functools import partial
+import concurrent.futures
 import os, re, json, bcrypt
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timezone
@@ -30,7 +33,167 @@ import numpy as np
 # ===== AI-driven Matrix Scorer =====
 from dataclasses import dataclass
 
+# Add these optimizations to your app.py
 
+# 1. Connection pooling optimization
+
+
+@st.cache_resource
+def get_optimized_engine():
+    """Create optimized database engine with connection pooling"""
+    if DB_URL.startswith("postgresql"):
+        return create_engine(
+            DB_URL,
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=5,
+            pool_recycle=3600,  # Recycle connections hourly
+            connect_args={
+                "sslmode": "require",
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
+                "application_name": "kip_streamlit"
+            },
+        )
+    else:
+        return create_engine(DB_URL, pool_pre_ping=True)
+
+
+# Replace your existing engine with this
+engine = get_optimized_engine()
+
+# 2. Async-style processing with threading (for non-blocking operations)
+
+
+def process_embeddings_parallel(texts: list[str], api_key: str, batch_size: int = 100) -> list[list[float]]:
+    """Process embeddings in parallel batches"""
+    client = OpenAI(api_key=api_key)
+
+    def process_batch(batch_texts):
+        try:
+            resp = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=batch_texts
+            )
+            return [d.embedding for d in resp.data]
+        except Exception as e:
+            st.warning(f"Embedding batch failed: {e}")
+            # Return zero embeddings as fallback
+            return [[0.0] * 1536] * len(batch_texts)
+
+    # Split into batches
+    batches = [texts[i:i+batch_size] for i in range(0, len(texts), batch_size)]
+
+    # Process batches in parallel (limited concurrency to respect rate limits)
+    all_embeddings = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(process_batch, batch) for batch in batches]
+        for future in concurrent.futures.as_completed(futures):
+            batch_embeddings = future.result()
+            all_embeddings.extend(batch_embeddings)
+
+    return all_embeddings
+
+# 3. Smarter data loading with column selection
+
+
+def load_solicitations_minimal(filters: dict, required_columns: list[str] = None) -> pd.DataFrame:
+    """Load only required columns to reduce memory usage"""
+
+    if required_columns is None:
+        required_columns = [
+            "notice_id", "title", "description", "naics_code",
+            "set_aside_code", "response_date", "posted_date", "link"
+        ]
+
+    # Your existing query logic but with column selection
+    base_query = f"""
+        SELECT {', '.join(required_columns)}
+        FROM solicitationraw 
+        WHERE notice_type IS NOT NULL 
+        AND LOWER(notice_type) != 'justification'
+    """
+
+    # Add your filter conditions here...
+    # (use your existing query_filtered_df_optimized logic)
+
+    with engine.connect() as conn:
+        return pd.read_sql_query(base_query, conn)
+
+
+# 4. Result caching by filter signature
+
+
+def get_filter_cache_key(filters: dict, company_desc: str) -> str:
+    """Generate cache key for filter combination"""
+    cache_data = {
+        "filters": filters,
+        "company_desc": company_desc[:200],  # Truncate for consistency
+        "timestamp": datetime.now().strftime("%Y-%m-%d-%H")  # Hourly cache
+    }
+    return hashlib.md5(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()
+
+
+# 1 hour cache, max 20 different filter combos
+@st.cache_data(ttl=3600, max_entries=20)
+def cached_ai_results(cache_key: str, filters_json: str, company_desc: str, top_k: int):
+    """Cache AI results for identical filter combinations"""
+    filters = json.loads(filters_json)
+
+    # Your AI processing logic here
+    df = query_filtered_df_optimized(filters, limit=1000)
+    if df.empty:
+        return None
+
+    # Process with AI...
+    return df  # Return your processed results
+
+# 5. UI improvements for perceived performance
+
+
+def show_loading_state():
+    """Show informative loading state"""
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Status", "🔍 Searching", delta="Filtering database...")
+    with col2:
+        st.metric("Progress", "⏳ Processing", delta="Running AI analysis...")
+    with col3:
+        st.metric("ETA", "~30s", delta="Please wait...")
+
+
+# 6. Memory optimization
+
+
+def cleanup_memory():
+    """Force garbage collection to free memory"""
+    gc.collect()
+
+# 7. Database maintenance (run periodically)
+
+
+def maintain_database():
+    """Optimize database performance"""
+    try:
+        with engine.begin() as conn:
+            if engine.url.get_dialect().name == 'postgresql':
+                # Update statistics for better query planning
+                conn.execute(sa.text("ANALYZE solicitationraw"))
+                conn.execute(sa.text("ANALYZE solicitation_embeddings"))
+            elif engine.url.get_dialect().name == 'sqlite':
+                # SQLite optimization
+                conn.execute(sa.text("ANALYZE"))
+                conn.execute(sa.text("PRAGMA optimize"))
+    except Exception:
+        pass  # Non-critical
+
+
+# Run maintenance once per session
+if "db_maintained" not in st.session_state:
+    maintain_database()
+    st.session_state.db_maintained = True
 @dataclass
 class MatrixComponent:
     key: str           # unique stable id, e.g. "Technical Capability_Core Services"
@@ -1038,6 +1201,129 @@ except Exception as e:
     st.sidebar.error("❌ Database connection failed")
     st.sidebar.exception(e)
     st.stop()
+
+# Add to your database initialization section in app.py
+
+def optimize_database():
+    """Add indexes and optimize database for faster queries"""
+    try:
+        with engine.begin() as conn:
+            # Add composite indexes for common filter combinations
+            conn.execute(sa.text("""
+                CREATE INDEX IF NOT EXISTS idx_sol_posted_naics 
+                ON solicitationraw (posted_date DESC, naics_code)
+            """))
+            
+            conn.execute(sa.text("""
+                CREATE INDEX IF NOT EXISTS idx_sol_response_date 
+                ON solicitationraw (response_date) 
+                WHERE response_date IS NOT NULL AND response_date != 'None'
+            """))
+            
+            conn.execute(sa.text("""
+                CREATE INDEX IF NOT EXISTS idx_sol_notice_type 
+                ON solicitationraw (notice_type) 
+                WHERE notice_type IS NOT NULL
+            """))
+            
+            # Full-text search index (PostgreSQL only)
+            if engine.url.get_dialect().name == 'postgresql':
+                conn.execute(sa.text("""
+                    CREATE INDEX IF NOT EXISTS idx_sol_fulltext 
+                    ON solicitationraw USING gin(to_tsvector('english', title || ' ' || description))
+                """))
+    except Exception as e:
+        st.warning(f"Database optimization note: {e}")
+
+# Optimized query function
+def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFrame:
+    """Optimized version with better SQL and limits"""
+    
+    # Build WHERE conditions more efficiently
+    where_conditions = []
+    params = {}
+    
+    # Always exclude justifications early
+    where_conditions.append("LOWER(notice_type) != 'justification'")
+    
+    # NAICS filter (most selective first)
+    naics = [re.sub(r"[^\d]","", str(x)) for x in (filters.get("naics") or []) if x]
+    if naics:
+        placeholders = ",".join([f":naics_{i}" for i in range(len(naics))])
+        where_conditions.append(f"naics_code IN ({placeholders})")
+        for i, n in enumerate(naics):
+            params[f"naics_{i}"] = n
+    
+    # Date filter (indexed)
+    due_before = filters.get("due_before")
+    if due_before:
+        where_conditions.append("response_date <= :due_before")
+        params["due_before"] = str(due_before)
+    
+    # Set-aside filter
+    sas = [str(s).lower() for s in (filters.get("set_asides") or []) if s]
+    if sas:
+        sa_conditions = []
+        for i, sa in enumerate(sas):
+            sa_conditions.append(f"LOWER(set_aside_code) LIKE :setaside_{i}")
+            params[f"setaside_{i}"] = f"%{sa}%"
+        where_conditions.append(f"({' OR '.join(sa_conditions)})")
+    
+    # Notice types
+    nts = [str(nt).lower() for nt in (filters.get("notice_types") or []) if nt]
+    if nts:
+        nt_conditions = []
+        for i, nt in enumerate(nts):
+            nt_conditions.append(f"LOWER(notice_type) LIKE :noticetype_{i}")
+            params[f"noticetype_{i}"] = f"%{nt}%"
+        where_conditions.append(f"({' OR '.join(nt_conditions)})")
+    
+    # Build optimized query
+    where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+    
+    # For PostgreSQL, use full-text search for keywords
+    kws = [str(k).lower() for k in (filters.get("keywords_or") or []) if k]
+    if kws and engine.url.get_dialect().name == 'postgresql':
+        keyword_query = " | ".join(kws)  # PostgreSQL tsquery format
+        where_conditions.append("to_tsvector('english', title || ' ' || description) @@ to_tsquery(:keyword_query)")
+        params["keyword_query"] = keyword_query
+        where_clause = " AND ".join(where_conditions)
+    
+    sql = f"""
+        SELECT notice_id, solicitation_number, title, notice_type,
+               posted_date, response_date, archive_date,
+               naics_code, set_aside_code, description, link,
+               pop_city, pop_state, pop_zip, pop_country, pop_raw
+        FROM solicitationraw 
+        WHERE {where_clause}
+        ORDER BY posted_date DESC NULLS LAST
+        LIMIT :limit_rows
+    """
+    
+    params["limit_rows"] = min(limit, 5000)  # Safety cap
+    
+    with engine.connect() as conn:
+        df = pd.read_sql_query(sql, conn, params=params)
+    
+    if df.empty:
+        return df
+    
+    # Handle keyword filtering for non-PostgreSQL databases
+    if kws and engine.url.get_dialect().name != 'postgresql':
+        # Ensure string types before .str operations
+        for c in ["title", "description"]:
+            if c in df.columns:
+                df[c] = df[c].astype(str)
+        
+        blob = (df["title"] + " " + df["description"]).str.lower()
+        df = df[blob.apply(lambda t: any(k in t for k in kws))]
+    
+    return df.reset_index(drop=True)
+
+# Call this during app startup
+if "db_optimized" not in st.session_state:
+    optimize_database()
+    st.session_state.db_optimized = True
 
 # =========================
 # Static schema (only the fields you want)
@@ -2218,167 +2504,218 @@ with tab1:
         )
         if use_ai_downselect else 5
 )
-    if st.button("Show top results", type="primary", key="btn_show_results"):
-        try:
-            # 1) Apply manual filters from DB (no SAM calls)
-            df = query_filtered_df(filters)
+    # Replace the existing Tab 1 button handler with this optimized version
 
-            if df.empty:
-                st.warning("No solicitations match your filters. Try adjusting filters or refresh today's feed.")
-                st.session_state.sol_df = None
-            else:
-                # ===== IF AI downselect + company description → Rank Top N =====
-                if use_ai_downselect and company_desc.strip():
-                    # Pre-trim with embeddings to keep prompt small & fast
-                    # Keep the most-similar N items before LLM ranking
-                    pretrim = ai_downselect_df(company_desc.strip(), df, OPENAI_API_KEY, top_k=80)
+if st.button("Show top results", type="primary", key="btn_show_results"):
+    try:
+        # Step 1: Apply manual filters with optimized query (with reasonable limit)
+        df = query_filtered_df_optimized(
+            filters, limit=2000)  # Reduced from unlimited
 
-                    if pretrim.empty:
-                        st.info("AI pre-filter returned nothing. Showing manually filtered table instead.")
-                        show_df = df.head(int(limit_results)) if limit_results else df
-                        # Generate very short blurbs only for rows we will display
-                        blurbs = ai_make_blurbs(show_df, OPENAI_API_KEY, model="gpt-4o-mini",
-                                                max_items=min(150, int(limit_results or 150)))
-                        show_df = show_df.copy()
-                        show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"].fillna(""))
-                        st.session_state.sol_df = show_df
-                        st.subheader(f"Solicitations ({len(show_df)})")
+        if df.empty:
+            st.warning("No solicitations match your filters.")
+            st.session_state.sol_df = None
+        else:
+            # Progress indicators for user feedback
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-                        # Add normalized public SAM.gov URL
-                        show_df = show_df.copy()
-                        show_df["sam_url"] = show_df.apply(
-                            lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")),
-                            axis=1
-                        )
+            # Step 2: AI processing only if requested and description provided
+            if use_ai_downselect and company_desc.strip():
+                status_text.text("🔍 Finding most relevant solicitations...")
+                progress_bar.progress(20)
 
-                        st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
-                        st.download_button(
-                            "Download filtered as CSV",
-                            show_df.to_csv(index=False).encode("utf-8"),
-                            file_name="sol_list.csv",
-                            mime="text/csv"
-                        )
-                    else:
-                        ranked = ai_rank_solicitations_by_fit(
-                        df=pretrim,
-                        company_desc=company_desc.strip(),
-                        api_key=OPENAI_API_KEY,
-                        top_k=int(top_k_select),
-                        max_candidates=60,
-                        model="gpt-4o-mini",
-)
+                # Use optimized cached embeddings
+                pretrim = ai_downselect_df_optimized(
+                    company_desc.strip(),
+                    df,
+                    OPENAI_API_KEY,
+                    # Smaller pretrim
+                    top_k=min(100, max(20, 8*int(top_k_select)))
+                )
+                progress_bar.progress(50)
 
-                        if not ranked:
-                            st.info("AI ranking returned no results; showing the manually filtered table instead.")
-                            show_df = df.head(int(limit_results)) if limit_results else df
-                            # blurbs only for what we show
-                            blurbs = ai_make_blurbs(show_df, OPENAI_API_KEY, model="gpt-4o-mini",
-                                                    max_items=min(150, int(limit_results or 150)))
-                            show_df = show_df.copy()
-                            show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"].fillna(""))
-                            st.session_state.sol_df = show_df
-                            st.subheader(f"Solicitations ({len(show_df)})")
-
-                            # Add normalized public SAM.gov URL
-                            show_df = show_df.copy()
-                            show_df["sam_url"] = show_df.apply(
-                                lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")),
-                                axis=1
-                            )
-
-                            st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
-                            st.download_button(
-                                "Download filtered as CSV",
-                                show_df.to_csv(index=False).encode("utf-8"),
-                                file_name="sol_list.csv",
-                                mime="text/csv"
-                            )
-                        else:
-                            # Get company profile for matrix scoring
-                            prof = st.session_state.get('profile', {})
-                            company_profile = {
-                                'description': company_desc.strip(),
-                                'city': prof.get('city', ''),
-                                'state': prof.get('state', ''),
-                                'company_name': prof.get('company_name', '')
-                            }
-                            
-                            # Enhanced ranking with scoring matrix
-                            enhanced_ranked = ai_score_and_rank_solicitations_by_fit(
-                                pretrim, 
-                                company_desc.strip(), 
-                                company_profile,
-                                OPENAI_API_KEY,
-                                top_k=int(top_k_select)
-                            )
-                            
-                            if enhanced_ranked:
-                                # Build ordered dataframe
-                                id_order = [x["notice_id"] for x in enhanced_ranked]
-                                top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
-                                
-                                # Add matrix scores
-                                score_map = {x["notice_id"]: x["matrix_score"] for x in enhanced_ranked}
-                                top_df["matrix_score"] = top_df["notice_id"].astype(str).map(score_map)
-                                
-                                # Sort by AI ranking order
-                                preorder = {nid: i for i, nid in enumerate(id_order)}
-                                top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
-                                top_df = top_df.sort_values("_order").drop(columns=["_order"])
-                                
-                                # Generate blurbs and add SAM URLs
-                                blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
-                                top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs)
-                                
-                                # Display enhanced results with scoring matrix
-                                st.success(f"Top {len(top_df)} matches by company fit (with scoring matrix):")
-                                reason_by_id = {x["notice_id"]: x.get("reason", "") for x in enhanced_ranked}
-                                render_enhanced_solicitation_results(enhanced_ranked, reason_by_id)
-                                
-                                # Store for other tabs
-                                st.session_state.topn_df = top_df.reset_index(drop=True)
-                                st.session_state.sol_df = top_df.copy()
-                                st.session_state.enhanced_ranked = enhanced_ranked
-                                st.session_state.partner_matches = None
-                                st.session_state.topn_stamp = datetime.now(timezone.utc).isoformat()
-                                
-                                st.download_button(
-                                    f"Download Top-{int(top_k_select)} (AI-ranked with Matrix Scores) as CSV",
-                                    top_df.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"top{int(top_k_select)}_enhanced_ranked.csv",
-                                    mime="text/csv")
-                            else:
-                                st.info("Enhanced ranking returned no results")
-
-                # ===== NO AI → just show the filtered table with blurbs =====
+                if pretrim.empty:
+                    st.info(
+                        "AI pre-filter found no matches. Showing manual results.")
+                    show_df = df.head(int(limit_results))
+                    # Quick blurbs for manual results only
+                    status_text.text("📝 Generating summaries...")
+                    blurbs = ai_make_blurbs_fast(
+                        show_df, OPENAI_API_KEY, max_items=20)
+                    show_df["blurb"] = show_df["notice_id"].astype(
+                        str).map(blurbs).fillna(show_df["title"])
+                    progress_bar.progress(100)
                 else:
-                    show_df = df.head(int(limit_results)) if limit_results else df
-                    # blurbs only for what we show (kept small)
-                    blurbs = ai_make_blurbs(show_df, OPENAI_API_KEY, model="gpt-4o-mini",
-                                            max_items=min(150, int(limit_results or 150)))
-                    show_df = show_df.copy()
-                    show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"].fillna(""))
+                    status_text.text("🎯 Ranking by company fit...")
+                    progress_bar.progress(70)
 
-                    st.session_state.sol_df = show_df
+                    # Enhanced matrix scoring (keep existing logic but streamlined)
+                    prof = st.session_state.get('profile', {}) or {}
+                    company_profile = {
+                        'description': company_desc.strip(),
+                        'city': prof.get('city', ''),
+                        'state': prof.get('state', ''),
+                        'company_name': prof.get('company_name', '')
+                    }
+
+                    # Use your existing enhanced ranking but with smaller dataset
+                    enhanced_ranked = ai_score_and_rank_solicitations_by_fit(
+                        pretrim,
+                        company_desc.strip(),
+                        company_profile,
+                        OPENAI_API_KEY,
+                        top_k=int(top_k_select)
+                    )
+                    progress_bar.progress(90)
+
+                    if enhanced_ranked:
+                        # Build result dataframe efficiently
+                        id_order = [x["notice_id"] for x in enhanced_ranked]
+                        top_df = pretrim[pretrim["notice_id"].astype(
+                            str).isin(id_order)].copy()
+
+                        # Sort by ranking
+                        preorder = {nid: i for i, nid in enumerate(id_order)}
+                        top_df["_order"] = top_df["notice_id"].astype(
+                            str).map(preorder)
+                        top_df = top_df.sort_values(
+                            "_order").drop(columns=["_order"])
+
+                        # Fast blurbs - smaller batch
+                        status_text.text("📝 Generating summaries...")
+                        blurbs = ai_make_blurbs_fast(
+                            top_df, OPENAI_API_KEY, max_items=int(top_k_select))
+                        top_df["blurb"] = top_df["notice_id"].astype(
+                            str).map(blurbs)
+
+                        show_df = top_df
+                        progress_bar.progress(100)
+
+                        # Display results
+                        st.success(
+                            f"Top {len(top_df)} matches by company fit:")
+                        reason_by_id = {x["notice_id"]: x.get(
+                            "reason", "") for x in enhanced_ranked}
+                        # Use your existing render function
+                        render_single_score_results(enhanced_ranked)
+
+                        # Store for other tabs
+                        st.session_state.topn_df = top_df.reset_index(
+                            drop=True)
+                        st.session_state.sol_df = top_df.copy()
+                        st.session_state.enhanced_ranked = enhanced_ranked
+
+                    else:
+                        st.info("Enhanced ranking found no results.")
+                        show_df = df.head(int(limit_results))
+                        blurbs = ai_make_blurbs_fast(
+                            show_df, OPENAI_API_KEY, max_items=20)
+                        show_df["blurb"] = show_df["notice_id"].astype(
+                            str).map(blurbs)
+
+                # Clean up progress indicators
+                progress_bar.empty()
+                status_text.empty()
+
+            else:
+                # No AI - just show filtered results with fast blurbs
+                show_df = df.head(int(limit_results))
+                if len(show_df) > 0:
+                    with st.spinner("Generating summaries..."):
+                        blurbs = ai_make_blurbs_fast(
+                            show_df, OPENAI_API_KEY, max_items=min(50, len(show_df)))
+                        show_df["blurb"] = show_df["notice_id"].astype(
+                            str).map(blurbs).fillna(show_df["title"])
+
+            # Always store and display results
+            if 'show_df' in locals():
+                st.session_state.sol_df = show_df
+
+                # Add SAM URLs efficiently
+                show_df["sam_url"] = show_df.apply(
+                    lambda r: make_sam_public_url(
+                        str(r.get("notice_id", "")), r.get("link", "")),
+                    axis=1
+                )
+
+                # Display if not already shown by AI ranking
+                if not (use_ai_downselect and company_desc.strip() and not pretrim.empty and enhanced_ranked):
                     st.subheader(f"Solicitations ({len(show_df)})")
+                    st.dataframe(_hide_notice_and_description(
+                        show_df), use_container_width=True)
 
-                    # Add normalized public SAM.gov URL
-                    show_df = show_df.copy()
-                    show_df["sam_url"] = show_df.apply(
-                        lambda r: make_sam_public_url(str(r.get("notice_id","")), r.get("link","")),
-                        axis=1
-                    )
+                # Download button
+                st.download_button(
+                    "Download results as CSV",
+                    show_df.to_csv(index=False).encode("utf-8"),
+                    file_name="solicitation_results.csv",
+                    mime="text/csv"
+                )
 
-                    st.dataframe(_hide_notice_and_description(show_df), use_container_width=True)
-                    st.download_button(
-                        "Download filtered as CSV",
-                        show_df.to_csv(index=False).encode("utf-8"),
-                        file_name="sol_list.csv",
-                        mime="text/csv"
-                    )
+    except Exception as e:
+        st.error(f"Error processing request: {e}")
+        st.exception(e)
 
-        except Exception as e:
-            st.exception(e)
+
+# Fast blurb generation with smaller batches and timeouts
+def ai_make_blurbs_fast(
+    df: pd.DataFrame,
+    api_key: str,
+    model: str = "gpt-4o-mini",
+    max_items: int = 50,
+    chunk_size: int = 20,  # Smaller chunks
+    timeout_seconds: int = 30
+) -> dict[str, str]:
+    """Faster version with smaller batches and timeout"""
+    if df is None or df.empty:
+        return {}
+
+    items = []
+    for _, r in df.head(max_items).iterrows():
+        items.append({
+            "notice_id": str(r.get("notice_id", "")),
+            # Shorter to reduce token count
+            "title": (r.get("title") or "")[:150],
+            "description": (r.get("description") or "")[:400],  # Much shorter
+        })
+
+    client = OpenAI(api_key=api_key, timeout=timeout_seconds)
+    out = {}
+
+    system_msg = (
+        "Write 6-8 word summaries of what each solicitation needs. "
+        "Be extremely concise and skip agency names."
+    )
+
+    for batch in _chunk(items, chunk_size):
+        user_msg = {
+            "items": batch,
+            "format": 'Return JSON: {"blurbs":[{"notice_id":"...","blurb":"..."}]}'
+        }
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": json.dumps(user_msg)},
+                ],
+                temperature=0.1,  # Lower temperature for consistency
+                max_tokens=1000,  # Limit tokens for speed
+            )
+            content = resp.choices[0].message.content or "{}"
+            data = json.loads(content)
+            for row in data.get("blurbs", []):
+                nid = str(row.get("notice_id", "")).strip()
+                blurb = (row.get("blurb") or "").strip()
+                if nid and blurb:
+                    out[nid] = blurb
+        except Exception:
+            # Continue with other batches on failure
+            continue
+
+    return out
 
 # ---- Tab 2
 with tab2:
