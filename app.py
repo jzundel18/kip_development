@@ -379,8 +379,14 @@ def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, 
     scorer = MatchScoringSystem()
     
     # Get AI ranking first (existing functionality)
-    ranked = ai_rank_solicitations_by_fit(df, company_desc, top_k)
-    
+    ranked = ai_rank_solicitations_by_fit(
+        df=df,
+        company_desc=company_desc,
+        api_key=api_key,
+        top_k=int(top_k),           # use the function arg, not top_k_select
+        max_candidates=60,          # optional, keep or remove
+        model="gpt-4o-mini"         # optional, keep or remove
+    )    
     # Add detailed scoring to each result
     enhanced_results = []
     for item in ranked:
