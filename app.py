@@ -21,6 +21,509 @@ import warnings
 from sqlalchemy.exc import SAWarning
 import requests
 from urllib.parse import urlparse
+import csv
+import re
+from pathlib import Path
+from typing import Dict, List, Tuple, Any
+import pandas as pd
+import numpy as np
+
+class MatchScoringSystem:
+    def __init__(self, scoring_matrix_path: str = "scoring_matrix.csv"):
+        self.scoring_matrix = self._load_scoring_matrix(scoring_matrix_path)
+        self.weights = {}
+        self.scoring_methods = {}
+        self._parse_matrix()
+    
+    def _load_scoring_matrix(self, path: str) -> List[Dict]:
+        """Load the scoring matrix from CSV file"""
+        matrix = []
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Parse keywords from string representation of list
+                    keywords_str = row.get('keywords', '[]')
+                    if keywords_str.startswith('[') and keywords_str.endswith(']'):
+                        keywords = eval(keywords_str)  # Safe in this context
+                    else:
+                        keywords = []
+                    
+                    row['keywords'] = keywords
+                    row['weight'] = float(row['weight'])
+                    matrix.append(row)
+        except FileNotFoundError:
+            # Fallback to default matrix if file doesn't exist
+            matrix = self._get_default_matrix()
+        
+        return matrix
+    
+    def _get_default_matrix(self) -> List[Dict]:
+        """Fallback scoring matrix if CSV file is not found"""
+        return [
+            {
+                'category': 'Technical Capability',
+                'subcategory': 'Core Services',
+                'weight': 25.0,
+                'keywords': ['manufacturing', 'engineering', 'software', 'consulting', 'maintenance', 'installation', 'repair', 'testing', 'inspection', 'training'],
+                'scoring_method': 'keyword_match_weighted'
+            },
+            {
+                'category': 'Technical Capability',
+                'subcategory': 'Industry Expertise', 
+                'weight': 20.0,
+                'keywords': ['aerospace', 'defense', 'medical', 'automotive', 'energy', 'construction', 'IT', 'cybersecurity', 'telecommunications', 'logistics'],
+                'scoring_method': 'keyword_match_weighted'
+            },
+            {
+                'category': 'Business Qualifications',
+                'subcategory': 'Business Size',
+                'weight': 10.0,
+                'keywords': ['small business', '8A', 'WOSB', 'SDVOSB', 'HUBZone', 'SDB'],
+                'scoring_method': 'set_aside_alignment'
+            },
+            {
+                'category': 'Geographic',
+                'subcategory': 'Location Alignment',
+                'weight': 8.0,
+                'keywords': ['state', 'city', 'region', 'nationwide', 'remote', 'on-site'],
+                'scoring_method': 'location_proximity'
+            },
+            {
+                'category': 'NAICS',
+                'subcategory': 'Primary NAICS',
+                'weight': 7.0,
+                'keywords': ['NAICS'],
+                'scoring_method': 'naics_match'
+            }
+        ]
+    
+    def _parse_matrix(self):
+        """Parse the matrix to create lookup dictionaries"""
+        for item in self.scoring_matrix:
+            key = f"{item['category']}_{item['subcategory']}"
+            self.weights[key] = item['weight']
+            self.scoring_methods[key] = item['scoring_method']
+    
+    def score_match(self, company_profile: Dict[str, str], solicitation: Dict[str, str]) -> Tuple[float, Dict[str, Any]]:
+        """
+        Score how well a company profile matches a solicitation
+        Returns: (total_score, detailed_breakdown)
+        """
+        breakdown = {}
+        total_score = 0.0
+        total_possible = sum(item['weight'] for item in self.scoring_matrix)
+        
+        # Prepare text fields for analysis
+        company_text = self._prepare_text(company_profile.get('description', ''))
+        solicitation_text = self._prepare_text(
+            f"{solicitation.get('title', '')} {solicitation.get('description', '')}"
+        )
+        
+        for item in self.scoring_matrix:
+            category = item['category']
+            subcategory = item['subcategory']
+            weight = item['weight']
+            keywords = item['keywords']
+            method = item['scoring_method']
+            
+            # Calculate score for this criteria
+            if method == 'keyword_match_weighted':
+                score = self._keyword_match_weighted(company_text, solicitation_text, keywords)
+            elif method == 'keyword_match_binary':
+                score = self._keyword_match_binary(company_text, solicitation_text, keywords)
+            elif method == 'set_aside_alignment':
+                score = self._set_aside_alignment(company_profile, solicitation, keywords)
+            elif method == 'location_proximity':
+                score = self._location_proximity(company_profile, solicitation)
+            elif method == 'naics_match':
+                score = self._naics_match(company_profile, solicitation)
+            elif method == 'financial_capacity':
+                score = self._financial_capacity(company_profile, solicitation)
+            else:
+                score = 0.0
+            
+            # Apply weight
+            weighted_score = score * weight
+            total_score += weighted_score
+            
+            # Store breakdown
+            breakdown[f"{category}_{subcategory}"] = {
+                'raw_score': score,
+                'weight': weight,
+                'weighted_score': weighted_score,
+                'max_possible': weight,
+                'keywords_found': self._find_matching_keywords(
+                    company_text + " " + solicitation_text, keywords
+                ) if 'keyword' in method else [],
+                'explanation': self._get_scoring_explanation(method, score, keywords)
+            }
+        
+        # Normalize to 0-100 scale
+        normalized_score = (total_score / total_possible) * 100 if total_possible > 0 else 0
+        
+        return normalized_score, breakdown
+    
+    def _prepare_text(self, text: str) -> str:
+        """Clean and prepare text for analysis"""
+        if not text:
+            return ""
+        return re.sub(r'[^\w\s]', ' ', text.lower()).strip()
+    
+    def _keyword_match_weighted(self, company_text: str, solicitation_text: str, keywords: List[str]) -> float:
+        """Score based on weighted keyword matching"""
+        if not keywords:
+            return 0.0
+        
+        matches = 0
+        total_weight = 0
+        
+        for keyword in keywords:
+            keyword_lower = keyword.lower()
+            company_match = keyword_lower in company_text
+            solicitation_match = keyword_lower in solicitation_text
+            
+            # Higher score if keyword appears in both texts
+            if company_match and solicitation_match:
+                matches += 1.0
+            elif company_match or solicitation_match:
+                matches += 0.5
+            
+            total_weight += 1
+        
+        return matches / total_weight if total_weight > 0 else 0.0
+    
+    def _keyword_match_binary(self, company_text: str, solicitation_text: str, keywords: List[str]) -> float:
+        """Binary scoring - 1 if any keyword matches, 0 otherwise"""
+        if not keywords:
+            return 0.0
+        
+        combined_text = f"{company_text} {solicitation_text}"
+        for keyword in keywords:
+            if keyword.lower() in combined_text:
+                return 1.0
+        return 0.0
+    
+    def _set_aside_alignment(self, company_profile: Dict[str, str], solicitation: Dict[str, str], keywords: List[str]) -> float:
+        """Score set-aside alignment"""
+        solicitation_set_aside = solicitation.get('set_aside_code', '').lower()
+        
+        if not solicitation_set_aside or solicitation_set_aside in ['none', 'unrestricted']:
+            return 0.5  # Neutral score for unrestricted
+        
+        company_desc = company_profile.get('description', '').lower()
+        
+        # Check if company mentions relevant set-aside status
+        set_aside_matches = {
+            'sba': ['small business', 'sba'],
+            '8a': ['8a', '8(a)', 'eight a'],
+            'wosb': ['woman owned', 'wosb', 'women owned'],
+            'edwosb': ['economically disadvantaged woman', 'edwosb'],
+            'hubzone': ['hubzone', 'hub zone'],
+            'sdvosb': ['service disabled veteran', 'sdvosb', 'veteran owned'],
+            'sdb': ['small disadvantaged business', 'sdb']
+        }
+        
+        for code, terms in set_aside_matches.items():
+            if code in solicitation_set_aside:
+                for term in terms:
+                    if term in company_desc:
+                        return 1.0
+        
+        return 0.0
+    
+    def _location_proximity(self, company_profile: Dict[str, str], solicitation: Dict[str, str]) -> float:
+        """Score based on geographic alignment"""
+        company_state = company_profile.get('state', '').upper()
+        company_city = company_profile.get('city', '').lower()
+        
+        # Extract location from solicitation
+        sol_text = f"{solicitation.get('title', '')} {solicitation.get('description', '')}".lower()
+        
+        # Check for state matches
+        if company_state and len(company_state) == 2:
+            if company_state.lower() in sol_text:
+                return 1.0
+        
+        # Check for city matches
+        if company_city and len(company_city) > 2:
+            if company_city in sol_text:
+                return 1.0
+        
+        # Check for nationwide/remote indicators
+        nationwide_terms = ['nationwide', 'remote', 'any location', 'conus']
+        for term in nationwide_terms:
+            if term in sol_text:
+                return 0.7
+        
+        return 0.0
+    
+    def _naics_match(self, company_profile: Dict[str, str], solicitation: Dict[str, str]) -> float:
+        """Score NAICS code alignment"""
+        sol_naics = solicitation.get('naics_code', '').strip()
+        if not sol_naics:
+            return 0.5
+        
+        company_desc = company_profile.get('description', '').lower()
+        
+        # Simple NAICS matching - could be enhanced with actual NAICS database
+        naics_keywords = {
+            '541': ['professional', 'scientific', 'technical', 'consulting', 'engineering'],
+            '336': ['transportation', 'equipment', 'manufacturing', 'automotive', 'aerospace'],
+            '518': ['data', 'hosting', 'related', 'services', 'it', 'software'],
+            '517': ['telecommunications', 'wireless', 'internet', 'telecom'],
+            '561': ['administrative', 'support', 'waste', 'management', 'remediation'],
+            '236': ['construction', 'building', 'nonresidential', 'building'],
+            '238': ['specialty', 'trade', 'contractors', 'electrical', 'plumbing'],
+            '334': ['computer', 'electronic', 'product', 'manufacturing'],
+            '423': ['merchant', 'wholesalers', 'durable', 'goods'],
+            '811': ['repair', 'maintenance', 'personal', 'household', 'goods']
+        }
+        
+        sol_naics_prefix = sol_naics[:3]
+        if sol_naics_prefix in naics_keywords:
+            keywords = naics_keywords[sol_naics_prefix]
+            matches = sum(1 for kw in keywords if kw in company_desc)
+            return min(matches / len(keywords) * 2, 1.0)  # Boost scoring
+        
+        return 0.0
+    
+    def _financial_capacity(self, company_profile: Dict[str, str], solicitation: Dict[str, str]) -> float:
+        """Score financial capacity (placeholder - would need more data)"""
+        # This would require actual financial data or contract value information
+        # For now, return neutral score
+        return 0.5
+    
+    def _find_matching_keywords(self, text: str, keywords: List[str]) -> List[str]:
+        """Find which keywords match in the text"""
+        found = []
+        text_lower = text.lower()
+        for keyword in keywords:
+            if keyword.lower() in text_lower:
+                found.append(keyword)
+        return found
+    
+    def _get_scoring_explanation(self, method: str, score: float, keywords: List[str]) -> str:
+        """Generate explanation for the score"""
+        if method == 'keyword_match_weighted':
+            if score > 0.8:
+                return f"Strong keyword alignment with {', '.join(keywords[:3])}..."
+            elif score > 0.5:
+                return f"Moderate keyword alignment with some matching terms"
+            elif score > 0.2:
+                return f"Limited keyword alignment"
+            else:
+                return "No significant keyword matches found"
+        
+        elif method == 'set_aside_alignment':
+            if score == 1.0:
+                return "Company qualifies for this set-aside"
+            elif score == 0.5:
+                return "Unrestricted competition - neutral alignment"
+            else:
+                return "Company may not qualify for required set-aside"
+        
+        elif method == 'location_proximity':
+            if score == 1.0:
+                return "Company location matches work location"
+            elif score > 0.5:
+                return "Nationwide/remote work acceptable"
+            else:
+                return "No clear location alignment"
+        
+        elif method == 'naics_match':
+            if score > 0.7:
+                return "Strong NAICS code alignment"
+            elif score > 0.3:
+                return "Moderate NAICS alignment"
+            else:
+                return "Limited NAICS alignment"
+        
+        return f"Score: {score:.2f}"
+    
+    def format_scoring_breakdown(self, breakdown: Dict[str, Any]) -> str:
+        """Format the scoring breakdown for display"""
+        output = []
+        
+        # Group by category
+        categories = {}
+        for key, data in breakdown.items():
+            category = key.split('_')[0] + '_' + key.split('_')[1] if len(key.split('_')) > 1 else key
+            if category not in categories:
+                categories[category] = []
+            categories[category].append((key, data))
+        
+        for category, items in categories.items():
+            output.append(f"\n📊 {category.replace('_', ' ').title()}:")
+            
+            for key, data in items:
+                subcategory = '_'.join(key.split('_')[2:]) if len(key.split('_')) > 2 else key
+                subcategory = subcategory.replace('_', ' ').title()
+                
+                percentage = (data['weighted_score'] / data['max_possible']) * 100 if data['max_possible'] > 0 else 0
+                
+                output.append(f"  • {subcategory}: {percentage:.1f}% ({data['weighted_score']:.1f}/{data['max_possible']:.1f} pts)")
+                output.append(f"    └─ {data['explanation']}")
+                
+                if data['keywords_found']:
+                    output.append(f"    └─ Keywords found: {', '.join(data['keywords_found'][:5])}")
+        
+        return '\n'.join(output)
+
+
+# Enhanced AI functions that now include scoring
+def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, company_profile: Dict[str, str], api_key: str, top_k: int = 10) -> list[dict]:
+    """
+    Enhanced version that includes detailed scoring matrix
+    """
+    scorer = MatchScoringSystem()
+    
+    # Get AI ranking first (existing functionality)
+    ranked = ai_rank_solicitations_by_fit(df, company_desc, top_k)
+    
+    # Add detailed scoring to each result
+    enhanced_results = []
+    for item in ranked:
+        notice_id = str(item.get('notice_id', ''))
+        
+        # Find the corresponding solicitation row
+        sol_row = df[df['notice_id'].astype(str) == notice_id]
+        if sol_row.empty:
+            continue
+        
+        sol_dict = sol_row.iloc[0].to_dict()
+        
+        # Calculate detailed score
+        matrix_score, breakdown = scorer.score_match(company_profile, sol_dict)
+        
+        # Add scoring details to the result
+        enhanced_item = item.copy()
+        enhanced_item['matrix_score'] = matrix_score
+        enhanced_item['scoring_breakdown'] = breakdown
+        enhanced_item['breakdown_text'] = scorer.format_scoring_breakdown(breakdown)
+        
+        enhanced_results.append(enhanced_item)
+    
+    return enhanced_results
+
+
+# Modified version of your existing ranking display function
+def render_enhanced_solicitation_results(ranked_results: List[Dict], reason_by_id: Dict[str, str]):
+    """
+    Enhanced version that displays scoring matrix results
+    """
+    if not ranked_results:
+        st.info("No results to display")
+        return
+    
+    st.write(f"**Found {len(ranked_results)} ranked matches**")
+    
+    for idx, item in enumerate(ranked_results):
+        notice_id = str(item.get('notice_id', ''))
+        title = item.get('title', 'Untitled')
+        ai_score = item.get('score', 0)
+        matrix_score = item.get('matrix_score', 0)
+        breakdown_text = item.get('breakdown_text', '')
+        
+        # Enhanced header with both scores
+        header = f"#{idx+1}: {title} (AI: {ai_score}%, Matrix: {matrix_score:.1f}%)"
+        
+        with st.expander(header, expanded=(idx == 0)):
+            # Basic info
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.write(f"**Notice ID:** {notice_id}")
+                if 'blurb' in item:
+                    st.write(f"**Summary:** {item['blurb']}")
+                
+                reason = reason_by_id.get(notice_id, item.get('reason', ''))
+                if reason:
+                    st.write(f"**AI Analysis:** {reason}")
+                
+                # SAM.gov link
+                link = make_sam_public_url(notice_id, item.get('link', ''))
+                st.markdown(f"**[View on SAM.gov]({link})**")
+            
+            with col2:
+                # Score visualization
+                st.metric("AI Fit Score", f"{ai_score}%")
+                st.metric("Matrix Score", f"{matrix_score:.1f}%")
+            
+            # Detailed scoring breakdown
+            if breakdown_text:
+                st.subheader("Detailed Scoring Matrix")
+                st.text(breakdown_text)
+            
+            # Add separator
+            if idx < len(ranked_results) - 1:
+                st.divider()
+
+
+# Integration point for your existing app.py
+def integrate_enhanced_scoring():
+    """
+    This function shows how to integrate the enhanced scoring into your existing Tab 1 logic
+    Replace the relevant section in your Tab 1 with this enhanced version
+    """
+    
+    # ... your existing filter logic ...
+    
+    if use_ai_downselect and company_desc.strip():
+        # Pre-trim with embeddings
+        pretrim = ai_downselect_df(company_desc.strip(), df, OPENAI_API_KEY, top_k=80)
+        
+        # Get company profile for matrix scoring
+        prof = st.session_state.get('profile', {})
+        company_profile = {
+            'description': company_desc.strip(),
+            'city': prof.get('city', ''),
+            'state': prof.get('state', ''),
+            'company_name': prof.get('company_name', '')
+        }
+        
+        # Enhanced ranking with scoring matrix
+        enhanced_ranked = ai_score_and_rank_solicitations_by_fit(
+            pretrim, 
+            company_desc.strip(), 
+            company_profile,
+            OPENAI_API_KEY,
+            top_k=int(top_k_select)
+        )
+        
+        # Build enhanced dataframe
+        if enhanced_ranked:
+            # Create ordered dataframe
+            id_order = [x["notice_id"] for x in enhanced_ranked]
+            top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
+            
+            # Add matrix scores
+            score_map = {x["notice_id"]: x["matrix_score"] for x in enhanced_ranked}
+            top_df["matrix_score"] = top_df["notice_id"].astype(str).map(score_map)
+            
+            # Sort by AI ranking order
+            preorder = {nid: i for i, nid in enumerate(id_order)}
+            top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
+            top_df = top_df.sort_values("_order").drop(columns=["_order"])
+            
+            # Generate blurbs and add SAM URLs
+            blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
+            top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs)
+            top_df["sam_url"] = top_df.apply(
+                lambda row: make_sam_public_url(str(row["notice_id"]), row.get("link", "")), 
+                axis=1
+            )
+            
+            # Display enhanced results
+            reason_by_id = {x["notice_id"]: x.get("reason", "") for x in enhanced_ranked}
+            render_enhanced_solicitation_results(enhanced_ranked, reason_by_id)
+            
+            # Store for other tabs
+            st.session_state.topn_df = top_df
+            st.session_state.enhanced_ranked = enhanced_ranked
+        
+        else:
+            st.info("No matches found with current criteria")
 
 warnings.filterwarnings(
     "ignore",
@@ -1552,55 +2055,61 @@ with tab1:
                                 mime="text/csv"
                             )
                         else:
-                            # Build ordered dataframe
-                            id_order = [x["notice_id"] for x in ranked]
-                            preorder = {nid: i for i, nid in enumerate(id_order)}
-                            top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
-                            top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-                            top_df = (
-                                top_df.sort_values("__order")
-                                    .drop_duplicates(subset=["notice_id"])
-                                    .drop(columns="__order")
-)
-                            # Generate blurbs
-                            blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
-                            top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"].fillna(""))
-
-                            # Show expanders: blurb first, click to see details
-                            st.success(f"Top {len(top_df)} matches by company fit:")
-                            # quick lookup for reasons and scores
-                            reason_by_id = {x["notice_id"]: x.get("reason", "") for x in ranked}
-                            score_by_id  = {x["notice_id"]: x.get("score", 0)  for x in ranked}
-
-                            # add a fit_score column so Tab 4 can auto-filter moderate/strong matches
-                            top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_by_id).fillna(0).astype(float)
-
-                            for i, row in enumerate(top_df.itertuples(index=False), start=1):
-                                hdr = (getattr(row, "blurb", None) or getattr(row, "title", None) or "Untitled")
-                                with st.expander(f"{i}. {hdr}"):
-                                    st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
-                                    st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                                    st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
-                                    st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                                    st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-                                    link = make_sam_public_url(str(getattr(row, "notice_id", "")), getattr(row, "link", ""))
-                                    st.write(f"[Open on SAM.gov]({link})")
-                                    reason = reason_by_id.get(str(getattr(row, "notice_id", "")), "")
-                                    if reason:
-                                        st.markdown("**Why this matched (AI):**")
-                                        st.info(reason)
-
-                            # Save the AI-ranked dataframe itself for Tab 4
-                            st.session_state.topn_df = top_df.reset_index(drop=True)
-                            st.session_state.sol_df = top_df.copy()
-                            # Invalidate any old partner matches (Tab 4 will auto-rebuild)
-                            st.session_state.partner_matches = None
-                            st.session_state.topn_stamp = datetime.now(timezone.utc).isoformat()
-                            st.download_button(
-                            f"Download Top-{int(top_k_select)} (AI-ranked) as CSV",
-                            top_df.to_csv(index=False).encode("utf-8"),
-                            file_name=f"top{int(top_k_select)}_ai_ranked.csv",
-                            mime="text/csv")
+                            # Get company profile for matrix scoring
+                            prof = st.session_state.get('profile', {})
+                            company_profile = {
+                                'description': company_desc.strip(),
+                                'city': prof.get('city', ''),
+                                'state': prof.get('state', ''),
+                                'company_name': prof.get('company_name', '')
+                            }
+                            
+                            # Enhanced ranking with scoring matrix
+                            enhanced_ranked = ai_score_and_rank_solicitations_by_fit(
+                                pretrim, 
+                                company_desc.strip(), 
+                                company_profile,
+                                OPENAI_API_KEY,
+                                top_k=int(top_k_select)
+                            )
+                            
+                            if enhanced_ranked:
+                                # Build ordered dataframe
+                                id_order = [x["notice_id"] for x in enhanced_ranked]
+                                top_df = pretrim[pretrim["notice_id"].astype(str).isin(id_order)].copy()
+                                
+                                # Add matrix scores
+                                score_map = {x["notice_id"]: x["matrix_score"] for x in enhanced_ranked}
+                                top_df["matrix_score"] = top_df["notice_id"].astype(str).map(score_map)
+                                
+                                # Sort by AI ranking order
+                                preorder = {nid: i for i, nid in enumerate(id_order)}
+                                top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
+                                top_df = top_df.sort_values("_order").drop(columns=["_order"])
+                                
+                                # Generate blurbs and add SAM URLs
+                                blurbs = ai_make_blurbs(top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=10)
+                                top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs)
+                                
+                                # Display enhanced results with scoring matrix
+                                st.success(f"Top {len(top_df)} matches by company fit (with scoring matrix):")
+                                reason_by_id = {x["notice_id"]: x.get("reason", "") for x in enhanced_ranked}
+                                render_enhanced_solicitation_results(enhanced_ranked, reason_by_id)
+                                
+                                # Store for other tabs
+                                st.session_state.topn_df = top_df.reset_index(drop=True)
+                                st.session_state.sol_df = top_df.copy()
+                                st.session_state.enhanced_ranked = enhanced_ranked
+                                st.session_state.partner_matches = None
+                                st.session_state.topn_stamp = datetime.now(timezone.utc).isoformat()
+                                
+                                st.download_button(
+                                    f"Download Top-{int(top_k_select)} (AI-ranked with Matrix Scores) as CSV",
+                                    top_df.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"top{int(top_k_select)}_enhanced_ranked.csv",
+                                    mime="text/csv")
+                            else:
+                                st.info("Enhanced ranking returned no results")
 
                 # ===== NO AI → just show the filtered table with blurbs =====
                 else:

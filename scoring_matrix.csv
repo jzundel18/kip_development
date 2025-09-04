@@ -1,0 +1,10 @@
+category,subcategory,weight,description,keywords,scoring_method
+Technical Capability,Core Services,25,Primary services and capabilities offered,["manufacturing", "engineering", "software", "consulting", "maintenance", "installation", "repair", "testing", "inspection", "training"],keyword_match_weighted
+Technical Capability,Industry Expertise,20,Specific industry knowledge and experience,["aerospace", "defense", "medical", "automotive", "energy", "construction", "IT", "cybersecurity", "telecommunications", "logistics"],keyword_match_weighted
+Technical Capability,Technical Standards,15,Compliance with technical standards and certifications,["ISO", "CMMI", "FedRAMP", "NIST", "ANSI", "DOD", "FDA", "FAA", "security clearance", "quality management"],keyword_match_binary
+Business Qualifications,Business Size,10,Small business status and set-aside eligibility,["small business", "8A", "WOSB", "SDVOSB", "HUBZone", "SDB", "minority owned", "veteran owned"],set_aside_alignment
+Business Qualifications,Past Performance,10,Government contracting experience,["GSA", "contract", "federal", "government", "prime contractor", "subcontractor", "SEWP", "CIO-SP3", "OASIS"],keyword_match_weighted
+Geographic,Location Alignment,8,Geographic proximity to place of performance,["state", "city", "region", "nationwide", "remote", "on-site"],location_proximity
+NAICS,Primary NAICS,7,Primary NAICS code alignment,["NAICS"],naics_match
+Financial,Contract Value,3,Ability to handle contract size,["revenue", "capacity", "bonding", "financial strength"],financial_capacity
+Innovation,Technology Innovation,2,Advanced technology capabilities,["AI", "machine learning", "automation", "IoT", "cloud", "digital transformation", "emerging technology"],keyword_match_binary
