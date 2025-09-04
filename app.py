@@ -566,6 +566,19 @@ class MatrixComponent:
     scoring_method: str = "llm_assessment"
 
 
+# Enhanced AI Matrix Scorer - Replace the existing AIMatrixScorer class in app.py
+
+
+@dataclass
+class MatrixComponent:
+    key: str
+    label: str
+    weight: float
+    description: str
+    hints: list[str]
+    scoring_method: str = "llm_assessment"
+
+
 class AIMatrixScorer:
     """Enhanced LLM-based scorer using complete scoring matrix with 1-10 scale per component"""
 
@@ -894,7 +907,7 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
     # Score in smaller batches for better reliability and speed
     scorer = AIMatrixScorer()
     results: dict[str, dict] = {}
-    batch_size = 15  # Smaller batches for faster, more reliable processing
+    batch_size = 8  # Much smaller batches to avoid JSON parsing issues
 
     for i in range(0, len(use_df), batch_size):
         batch_df = use_df.iloc[i:i+batch_size]
@@ -944,6 +957,11 @@ def ai_matrix_score_solicitations(df: pd.DataFrame, company_profile: dict, api_k
 
     return final_results
 
+
+# Also need to update the call in Tab 1 - find this line:
+# render_single_score_results(enhanced_ranked)
+# and replace it with:
+# render_enhanced_score_results(enhanced_ranked)
 
 def ai_score_and_rank_solicitations_by_fit(df: pd.DataFrame, company_desc: str, company_profile: Dict[str, str], api_key: str, top_k: int = 10) -> list[dict]:
     prof = dict(company_profile or {})
