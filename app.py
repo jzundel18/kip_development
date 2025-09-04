@@ -31,7 +31,7 @@ import requests
 import find_relevant_suppliers as fs
 import generate_proposal as gp
 import get_relevant_solicitations as gs
-import secrets as pysecrets
+import secrets
 
 # =========================
 # Configuration & Secrets
@@ -76,19 +76,6 @@ DB_URL = st.secrets.get("SUPABASE_DB_URL") or "sqlite:///app.db"
 
 # Add these lines to your session state initialization section (around line 75-85)
 # Find where you have the other session state initializations and add these:
-
-if "user" not in st.session_state:
-    st.session_state.user = None
-if "profile" not in st.session_state:
-    st.session_state.profile = None
-if "view" not in st.session_state:
-    st.session_state.view = "main" if st.session_state.user else "auth"
-if "vendor_notes" not in st.session_state:
-    st.session_state.vendor_notes = {}
-if "sol_df" not in st.session_state:
-    st.session_state.sol_df = None
-if "sup_df" not in st.session_state:
-    st.session_state.sup_df = None
 
 # ADD THESE NEW LINES:
 if "iu_open_nid" not in st.session_state:
@@ -185,7 +172,7 @@ def _s(v) -> str:
     try:
         if pd.isna(v):
             return ""
-    except Exception:
+    except (AttributeError, TypeError):  # Handle when pd.isna fails
         pass
     return "" if v is None else str(v)
 
@@ -253,7 +240,7 @@ def optimize_database():
 
 # Call optimization once per session
 if "db_optimized" not in st.session_state:
-    check_database_optimization()
+    optimize_database()
     st.session_state.db_optimized = True
 
     # Optional admin tools in sidebar
@@ -350,7 +337,7 @@ def _hash_token(raw: str) -> str:
 
 def _issue_remember_me_token(user_id: int, days: int = None) -> str:
     days = days or int(get_secret("COOKIE_DAYS", 30))
-    raw = pysecrets.token_urlsafe(32)
+    raw = secrets.token_urlsafe(32)
     tok_hash = _hash_token(raw)
     now = datetime.now(timezone.utc)
     exp = now + timedelta(days=days)
@@ -592,17 +579,6 @@ class MatrixComponent:
     description: str
     hints: list[str]
     scoring_method: str = "llm_assessment"
-
-
-# Enhanced AI Matrix Scorer - Replace the existing AIMatrixScorer class in app.py
-# Complete replacement for your AI Matrix Scorer section in app.py
-# Replace everything from the @dataclass MatrixComponent line through the ai_score_and_rank_solicitations_by_fit function
-
-from dataclasses import dataclass
-from typing import List, Dict, Any
-import json
-import streamlit as st
-from openai import OpenAI
 
 @dataclass
 class MatrixComponent:
