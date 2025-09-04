@@ -2612,7 +2612,8 @@ with tab5:
             naics_mask = df_all["naics_code"].fillna("").astype(str).str.startswith(rd_naics_prefixes)
 
             # Keyword signals in title/description
-            text = (df_all["title"].astype(str) + " " + df_all["description"].astype(str)).str.lower()            kw_any = [
+            text = (df_all["title"].astype(str) + " " + df_all["description"].astype(str)).str.lower()         
+            kw_any = [
                 "research", "r&d", "r and d", "development", "sbir", "sttr",
                 "prototype", "prototyping", "broad agency announcement", "baa",
                 "technology demonstration", "feasibility study", "study", "innovative",
