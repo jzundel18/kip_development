@@ -585,6 +585,7 @@ class MatrixComponent:
     hints: list[str]
     scoring_method: str = "llm_assessment"
 
+
 class AIMatrixScorer:
     """Enhanced LLM-based scorer using complete scoring matrix with 1-10 scale per component"""
 
@@ -759,7 +760,7 @@ class AIMatrixScorer:
                 notice_id = str(result.get("notice_id", "")).strip()
                 if not notice_id:
                     continue
-                    
+
                 components = result.get("components", [])
                 if not components:
                     # Fallback to simple scoring if no components
@@ -767,7 +768,7 @@ class AIMatrixScorer:
                     final_score = max(0.0, min(100.0, score))
                     breakdown = [{
                         "key": "overall_fit",
-                        "label": "Overall Company Fit", 
+                        "label": "Overall Company Fit",
                         "score": int(score/10),
                         "reasoning": result.get("reason", "AI assessment"),
                         "weight": 100.0,
@@ -777,23 +778,24 @@ class AIMatrixScorer:
                     # Process detailed component breakdown
                     breakdown = []
                     total_weighted = 0
-                    
+
                     for comp in components:
                         comp_key = comp.get("key", "unknown")
                         comp_score = max(1, min(10, int(comp.get("score", 5))))
                         comp_reason = comp.get("reason", "No reason provided")
-                        
+
                         # Find the weight for this component
                         comp_weight = 5.0  # default
                         for matrix_comp in self.components:
                             if matrix_comp.key == comp_key:
                                 comp_weight = matrix_comp.weight
                                 break
-                        
+
                         # Calculate weighted contribution
-                        weighted_contribution = (comp_score * comp_weight / self.total_weight) * 10
+                        weighted_contribution = (
+                            comp_score * comp_weight / self.total_weight) * 10
                         total_weighted += weighted_contribution
-                        
+
                         breakdown.append({
                             "key": comp_key,
                             "label": self._get_component_label(comp_key),
@@ -802,7 +804,7 @@ class AIMatrixScorer:
                             "weight": comp_weight,
                             "weighted_contribution": weighted_contribution
                         })
-                    
+
                     final_score = max(0.0, min(100.0, total_weighted))
 
                 scored_results[notice_id] = {
@@ -813,14 +815,15 @@ class AIMatrixScorer:
             return scored_results
 
         except Exception as e:
-            st.warning(f"AI scoring failed, using detailed fallback: {str(e)[:100]}...")
+            st.warning(
+                f"AI scoring failed, using detailed fallback: {str(e)[:100]}...")
             return self._detailed_fallback_scoring(items, company_profile)
 
     def _get_component_label(self, key: str) -> str:
         """Get human-readable label for component key"""
         labels = {
             "tech_core": "Core Services & Capabilities",
-            "tech_industry": "Industry Domain Expertise", 
+            "tech_industry": "Industry Domain Expertise",
             "tech_standards": "Technical Standards & Certifications",
             "biz_size": "Business Size & Set-Aside Eligibility",
             "biz_performance": "Government Contracting Experience",
@@ -836,9 +839,9 @@ class AIMatrixScorer:
         company_desc = (company_profile.get("description") or "").lower()
         company_city = (company_profile.get("city") or "").lower()
         company_state = (company_profile.get("state") or "").upper()
-        
+
         fallback_results = {}
-        
+
         for item in items:
             notice_id = str(item.get("notice_id", ""))
             title = (item.get("title") or "").lower()
@@ -847,12 +850,13 @@ class AIMatrixScorer:
             set_aside = (item.get("set_aside_code") or "").lower()
             pop_city = (item.get("pop_city") or "").lower()
             pop_state = (item.get("pop_state") or "").upper()
-            
+
             # Score each component with heuristics
             breakdown = []
-            
+
             # Core Services (25% weight)
-            core_keywords = ['manufacturing', 'engineering', 'software', 'consulting', 'maintenance', 'installation', 'repair', 'testing']
+            core_keywords = ['manufacturing', 'engineering', 'software',
+                             'consulting', 'maintenance', 'installation', 'repair', 'testing']
             core_score = 5  # default
             if any(kw in company_desc for kw in core_keywords):
                 if any(kw in title + " " + description for kw in core_keywords):
@@ -867,36 +871,38 @@ class AIMatrixScorer:
                 "weight": 25.0,
                 "weighted_contribution": (core_score * 25.0 / self.total_weight) * 10
             })
-            
+
             # Industry Expertise (20% weight)
-            industry_keywords = ['aerospace', 'defense', 'medical', 'automotive', 'energy', 'construction', 'IT']
+            industry_keywords = ['aerospace', 'defense', 'medical',
+                                 'automotive', 'energy', 'construction', 'IT']
             industry_score = 5
             if any(kw in company_desc for kw in industry_keywords):
                 if any(kw in title + " " + description for kw in industry_keywords):
                     industry_score = 7
             breakdown.append({
-                "key": "tech_industry", 
+                "key": "tech_industry",
                 "label": "Industry Domain Expertise",
                 "score": industry_score,
                 "reasoning": "Industry keyword matching",
                 "weight": 20.0,
                 "weighted_contribution": (industry_score * 20.0 / self.total_weight) * 10
             })
-            
+
             # Technical Standards (15% weight)
-            standards_keywords = ['iso', 'cmmi', 'nist', 'ansi', 'certification', 'quality']
+            standards_keywords = ['iso', 'cmmi', 'nist',
+                                  'ansi', 'certification', 'quality']
             standards_score = 5
             if any(kw in company_desc for kw in standards_keywords) or any(kw in title + " " + description for kw in standards_keywords):
                 standards_score = 7
             breakdown.append({
                 "key": "tech_standards",
-                "label": "Technical Standards & Certifications", 
+                "label": "Technical Standards & Certifications",
                 "score": standards_score,
                 "reasoning": "Standards keyword detection",
                 "weight": 15.0,
                 "weighted_contribution": (standards_score * 15.0 / self.total_weight) * 10
             })
-            
+
             # Business Size (10% weight)
             size_score = 6  # neutral default
             if set_aside and any(sa in set_aside for sa in ['sba', '8a', 'wosb', 'sdvosb', 'hubzone']):
@@ -904,14 +910,15 @@ class AIMatrixScorer:
             breakdown.append({
                 "key": "biz_size",
                 "label": "Business Size & Set-Aside Eligibility",
-                "score": size_score, 
+                "score": size_score,
                 "reasoning": "Set-aside code evaluation",
                 "weight": 10.0,
                 "weighted_contribution": (size_score * 10.0 / self.total_weight) * 10
             })
-            
+
             # Gov Experience (10% weight)
-            gov_keywords = ['contract', 'federal', 'government', 'gsa', 'prime']
+            gov_keywords = ['contract', 'federal',
+                            'government', 'gsa', 'prime']
             gov_score = 5
             if any(kw in company_desc for kw in gov_keywords):
                 gov_score = 7
@@ -919,11 +926,11 @@ class AIMatrixScorer:
                 "key": "biz_performance",
                 "label": "Government Contracting Experience",
                 "score": gov_score,
-                "reasoning": "Government experience keywords", 
+                "reasoning": "Government experience keywords",
                 "weight": 10.0,
                 "weighted_contribution": (gov_score * 10.0 / self.total_weight) * 10
             })
-            
+
             # Geographic Match (8% weight)
             geo_score = 5  # default neutral
             if pop_state == company_state:
@@ -938,65 +945,67 @@ class AIMatrixScorer:
                 "weight": 8.0,
                 "weighted_contribution": (geo_score * 8.0 / self.total_weight) * 10
             })
-            
+
             # NAICS Alignment (7% weight)
             naics_score = 6  # neutral default
             breakdown.append({
-                "key": "naics_alignment", 
+                "key": "naics_alignment",
                 "label": "NAICS Code Alignment",
                 "score": naics_score,
                 "reasoning": f"NAICS: {naics}",
                 "weight": 7.0,
                 "weighted_contribution": (naics_score * 7.0 / self.total_weight) * 10
             })
-            
+
             # Financial Capacity (3% weight)
             financial_score = 6  # neutral default
             breakdown.append({
                 "key": "financial_capacity",
-                "label": "Financial Capacity", 
+                "label": "Financial Capacity",
                 "score": financial_score,
                 "reasoning": "Default assessment",
                 "weight": 3.0,
                 "weighted_contribution": (financial_score * 3.0 / self.total_weight) * 10
             })
-            
-            # Innovation (2% weight) 
-            innovation_keywords = ['ai', 'machine learning', 'automation', 'iot', 'cloud', 'digital']
+
+            # Innovation (2% weight)
+            innovation_keywords = ['ai', 'machine learning',
+                                   'automation', 'iot', 'cloud', 'digital']
             innovation_score = 5
             if any(kw in company_desc for kw in innovation_keywords) or any(kw in title + " " + description for kw in innovation_keywords):
                 innovation_score = 7
             breakdown.append({
                 "key": "innovation",
                 "label": "Technology Innovation",
-                "score": innovation_score, 
+                "score": innovation_score,
                 "reasoning": "Innovation keyword detection",
                 "weight": 2.0,
                 "weighted_contribution": (innovation_score * 2.0 / self.total_weight) * 10
             })
-            
+
             # Calculate final score
-            total_weighted = sum(comp["weighted_contribution"] for comp in breakdown)
+            total_weighted = sum(comp["weighted_contribution"]
+                                 for comp in breakdown)
             final_score = max(0.0, min(100.0, total_weighted))
-            
+
             fallback_results[notice_id] = {
                 "score": final_score,
                 "breakdown": breakdown
             }
-        
+
         return fallback_results
 
     def _fix_json_issues(self, content: str) -> str:
         """Attempt to fix common JSON formatting issues"""
         import re
-        
+
         # Remove trailing commas before closing braces/brackets
         content = re.sub(r',(\s*[}\]])', r'\1', content)
-        
+
         # Basic quote escaping in reasoning fields
         lines = content.split('\n')
         fixed_lines = []
-        
+
         for line in lines:
             if '"reason"' in line and line.count('"') > 4:
                 # Try to fix unescaped quotes in reason field
@@ -1007,12 +1016,14 @@ class AIMatrixScorer:
                         value_part = parts[1].strip()
                         if value_part.startswith('"') and value_part.endswith('"') and value_part.count('"') > 2:
                             # Replace internal quotes with escaped quotes
-                            inner_content = value_part[1:-1]  # Remove outer quotes
-                            inner_content = inner_content.replace('"', '\\"')  # Escape internal quotes
+                            # Remove outer quotes
+                            inner_content = value_part[1:-1]
+                            inner_content = inner_content.replace(
+                                '"', '\\"')  # Escape internal quotes
                             value_part = f'"{inner_content}"'
                             line = key_part + ': ' + value_part
             fixed_lines.append(line)
-        
+
         return '\n'.join(fixed_lines)
 
 def render_enhanced_score_results(ranked_results: List[Dict]):
