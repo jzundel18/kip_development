@@ -687,19 +687,6 @@ class AIMatrixScorer:
             "state": (company_profile.get("state") or "").strip(),
         }
 
-        # All 10 components for scoring
-        components_list = [
-            {"key": "tech_core", "label": "Core Services", "weight": 25},
-            {"key": "tech_industry", "label": "Industry Expertise", "weight": 20},
-            {"key": "tech_standards", "label": "Technical Standards", "weight": 15},
-            {"key": "biz_size", "label": "Business Size", "weight": 10},
-            {"key": "biz_performance", "label": "Gov Experience", "weight": 10},
-            {"key": "geo_location", "label": "Geographic Match", "weight": 8},
-            {"key": "naics_alignment", "label": "NAICS Match", "weight": 7},
-            {"key": "financial_capacity", "label": "Financial Capacity", "weight": 3},
-            {"key": "innovation", "label": "Technology Innovation", "weight": 2}
-        ]
-
         system = (
             "You are a federal contracting analyst. Score each solicitation on ALL 9 components (1-10 scale).\n\n"
             "Components to score:\n"
@@ -713,8 +700,8 @@ class AIMatrixScorer:
             "8. financial_capacity (3%): Financial strength\n"
             "9. innovation (2%): Technology innovation\n\n"
             "Return ONLY this exact JSON format:\n"
-            '{"results":[{"notice_id":"ABC123","components":[{"key":"tech_core","score":8,"reason":"good fit"},{"key":"tech_industry","score":7,"reason":"related field"}],"total_score":75}]}\n\n'
-            "Score 1-10 for each component. Keep reasons under 5 words."
+            '{"results":[{"notice_id":"ABC123","components":[{"key":"tech_core","score":8,"reason":"good alignment"},{"key":"tech_industry","score":7,"reason":"related field"},...all 9 components...],"total_score":75}]}\n\n'
+            "Score 1-10 for each component. Keep reasons under 8 words. Include ALL 9 components for each solicitation."
         )
 
         user_data = {
@@ -737,7 +724,7 @@ class AIMatrixScorer:
         return messages, []
 
     def score_batch(self, items: list[dict], company_profile: dict, api_key: str, model: str = "gpt-4o-mini") -> dict:
-        """Simplified scoring to avoid JSON issues"""
+        """Enhanced scoring that returns detailed component breakdown"""
         if not items:
             return {}
 
@@ -748,86 +735,104 @@ class AIMatrixScorer:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0.0,  # Zero temperature for consistency
-                max_tokens=1000,  # Reduced tokens
-                timeout=30
+                temperature=0.0,
+                max_tokens=2000,  # Increased for detailed breakdown
+                timeout=45
             )
             content = response.choices[0].message.content or "{}"
 
-            # More aggressive JSON cleaning
+            # Clean and parse JSON
             content = content.strip()
             if not content.startswith('{'):
-                # Find first { and last }
                 start = content.find('{')
                 end = content.rfind('}') + 1
                 if start >= 0 and end > start:
                     content = content[start:end]
 
-            # Replace single quotes with double quotes
-            content = content.replace("'", '"')
-
+            # Fix common JSON issues
+            content = self._fix_json_issues(content)
             data = json.loads(content)
 
+            # Process detailed results
+            scored_results = {}
+            for result in (data.get("results") or []):
+                notice_id = str(result.get("notice_id", "")).strip()
+                if not notice_id:
+                    continue
+                    
+                components = result.get("components", [])
+                if not components:
+                    # Fallback to simple scoring if no components
+                    score = float(result.get("total_score", 50))
+                    final_score = max(0.0, min(100.0, score))
+                    breakdown = [{
+                        "key": "overall_fit",
+                        "label": "Overall Company Fit", 
+                        "score": int(score/10),
+                        "reasoning": result.get("reason", "AI assessment"),
+                        "weight": 100.0,
+                        "weighted_contribution": final_score
+                    }]
+                else:
+                    # Process detailed component breakdown
+                    breakdown = []
+                    total_weighted = 0
+                    
+                    for comp in components:
+                        comp_key = comp.get("key", "unknown")
+                        comp_score = max(1, min(10, int(comp.get("score", 5))))
+                        comp_reason = comp.get("reason", "No reason provided")
+                        
+                        # Find the weight for this component
+                        comp_weight = 5.0  # default
+                        for matrix_comp in self.components:
+                            if matrix_comp.key == comp_key:
+                                comp_weight = matrix_comp.weight
+                                break
+                        
+                        # Calculate weighted contribution
+                        weighted_contribution = (comp_score * comp_weight / self.total_weight) * 10
+                        total_weighted += weighted_contribution
+                        
+                        breakdown.append({
+                            "key": comp_key,
+                            "label": self._get_component_label(comp_key),
+                            "score": comp_score,
+                            "reasoning": comp_reason,
+                            "weight": comp_weight,
+                            "weighted_contribution": weighted_contribution
+                        })
+                    
+                    final_score = max(0.0, min(100.0, total_weighted))
+
+                scored_results[notice_id] = {
+                    "score": final_score,
+                    "breakdown": breakdown
+                }
+
+            return scored_results
+
         except Exception as e:
-            st.warning(f"AI scoring failed, using fallback: {str(e)[:50]}...")
-            return self._fallback_scoring(items, company_profile)
+            st.warning(f"AI scoring failed, using detailed fallback: {str(e)[:100]}...")
+            return self._detailed_fallback_scoring(items, company_profile)
 
-        # Process simplified results
-        scored_results = {}
-        for result in (data.get("results") or []):
-            notice_id = str(result.get("notice_id", "")).strip()
-            # Simple 1-10 score converted to 0-100
-            score = float(result.get("score", 50))
-            reason = str(result.get("reason", "AI assessment"))
+    def _get_component_label(self, key: str) -> str:
+        """Get human-readable label for component key"""
+        labels = {
+            "tech_core": "Core Services & Capabilities",
+            "tech_industry": "Industry Domain Expertise", 
+            "tech_standards": "Technical Standards & Certifications",
+            "biz_size": "Business Size & Set-Aside Eligibility",
+            "biz_performance": "Government Contracting Experience",
+            "geo_location": "Geographic Location Match",
+            "naics_alignment": "NAICS Code Alignment",
+            "financial_capacity": "Financial Capacity",
+            "innovation": "Technology Innovation"
+        }
+        return labels.get(key, key.replace("_", " ").title())
 
-            # Convert 1-10 score to our 0-100 scale
-            final_score = max(0.0, min(100.0, score * 10))
-
-            # Create simplified breakdown
-            breakdown = [{
-                "key": "overall_fit",
-                "label": "Overall Company Fit",
-                "score": int(score),
-                "reasoning": reason,
-                "weight": 100.0,
-                "weighted_contribution": final_score
-            }]
-
-            scored_results[notice_id] = {
-                "score": final_score,
-                "breakdown": breakdown
-            }
-
-        return scored_results
-
-    def _fix_json_issues(self, content: str) -> str:
-        """Attempt to fix common JSON formatting issues"""
-        # Remove any trailing commas before closing braces/brackets
-        content = re.sub(r',(\s*[}\]])', r'\1', content)
-        
-        # Fix unescaped quotes in strings (basic attempt)
-        # This is a simple heuristic and may not catch all cases
-        lines = content.split('\n')
-        fixed_lines = []
-        
-        for line in lines:
-            # If line contains "reasoning" or "why", try to fix unescaped quotes
-            if '"reasoning"' in line or '"why"' in line:
-                # Find the value part after the colon
-                if ':' in line:
-                    key_part, value_part = line.split(':', 1)
-                    # If the value part has unescaped quotes, try to fix them
-                    if value_part.count('"') > 2:  # More than just opening and closing quotes
-                        # Simple fix: escape internal quotes
-                        value_part = value_part.replace('"', '\\"', 1)  # Don't replace opening quote
-                        value_part = value_part[::-1].replace('"', '\\"', 1)[::-1]  # Don't replace closing quote
-                        line = key_part + ':' + value_part
-            fixed_lines.append(line)
-        
-        return '\n'.join(fixed_lines)
-
-    def _fallback_scoring(self, items: list[dict], company_profile: dict) -> dict:
-        """Simple fallback scoring when AI fails"""
+    def _detailed_fallback_scoring(self, items: list[dict], company_profile: dict) -> dict:
+        """Detailed fallback scoring with component breakdown when AI fails"""
         company_desc = (company_profile.get("description") or "").lower()
         company_city = (company_profile.get("city") or "").lower()
         company_state = (company_profile.get("state") or "").upper()
@@ -843,60 +848,172 @@ class AIMatrixScorer:
             pop_city = (item.get("pop_city") or "").lower()
             pop_state = (item.get("pop_state") or "").upper()
             
-            # Simple heuristic scoring for fallback
-            scores = []
-            
-            # Core services (basic keyword matching)
-            core_keywords = ['manufacturing', 'engineering', 'software', 'consulting', 'maintenance', 'installation']
-            core_score = 6  # default fair
-            if any(kw in company_desc for kw in core_keywords) and any(kw in title + " " + description for kw in core_keywords):
-                core_score = 8
-            scores.append(("tech_core", "Core Services & Capabilities", core_score, 25.0, "Keyword matching"))
-            
-            # Industry expertise (simplified)
-            industry_keywords = ['aerospace', 'defense', 'medical', 'automotive', 'IT', 'construction']
-            industry_score = 5
-            if any(kw in company_desc for kw in industry_keywords) and any(kw in title + " " + description for kw in industry_keywords):
-                industry_score = 7
-            scores.append(("tech_industry", "Industry Domain Expertise", industry_score, 20.0, "Industry matching"))
-            
-            # Add remaining components with default scores
-            remaining_components = [
-                ("tech_standards", "Technical Standards & Certifications", 5, 15.0),
-                ("biz_size", "Business Size & Set-Aside Eligibility", 6, 10.0),
-                ("biz_performance", "Government Contracting Experience", 5, 10.0),
-                ("geo_location", "Geographic Location Match", 8 if pop_state == company_state else 5, 8.0),
-                ("naics_alignment", "NAICS Code Alignment", 6, 7.0),
-                ("financial_capacity", "Financial Capacity", 6, 3.0),
-                ("innovation", "Technology Innovation", 5, 2.0),
-            ]
-            
-            for key, label, score, weight in remaining_components:
-                scores.append((key, label, score, weight, "Fallback heuristic"))
-            
-            # Build breakdown
+            # Score each component with heuristics
             breakdown = []
-            total_weighted = 0
-            for key, label, score, weight, reasoning in scores:
-                breakdown.append({
-                    "key": key,
-                    "label": label,
-                    "score": score,
-                    "reasoning": reasoning,
-                    "weight": weight,
-                    "weighted_contribution": (score * weight / self.total_weight) * 10
-                })
-                total_weighted += score * weight
             
-            final_score = (total_weighted / self.total_weight) * 10
+            # Core Services (25% weight)
+            core_keywords = ['manufacturing', 'engineering', 'software', 'consulting', 'maintenance', 'installation', 'repair', 'testing']
+            core_score = 5  # default
+            if any(kw in company_desc for kw in core_keywords):
+                if any(kw in title + " " + description for kw in core_keywords):
+                    core_score = 8
+                else:
+                    core_score = 6
+            breakdown.append({
+                "key": "tech_core",
+                "label": "Core Services & Capabilities",
+                "score": core_score,
+                "reasoning": "Keyword matching heuristic",
+                "weight": 25.0,
+                "weighted_contribution": (core_score * 25.0 / self.total_weight) * 10
+            })
+            
+            # Industry Expertise (20% weight)
+            industry_keywords = ['aerospace', 'defense', 'medical', 'automotive', 'energy', 'construction', 'IT']
+            industry_score = 5
+            if any(kw in company_desc for kw in industry_keywords):
+                if any(kw in title + " " + description for kw in industry_keywords):
+                    industry_score = 7
+            breakdown.append({
+                "key": "tech_industry", 
+                "label": "Industry Domain Expertise",
+                "score": industry_score,
+                "reasoning": "Industry keyword matching",
+                "weight": 20.0,
+                "weighted_contribution": (industry_score * 20.0 / self.total_weight) * 10
+            })
+            
+            # Technical Standards (15% weight)
+            standards_keywords = ['iso', 'cmmi', 'nist', 'ansi', 'certification', 'quality']
+            standards_score = 5
+            if any(kw in company_desc for kw in standards_keywords) or any(kw in title + " " + description for kw in standards_keywords):
+                standards_score = 7
+            breakdown.append({
+                "key": "tech_standards",
+                "label": "Technical Standards & Certifications", 
+                "score": standards_score,
+                "reasoning": "Standards keyword detection",
+                "weight": 15.0,
+                "weighted_contribution": (standards_score * 15.0 / self.total_weight) * 10
+            })
+            
+            # Business Size (10% weight)
+            size_score = 6  # neutral default
+            if set_aside and any(sa in set_aside for sa in ['sba', '8a', 'wosb', 'sdvosb', 'hubzone']):
+                size_score = 8  # Good if set-aside matches
+            breakdown.append({
+                "key": "biz_size",
+                "label": "Business Size & Set-Aside Eligibility",
+                "score": size_score, 
+                "reasoning": "Set-aside code evaluation",
+                "weight": 10.0,
+                "weighted_contribution": (size_score * 10.0 / self.total_weight) * 10
+            })
+            
+            # Gov Experience (10% weight)
+            gov_keywords = ['contract', 'federal', 'government', 'gsa', 'prime']
+            gov_score = 5
+            if any(kw in company_desc for kw in gov_keywords):
+                gov_score = 7
+            breakdown.append({
+                "key": "biz_performance",
+                "label": "Government Contracting Experience",
+                "score": gov_score,
+                "reasoning": "Government experience keywords", 
+                "weight": 10.0,
+                "weighted_contribution": (gov_score * 10.0 / self.total_weight) * 10
+            })
+            
+            # Geographic Match (8% weight)
+            geo_score = 5  # default neutral
+            if pop_state == company_state:
+                geo_score = 8
+            elif pop_state and company_state:
+                geo_score = 4  # Different states
+            breakdown.append({
+                "key": "geo_location",
+                "label": "Geographic Location Match",
+                "score": geo_score,
+                "reasoning": f"Location comparison: {pop_state} vs {company_state}",
+                "weight": 8.0,
+                "weighted_contribution": (geo_score * 8.0 / self.total_weight) * 10
+            })
+            
+            # NAICS Alignment (7% weight)
+            naics_score = 6  # neutral default
+            breakdown.append({
+                "key": "naics_alignment", 
+                "label": "NAICS Code Alignment",
+                "score": naics_score,
+                "reasoning": f"NAICS: {naics}",
+                "weight": 7.0,
+                "weighted_contribution": (naics_score * 7.0 / self.total_weight) * 10
+            })
+            
+            # Financial Capacity (3% weight)
+            financial_score = 6  # neutral default
+            breakdown.append({
+                "key": "financial_capacity",
+                "label": "Financial Capacity", 
+                "score": financial_score,
+                "reasoning": "Default assessment",
+                "weight": 3.0,
+                "weighted_contribution": (financial_score * 3.0 / self.total_weight) * 10
+            })
+            
+            # Innovation (2% weight) 
+            innovation_keywords = ['ai', 'machine learning', 'automation', 'iot', 'cloud', 'digital']
+            innovation_score = 5
+            if any(kw in company_desc for kw in innovation_keywords) or any(kw in title + " " + description for kw in innovation_keywords):
+                innovation_score = 7
+            breakdown.append({
+                "key": "innovation",
+                "label": "Technology Innovation",
+                "score": innovation_score, 
+                "reasoning": "Innovation keyword detection",
+                "weight": 2.0,
+                "weighted_contribution": (innovation_score * 2.0 / self.total_weight) * 10
+            })
+            
+            # Calculate final score
+            total_weighted = sum(comp["weighted_contribution"] for comp in breakdown)
+            final_score = max(0.0, min(100.0, total_weighted))
             
             fallback_results[notice_id] = {
-                "score": max(0.0, min(100.0, final_score)),
+                "score": final_score,
                 "breakdown": breakdown
             }
         
         return fallback_results
 
+    def _fix_json_issues(self, content: str) -> str:
+        """Attempt to fix common JSON formatting issues"""
+        import re
+        
+        # Remove trailing commas before closing braces/brackets
+        content = re.sub(r',(\s*[}\]])', r'\1', content)
+        
+        # Basic quote escaping in reasoning fields
+        lines = content.split('\n')
+        fixed_lines = []
+        
+        for line in lines:
+            if '"reason"' in line and line.count('"') > 4:
+                # Try to fix unescaped quotes in reason field
+                if ':' in line:
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        key_part = parts[0]
+                        value_part = parts[1].strip()
+                        if value_part.startswith('"') and value_part.endswith('"') and value_part.count('"') > 2:
+                            # Replace internal quotes with escaped quotes
+                            inner_content = value_part[1:-1]  # Remove outer quotes
+                            inner_content = inner_content.replace('"', '\\"')  # Escape internal quotes
+                            value_part = f'"{inner_content}"'
+                            line = key_part + ': ' + value_part
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
 
 def render_enhanced_score_results(ranked_results: List[Dict]):
     """Enhanced results display with detailed component scoring"""
