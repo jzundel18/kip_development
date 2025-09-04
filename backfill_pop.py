@@ -340,32 +340,43 @@ def get_engine():
 
 
 def select_rows_to_backfill(conn) -> List[Dict[str, Any]]:
-    sql = text("""
+    """Fixed version using proper PostgreSQL parameter binding"""
+    # Use %(name)s format for PostgreSQL compatibility
+    sql = """
         SELECT notice_id, title, description
         FROM solicitationraw
         WHERE COALESCE(pop_city,'')='' AND COALESCE(pop_state,'')='' AND
               COALESCE(pop_zip,'')=''  AND COALESCE(pop_country,'')=''
         ORDER BY pulled_at DESC
-        LIMIT :lim
-    """)
-    rows = conn.execute(
-        sql, {"lim": int(MAX_ROWS_TO_BACKFILL)}).mappings().all()
-    return [dict(r) for r in rows]
+        LIMIT %(lim)s
+    """
+
+    # For pandas.read_sql_query, we need to use the engine directly
+    df = pd.read_sql_query(
+        sql, conn, params={"lim": int(MAX_ROWS_TO_BACKFILL)})
+    return df.to_dict(orient="records")
 
 
 def update_pop(conn, notice_id: str, pop: Dict[str, str]) -> int:
+    """Fixed version using proper PostgreSQL parameter binding"""
     pop = {k: (pop.get(k) or "")
            for k in ("pop_city", "pop_state", "pop_zip", "pop_country")}
     pop_raw = build_pop_raw(pop)
+
+    # Use direct SQLAlchemy execution instead of pandas for updates
+    from sqlalchemy import text
     sql = text("""
         UPDATE solicitationraw
         SET pop_city=:city, pop_state=:state, pop_zip=:zip, pop_country=:country, pop_raw=:raw
         WHERE notice_id=:nid
     """)
     res = conn.execute(sql, {
-        "city": pop["pop_city"], "state": pop["pop_state"],
-        "zip": pop["pop_zip"], "country": pop["pop_country"],
-        "raw": pop_raw, "nid": notice_id
+        "city": pop["pop_city"],
+        "state": pop["pop_state"],
+        "zip": pop["pop_zip"],
+        "country": pop["pop_country"],
+        "raw": pop_raw,
+        "nid": notice_id
     })
     return res.rowcount or 0
 

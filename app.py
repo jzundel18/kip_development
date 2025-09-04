@@ -741,15 +741,14 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
     naics = [re.sub(r"[^\d]", "", str(x))
              for x in (filters.get("naics") or []) if x]
     if naics:
-        placeholders = ",".join([f":naics_{i}" for i in range(len(naics))])
-        where_conditions.append(f"naics_code IN ({placeholders})")
-        for i, n in enumerate(naics):
-            params[f"naics_{i}"] = n
+        # Use tuple format for IN clause with pandas/psycopg2
+        naics_tuple = tuple(naics)
+        where_conditions.append(f"naics_code IN {naics_tuple}")
 
     # Date filter
     due_before = filters.get("due_before")
     if due_before:
-        where_conditions.append("response_date <= :due_before")
+        where_conditions.append("response_date <= %(due_before)s")
         params["due_before"] = str(due_before)
 
     # Set-aside filter
@@ -757,7 +756,8 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
     if sas:
         sa_conditions = []
         for i, sa in enumerate(sas):
-            sa_conditions.append(f"LOWER(set_aside_code) LIKE :setaside_{i}")
+            sa_conditions.append(
+                f"LOWER(set_aside_code) LIKE %(setaside_{i})s")
             params[f"setaside_{i}"] = f"%{sa}%"
         where_conditions.append(f"({' OR '.join(sa_conditions)})")
 
@@ -766,32 +766,32 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
     if nts:
         nt_conditions = []
         for i, nt in enumerate(nts):
-            nt_conditions.append(f"LOWER(notice_type) LIKE :noticetype_{i}")
+            nt_conditions.append(f"LOWER(notice_type) LIKE %(noticetype_{i})s")
             params[f"noticetype_{i}"] = f"%{nt}%"
         where_conditions.append(f"({' OR '.join(nt_conditions)})")
 
     where_clause = " AND ".join(
         where_conditions) if where_conditions else "1=1"
 
-    # Keywords
+    # Keywords - PostgreSQL full-text search
     kws = [str(k).lower() for k in (filters.get("keywords_or") or []) if k]
     if kws and engine.url.get_dialect().name == 'postgresql':
         keyword_query = " | ".join(kws)
         where_conditions.append(
-            "to_tsvector('english', title || ' ' || description) @@ to_tsquery(:keyword_query)")
+            "to_tsvector('english', title || ' ' || description) @@ to_tsquery(%(keyword_query)s)")
         params["keyword_query"] = keyword_query
         where_clause = " AND ".join(where_conditions)
 
+    # Use direct integer substitution for LIMIT to avoid parameter binding issues
+    limit_safe = min(int(limit), 5000)
     sql = f"""
         SELECT notice_id, solicitation_number, title, notice_type, posted_date, response_date, archive_date,
                naics_code, set_aside_code, description, link, pop_city, pop_state, pop_zip, pop_country, pop_raw
         FROM solicitationraw 
         WHERE {where_clause}
         ORDER BY posted_date DESC NULLS LAST
-        LIMIT :limit_rows
+        LIMIT {limit_safe}
     """
-
-    params["limit_rows"] = min(limit, 5000)
 
     with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn, params=params)
@@ -799,7 +799,7 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
     if df.empty:
         return df
 
-    # Handle keyword filtering for non-PostgreSQL
+    # Handle keyword filtering for non-PostgreSQL databases
     if kws and engine.url.get_dialect().name != 'postgresql':
         for c in ["title", "description"]:
             if c in df.columns:
