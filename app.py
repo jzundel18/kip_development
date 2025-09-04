@@ -687,22 +687,52 @@ class AIMatrixScorer:
             "state": (company_profile.get("state") or "").strip(),
         }
 
-        # Much simpler prompt to avoid JSON issues
+        # All 10 components for scoring
+        components_list = [
+            {"key": "tech_core", "label": "Core Services", "weight": 25},
+            {"key": "tech_industry", "label": "Industry Expertise", "weight": 20},
+            {"key": "tech_standards", "label": "Technical Standards", "weight": 15},
+            {"key": "biz_size", "label": "Business Size", "weight": 10},
+            {"key": "biz_performance", "label": "Gov Experience", "weight": 10},
+            {"key": "geo_location", "label": "Geographic Match", "weight": 8},
+            {"key": "naics_alignment", "label": "NAICS Match", "weight": 7},
+            {"key": "financial_capacity", "label": "Financial Capacity", "weight": 3},
+            {"key": "innovation", "label": "Technology Innovation", "weight": 2}
+        ]
+
         system = (
-            "Score each solicitation 1-10 for company fit. Return only valid JSON:\n"
-            '{"results":[{"notice_id":"123","score":7,"reason":"brief"}]}'
+            "You are a federal contracting analyst. Score each solicitation on ALL 9 components (1-10 scale).\n\n"
+            "Components to score:\n"
+            "1. tech_core (25%): Core services alignment\n"
+            "2. tech_industry (20%): Industry expertise\n"
+            "3. tech_standards (15%): Technical standards\n"
+            "4. biz_size (10%): Business size fit\n"
+            "5. biz_performance (10%): Government experience\n"
+            "6. geo_location (8%): Geographic alignment\n"
+            "7. naics_alignment (7%): NAICS code match\n"
+            "8. financial_capacity (3%): Financial strength\n"
+            "9. innovation (2%): Technology innovation\n\n"
+            "Return ONLY this exact JSON format:\n"
+            '{"results":[{"notice_id":"ABC123","components":[{"key":"tech_core","score":8,"reason":"good fit"},{"key":"tech_industry","score":7,"reason":"related field"}],"total_score":75}]}\n\n'
+            "Score 1-10 for each component. Keep reasons under 5 words."
         )
 
-        # Simplified user message - no complex nested structure
-        user_content = f"Company: {company_view['description'][:200]}\n\nSolicitations:\n"
-        for item in items:
-            user_content += f"ID: {item.get('notice_id')}\nTitle: {item.get('title', '')[:100]}\nNAICS: {item.get('naics_code', '')}\n\n"
-        
-        user_content += "Return JSON with notice_id, score (1-10), and brief reason for each."
+        user_data = {
+            "company_description": company_view["description"][:300],
+            "company_location": f"{company_view['city']} {company_view['state']}".strip(),
+            "solicitations": [{
+                "notice_id": str(x.get("notice_id", "")),
+                "title": (x.get("title") or "")[:200],
+                "description": (x.get("description") or "")[:600],
+                "naics_code": str(x.get("naics_code") or ""),
+                "set_aside_code": str(x.get("set_aside_code") or ""),
+                "location": f"{x.get('pop_city', '')} {x.get('pop_state', '')}".strip()
+            } for x in items]
+        }
 
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": user_content}
+            {"role": "user", "content": json.dumps(user_data)}
         ]
         return messages, []
 
