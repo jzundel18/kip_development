@@ -224,8 +224,15 @@ def optimize_database():
 
 # Call optimization once per session
 if "db_optimized" not in st.session_state:
-    optimize_database()
+    check_database_optimization()
     st.session_state.db_optimized = True
+
+    # Optional admin tools in sidebar
+    with st.sidebar.expander("⚙️ Admin Tools", expanded=False):
+        if st.button("🔧 Run Database Optimization"):
+            with st.spinner("Creating database indexes..."):
+                optimize_database()
+            st.rerun()
 
 # =========================
 # Database Schema & Migration
