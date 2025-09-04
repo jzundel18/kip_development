@@ -1784,7 +1784,8 @@ with tab5:
         top_df["fit_score"] = top_df["notice_id"].astype(
             str).map(score_by_id).fillna(0).astype(float)
 
-    return {"top_df": top_df, "reason_by_id": reason_by_id}
+        return {"top_df": top_df, "reason_by_id": reason_by_id}
+    
     def render_internal_results():
         """Render the results with vendor finding functionality."""
         data = st.session_state.get('iu_results')
