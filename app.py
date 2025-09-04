@@ -1685,27 +1685,239 @@ with tab4:
     st.header("This feature is in development...")
 
 with tab5:
-    st.header("Internal Use")
-    st.caption("Quick presets that filter/rank solicitations with AI. Results appear below in relevance order with short blurbs.")
+    # Add these functions to your app.py file (before the Internal Use tab section)
 
-    # Configuration
-    internal_top_k = st.number_input(
-        "How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1, key="internal_top_k")
-    max_candidates_cap = st.number_input("Max candidates to consider before AI ranking", min_value=20, max_value=1000, value=300, step=20,
-                                         help="We first pre-trim with embeddings, then rank with the LLM.", key="internal_max_candidates")
+    def _has_locality(locality: dict) -> bool:
+        """Check if locality has meaningful location data"""
+        city = (locality.get("city") or "").strip()
+        state = (locality.get("state") or "").strip()
+        return bool(city or state)
 
-    # Preset buttons
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        run_machine_shop = st.button("Solicitations for Machine Shop",
-                                     type="primary", use_container_width=True, key="iu_btn_machine")
-    with c2:
-        run_services = st.button("Solicitations for Services", type="primary",
-                                 use_container_width=True, key="iu_btn_services")
-    with c3:
-        run_research = st.button(
-            "R&D Solicitations", type="primary", use_container_width=True, key="iu_btn_research")
+    def _extract_locality(text: str) -> dict:
+        """Extract city/state from text using simple regex patterns"""
+        import re
+        
+        # Common patterns for city, state
+        patterns = [
+            r'(\w+(?:\s+\w+)*),\s*([A-Z]{2})',  # "City Name, ST"
+            r'(\w+(?:\s+\w+)*)\s+([A-Z]{2})\s',  # "City Name ST "
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s*([A-Z]{2})',  # Proper case cities
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return {
+                    "city": match.group(1).strip(),
+                    "state": match.group(2).strip()
+                }
+        
+        # Just look for state codes
+        state_match = re.search(r'\b([A-Z]{2})\b', text)
+        if state_match:
+            return {
+                "city": "",
+                "state": state_match.group(1)
+            }
+        
+        return {}
 
+    def _company_name_from_url(url: str) -> str:
+        """Extract company name from URL"""
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc.lower()
+            # Remove common prefixes
+            for prefix in ['www.', 'm.', 'en.']:
+                if domain.startswith(prefix):
+                    domain = domain[len(prefix):]
+            # Remove .com, .org, etc and capitalize
+            name = domain.split('.')[0]
+            return name.replace('-', ' ').replace('_', ' ').title()
+        except:
+            return "Company"
+
+    def ai_simple_match_reason(title: str, description: str, company_type: str, api_key: str) -> str:
+        """Generate simple reason why this solicitation matches for the given company type"""
+        try:
+            client = OpenAI(api_key=api_key)
+            
+            prompt = f"""Explain in 1-2 sentences why this government solicitation would be a good match for a {company_type}:
+
+    Title: {title[:200]}
+    Description: {description[:500]}
+
+    Focus on what specific work the {company_type} would actually do. Be concise and practical."""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=150,
+                timeout=15
+            )
+            
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return f"This solicitation appears to need {company_type} capabilities."
+
+    def find_service_vendors_for_opportunity(solicitation: dict, openai_key: str, serp_key: str, top_n: int = 3) -> tuple:
+        """Find service vendors for a solicitation using SerpAPI"""
+        try:
+            # Extract what type of service is needed
+            title = solicitation.get("title", "")
+            description = solicitation.get("description", "")
+            naics = solicitation.get("naics_code", "")
+            
+            # Extract location
+            pop_city = (solicitation.get("pop_city") or "").strip()
+            pop_state = (solicitation.get("pop_state") or "").strip()
+            
+            # Build search query for the type of service needed
+            client = OpenAI(api_key=openai_key)
+            
+            service_prompt = f"""Based on this government solicitation, what type of service company should I search for? 
+            
+    Title: {title[:200]}
+    Description: {description[:400]}
+
+    Respond with 2-4 search keywords for the type of service provider needed (e.g., "HVAC maintenance contractor", "IT support services", "janitorial services"). Be specific and practical."""
+
+            service_response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": service_prompt}],
+                temperature=0.1,
+                max_tokens=50,
+                timeout=15
+            )
+            
+            service_type = service_response.choices[0].message.content.strip()
+            
+            # Build location-specific search
+            if pop_city and pop_state:
+                location_query = f"{pop_city} {pop_state}"
+                search_query = f"{service_type} {location_query}"
+                search_note = f"Searching for providers in {pop_city}, {pop_state}"
+            elif pop_state:
+                location_query = pop_state
+                search_query = f"{service_type} {pop_state}"
+                search_note = f"Searching for providers in {pop_state}"
+            else:
+                search_query = f"{service_type} contractors United States"
+                search_note = "No specific location found - conducting national search"
+            
+            # Search using SerpAPI
+            import requests
+            
+            serp_params = {
+                "engine": "google",
+                "q": search_query,
+                "api_key": serp_key,
+                "num": 20  # Get more results to filter
+            }
+            
+            response = requests.get("https://serpapi.com/search", params=serp_params, timeout=10)
+            
+            if response.status_code != 200:
+                return None, f"Search API error: {response.status_code}"
+            
+            data = response.json()
+            organic_results = data.get("organic_results", [])
+            
+            if not organic_results:
+                return None, "No search results found"
+            
+            # Filter and process results
+            vendors = []
+            for result in organic_results[:15]:  # Check first 15 results
+                title_text = result.get("title", "")
+                snippet = result.get("snippet", "")
+                link = result.get("link", "")
+                
+                # Skip unwanted results
+                skip_domains = ['yelp.com', 'yellowpages.com', 'facebook.com', 'linkedin.com', 
+                            'indeed.com', 'glassdoor.com', 'wikipedia.org', 'angi.com',
+                            'homeadvisor.com', 'thumbtack.com']
+                
+                if any(domain in link.lower() for domain in skip_domains):
+                    continue
+                    
+                if not link.startswith('http'):
+                    continue
+                
+                # Extract company info
+                company_name = _company_name_from_url(link)
+                if title_text and len(title_text) < 100:  # Use title if it looks like a company name
+                    company_name = title_text.split('|')[0].split('-')[0].strip()
+                
+                # Generate relevance reason
+                try:
+                    reason_prompt = f"""Why would "{company_name}" be a good vendor for this work: {title[:100]}?
+                    
+    Based on: {snippet[:200]}
+
+    Give a 1 sentence reason focusing on their relevant capabilities."""
+
+                    reason_response = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": reason_prompt}],
+                        temperature=0.1,
+                        max_tokens=50,
+                        timeout=10
+                    )
+                    
+                    reason = reason_response.choices[0].message.content.strip()
+                except:
+                    reason = "Appears to offer relevant services for this opportunity."
+                
+                vendors.append({
+                    "name": company_name,
+                    "website": link,
+                    "location": location_query if 'location_query' in locals() else "",
+                    "reason": reason,
+                    "snippet": snippet[:150]
+                })
+                
+                if len(vendors) >= top_n:
+                    break
+            
+            if not vendors:
+                return None, "No relevant service providers found"
+            
+            # Convert to DataFrame
+            import pandas as pd
+            vendors_df = pd.DataFrame(vendors)
+            
+            return vendors_df, search_note
+            
+        except Exception as e:
+            return None, f"Vendor search failed: {str(e)[:100]}"
+
+    def ai_research_direction(title: str, description: str, api_key: str) -> str:
+        """Generate research direction for R&D opportunities"""
+        try:
+            client = OpenAI(api_key=api_key)
+            
+            prompt = f"""Based on this R&D solicitation, suggest a specific research direction or approach:
+
+    Title: {title[:200]}
+    Description: {description[:400]}
+
+    Provide 2-3 sentences describing a promising research approach or technology solution. Be specific and innovative."""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=200,
+                timeout=15
+            )
+            
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return "Consider leveraging cutting-edge technology and innovative methodologies to address the stated research objectives."
+
+    # Updated compute_internal_results function
     def compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
         """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
         # Get all solicitations
@@ -1754,30 +1966,38 @@ with tab5:
             st.info("AI pre-filter returned nothing.")
             return None
 
-        # AI ranking - FIXED: Use the correct function name
-        prof = st.session_state.get('profile', {}) or {}
-        company_profile = {
-            'description': company_desc_internal,
-            'city': prof.get('city', ''),
-            'state': prof.get('state', ''),
-            'company_name': prof.get('company_name', '')
-        }
-
-        ranked = ai_matrix_score_solicitations(
-            df=pretrim,
-            company_profile=company_profile,
-            api_key=OPENAI_API_KEY,
-            top_k=int(internal_top_k),
-            model="gpt-4o-mini",
-            max_candidates=min(len(pretrim), 60)
-        )
-
-        if not ranked:
-            st.info("AI ranking returned no results.")
+        # For Internal Use, we want simpler reasons, not matrix scoring
+        # Use a lightweight ranking approach instead
+        ranked_simple = []
+        
+        # Determine company type for reasoning
+        if research_only:
+            company_type = "research and development company"
+        elif "machine" in st.session_state.get("iu_mode", ""):
+            company_type = "machine shop and manufacturing company"
+        else:
+            company_type = "services company"
+        
+        for idx, row in pretrim.head(int(internal_top_k)).iterrows():
+            title = row.get("title", "")
+            description = row.get("description", "")
+            notice_id = str(row.get("notice_id", ""))
+            
+            # Generate simple match reason
+            reason = ai_simple_match_reason(title, description, company_type, OPENAI_API_KEY)
+            
+            ranked_simple.append({
+                "notice_id": notice_id,
+                "score": 75,  # Default good score for internal use
+                "reason": reason
+            })
+        
+        if not ranked_simple:
+            st.info("No results generated.")
             return None
 
-        # Order by ranking
-        id_order = [x["notice_id"] for x in ranked]
+        # Order by original pretrim order (already relevance-sorted by embeddings)
+        id_order = [x["notice_id"] for x in ranked_simple]
         preorder = {nid: i for i, nid in enumerate(id_order)}
         top_df = pretrim[pretrim["notice_id"].astype(
             str).isin(id_order)].copy()
@@ -1790,168 +2010,36 @@ with tab5:
             top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
         top_df["blurb"] = top_df["notice_id"].astype(str).map(
             blurbs).fillna(top_df["title"].fillna(""))
-
-        # Extract reasons from the ranked results
-        reason_by_id = {}
-        for item in ranked:
-            nid = item.get("notice_id", "")
-            # Try to get a summary reason from the breakdown
-            breakdown = item.get("breakdown", [])
-            if breakdown:
-                # Get the top scoring components as the reason
-                top_components = sorted(
-                    breakdown, key=lambda x: x.get("score", 0), reverse=True)[:3]
-                reasons = [f"{comp.get('label', comp.get('key', ''))} ({comp.get('score', 0)}/10)"
-                        for comp in top_components]
-                reason_by_id[nid] = f"Top matches: {', '.join(reasons)}"
-            else:
-                reason_by_id[nid] = item.get("blurb", "AI assessment")
-
-        # Add fit scores from the ranked results
-        score_by_id = {x["notice_id"]: x.get("score", 0) for x in ranked}
+        
+        # Extract simple reasons
+        reason_by_id = {x["notice_id"]: x["reason"] for x in ranked_simple}
+        
+        # Add fit scores
+        score_by_id = {x["notice_id"]: x["score"] for x in ranked_simple}
         top_df["fit_score"] = top_df["notice_id"].astype(
-            str).map(score_by_id).fillna(0).astype(float)
+            str).map(score_by_id).fillna(75).astype(float)
 
         return {"top_df": top_df, "reason_by_id": reason_by_id}
-    
-    def render_internal_results():
-        """Render the results with vendor finding functionality."""
-        data = st.session_state.get('iu_results')
-        if not data:
-            return
+    st.header("Internal Use")
+    st.caption("Quick presets that filter/rank solicitations with AI. Results appear below in relevance order with short blurbs.")
 
-        key_salt = st.session_state.iu_key_salt or ""
-        top_df = data["top_df"]
-        reason_by_id = data["reason_by_id"]
+    # Configuration
+    internal_top_k = st.number_input(
+        "How many AI-ranked matches?", min_value=1, max_value=50, value=5, step=1, key="internal_top_k")
+    max_candidates_cap = st.number_input("Max candidates to consider before AI ranking", min_value=20, max_value=1000, value=300, step=20,
+                                         help="We first pre-trim with embeddings, then rank with the LLM.", key="internal_max_candidates")
 
-        # Ensure one expander is open by default
-        if st.session_state.iu_open_nid is None and len(top_df):
-            st.session_state.iu_open_nid = str(top_df.iloc[0]["notice_id"])
-
-        st.success(f"Top {len(top_df)} matches by relevance:")
-
-        for idx, row in enumerate(top_df.itertuples(index=False), start=1):
-            hdr = (getattr(row, "blurb", None) or getattr(
-                row, "title", None) or "Untitled")
-            nid = str(getattr(row, "notice_id", ""))
-
-            expanded = (st.session_state.get("iu_open_nid") == nid)
-            with st.expander(f"{idx}. {hdr}", expanded=expanded):
-                left, right = st.columns([2, 1])
-
-                with left:
-                    st.write(
-                        f"**Notice Type:** {getattr(row, 'notice_type', '')}")
-                    st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                    st.write(
-                        f"**Response Due:** {getattr(row, 'response_date', '')}")
-                    st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                    st.write(
-                        f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
-
-                    link = make_sam_public_url(
-                        str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
-                    st.write(f"[Open on SAM.gov]({link})")
-
-                    reason = reason_by_id.get(nid, "")
-                    if reason:
-                        st.markdown("**Why this matched (AI):**")
-                        st.info(reason)
-
-                    # Branch based on mode
-                    if st.session_state.get("iu_mode") == "rd":
-                        # Research mode - show research direction
-                        direction = ai_research_direction(
-                            getattr(row, "title", ""), getattr(row, "description", ""), OPENAI_API_KEY)
-                        st.markdown("**Proposed Research Direction:**")
-                        st.write(direction)
-                    else:
-                        # Services/Machine shop mode - show vendor finder
-                        btn_label = "Find 3 potential vendors (SerpAPI)" if st.session_state.get(
-                            "iu_mode") == "machine" else "Find 3 local service providers"
-                        btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
-
-                        if st.button(btn_label, key=btn_key):
-                            sol_dict = {
-                                "notice_id": nid,
-                                "title": getattr(row, "title", ""),
-                                "description": getattr(row, "description", ""),
-                                "naics_code": getattr(row, "naics_code", ""),
-                                "set_aside_code": getattr(row, "set_aside_code", ""),
-                                "response_date": getattr(row, "response_date", ""),
-                                "posted_date": getattr(row, "posted_date", ""),
-                                "link": getattr(row, "link", ""),
-                            }
-
-                            # Extract locality
-                            locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
-                                getattr(row, "pop_state", ""))}
-                            if not _has_locality(locality):
-                                locality = _extract_locality(
-                                    f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
-
-                            # Set status message
-                            if _has_locality(locality):
-                                where = ", ".join(
-                                    [x for x in [locality.get("city", ""), locality.get("state", "")] if x])
-                                st.session_state.vendor_notes[
-                                    nid] = f"Place of performance: {where}"
-                                st.session_state.vendor_errors.pop(nid, None)
-                            else:
-                                st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
-
-                            # Find vendors
-                            vendors_df, note = find_service_vendors_for_opportunity(
-                                sol_dict, OPENAI_API_KEY, SERP_API_KEY, top_n=3)
-
-                            if vendors_df is None or vendors_df.empty:
-                                loc_msg = ""
-                                if _has_locality(locality):
-                                    where = ", ".join([x for x in [locality.get("city", ""), locality.get(
-                                        "state", "")] if x]) or locality.get("state", "")
-                                    loc_msg = f" for the specified locality ({where})"
-                                st.session_state.vendor_errors[
-                                    nid] = f"No service providers found{loc_msg}."
-                            else:
-                                st.session_state.vendor_errors.pop(nid, None)
-
-                            st.session_state.vendor_suggestions[nid] = vendors_df
-                            st.rerun()
-
-                with right:
-                    # Display status messages and vendor results
-                    note_msg = st.session_state.vendor_notes.get(nid)
-                    if note_msg:
-                        st.caption(note_msg)
-
-                    err_msg = st.session_state.vendor_errors.get(nid)
-                    if err_msg:
-                        st.info(err_msg)
-
-                    vend_df = st.session_state.vendor_suggestions.get(nid)
-                    if isinstance(vend_df, pd.DataFrame) and not vend_df.empty:
-                        st.markdown("**Vendor candidates**")
-                        for j, v in vend_df.iterrows():
-                            raw_name = (v.get("name") or "").strip()
-                            website = (v.get("website") or "").strip()
-                            location = (v.get("location") or "").strip()
-                            reason_txt = (v.get("reason") or "").strip()
-
-                            display_name = raw_name or _company_name_from_url(
-                                website) or "Unnamed Vendor"
-                            if website:
-                                st.markdown(
-                                    f"- **[{display_name}]({website})**")
-                            else:
-                                st.markdown(f"- **{display_name}**")
-                            if location:
-                                st.caption(location)
-                            if reason_txt:
-                                st.write(reason_txt)
-                    else:
-                        if not err_msg:
-                            st.caption(
-                                "No vendors yet. Click the button to fetch.")
+    # Preset buttons
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        run_machine_shop = st.button("Solicitations for Machine Shop",
+                                     type="primary", use_container_width=True, key="iu_btn_machine")
+    with c2:
+        run_services = st.button("Solicitations for Services", type="primary",
+                                 use_container_width=True, key="iu_btn_services")
+    with c3:
+        run_research = st.button(
+            "R&D Solicitations", type="primary", use_container_width=True, key="iu_btn_research")
 
     # Handle preset button clicks
     if run_machine_shop:
