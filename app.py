@@ -897,7 +897,7 @@ class AIMatrixScorer:
         
         return fallback_results
 
-# Enhanced rendering function for the new scoring breakdown
+
 def render_enhanced_score_results(ranked_results: List[Dict]):
     """Enhanced results display with detailed component scoring"""
     if not ranked_results:
