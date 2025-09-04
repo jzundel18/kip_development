@@ -1297,7 +1297,7 @@ with tab5:
 
     def render_internal_results():
         """Render the results with vendor finding functionality."""
-        data = st.session_state.iu_results
+        data = st.session_state.get('iu_results')
         if not data:
             return
 
@@ -1476,11 +1476,12 @@ with tab5:
         st.session_state.iu_results = data
         st.rerun()
 
-    # Always render cached results
-    render_internal_results()
+    # Only render results if they exist
+    if 'iu_results' in st.session_state and st.session_state.iu_results:
+        render_internal_results()
 
     # Export option
-    if st.session_state.iu_results and isinstance(st.session_state.iu_results.get("top_df"), pd.DataFrame):
+    if st.session_state.get('iu_results') and isinstance(st.session_state.iu_results.get("top_df"), pd.DataFrame):
         top_df = st.session_state.iu_results["top_df"]
         st.download_button(f"Download Internal Use Results (Top-{int(internal_top_k)})",
                            top_df.to_csv(index=False).encode("utf-8"),
