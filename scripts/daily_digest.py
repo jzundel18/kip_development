@@ -1,38 +1,30 @@
 #!/usr/bin/env python3
 """
-Daily email digest:
-- For each subscriber, fetch notices posted yesterday (UTC) from solicitationraw
-- Score against their company description (embeddings)
-- Email up to N top matches (or "no close match today")
+Daily email digest with two-stage filtering for efficiency:
+Stage 1: Fast embedding-based pre-filter (cheap)
+Stage 2: Detailed matrix scoring on top candidates only (expensive but limited)
 
-Required env vars (set as GitHub Actions repo secrets):
-  SUPABASE_DB_URL     -> e.g., postgresql+psycopg2://... (same as your app)
-  OPENAI_API_KEY      -> for embeddings and blurbs
-  SENDGRID_API_KEY    -> for sending email
-  FROM_EMAIL          -> verified sender, e.g. alerts@yourdomain.com
-  APP_BASE_URL        -> optional, used for UI links (e.g., https://yourapp.example)
+Required env vars:
+  SUPABASE_DB_URL, OPENAI_API_KEY, SENDGRID_API_KEY, FROM_EMAIL
 Optional:
-  DIGEST_MAX_RESULTS       -> default 5
-  DIGEST_MIN_SIMILARITY    -> default 0.35 (0..1 cosine with normalized vectors)
+  APP_BASE_URL, DIGEST_MAX_RESULTS, DIGEST_MIN_SCORE
+  DIGEST_PREFILTER_CANDIDATES (new - controls stage 1 output)
 """
 
-from scoring import AIMatrixScorer, ai_matrix_score_solicitations
 import os
 import sys
-import math
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-
 import pandas as pd
 import numpy as np
 import sqlalchemy as sa
 from sqlalchemy import text
-
-# deps: openai (>=1.x), sendgrid
 from openai import OpenAI
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content
+
+from scoring import AIMatrixScorer, ai_matrix_score_solicitations
 
 # ---------- Config ----------
 DB_URL = os.getenv("SUPABASE_DB_URL", "sqlite:///app.db")
@@ -43,6 +35,9 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
 
 MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
 MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
+
+# NEW: Controls how many candidates pass stage 1 filtering
+PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "50"))
 
 if not (DB_URL and OPENAI_API_KEY and SENDGRID_API_KEY and FROM_EMAIL):
     print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, SENDGRID_API_KEY, FROM_EMAIL.", file=sys.stderr)
@@ -57,22 +52,14 @@ logging.basicConfig(
 engine = sa.create_engine(DB_URL, pool_pre_ping=True)
 oai = OpenAI(api_key=OPENAI_API_KEY)
 
-# ---------- Helpers ----------
-
-
-def _iso_utc_floor_day(dt: datetime) -> datetime:
-    return datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc)
-
+# ---------- Helper Functions ----------
 
 def _yesterday_utc_window():
-    """Return start and end dates as YYYY-MM-DD strings to match database format"""
+    """Return start and end dates as YYYY-MM-DD strings"""
     now = datetime.now(timezone.utc)
-    end_date = now.date()  # today
-    start_date = end_date - timedelta(days=1)  # yesterday
-
-    # Return as simple YYYY-MM-DD strings to match your database format
+    end_date = now.date()
+    start_date = end_date - timedelta(days=1)
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
-
 
 def _fetch_subscribers(conn) -> pd.DataFrame:
     """Fetch active subscribers with complete company profile info"""
@@ -96,44 +83,83 @@ def _fetch_subscribers(conn) -> pd.DataFrame:
         return pd.DataFrame(columns=["user_id", "email", "company_description", "company_name", "city", "state"])
     return df.fillna("")
 
-
 def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFrame:
-    """
-    Fetch notices posted on the start_date (yesterday)
-    Database format: YYYY-MM-DD, so we can do exact string match
-    """
+    """Fetch notices posted on the start_date (yesterday)"""
     cols = [
         "notice_id", "title", "description", "naics_code", "set_aside_code",
-        "posted_date", "response_date", "link"
+        "posted_date", "response_date", "link", "pop_city", "pop_state"
     ]
     try:
-        # Use SQLAlchemy text() with proper parameter binding for PostgreSQL
-        from sqlalchemy import text
-
         sql = text(f"""
             SELECT {", ".join(cols)}
             FROM solicitationraw
             WHERE posted_date = :yesterday_date
         """)
-
-        df = pd.read_sql_query(
-            sql,
-            conn,
-            params={"yesterday_date": start_date}
-        )
+        df = pd.read_sql_query(sql, conn, params={"yesterday_date": start_date})
         logging.info(f"Found {len(df)} notices posted on {start_date}")
     except Exception as e:
         logging.error("Error reading solicitationraw: %s", e)
         return pd.DataFrame(columns=cols)
     return df.fillna("")
 
+def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: int = 50) -> pd.DataFrame:
+    """Stage 1: Fast embedding-based filtering"""
+    if notices.empty or not company_desc.strip():
+        return notices.head(top_k)  # Fallback without filtering
+    
+    try:
+        logging.info(f"Stage 1: Filtering {len(notices)} notices to top {top_k} using embeddings")
+        
+        # Create text representations for comparison
+        notice_texts = (notices["title"].fillna("") + " " + notices["description"].fillna("")).str.slice(0, 2000).tolist()
+        
+        # Get company embedding
+        company_response = oai.embeddings.create(
+            model="text-embedding-3-small", 
+            input=[company_desc]
+        )
+        company_vector = np.array(company_response.data[0].embedding, dtype=np.float32)
+        company_vector = company_vector / (np.linalg.norm(company_vector) + 1e-9)
+        
+        # Get notice embeddings in batches
+        notice_vectors = []
+        batch_size = 500
+        
+        for i in range(0, len(notice_texts), batch_size):
+            batch = notice_texts[i:i+batch_size]
+            batch_response = oai.embeddings.create(
+                model="text-embedding-3-small", 
+                input=batch
+            )
+            batch_vectors = [d.embedding for d in batch_response.data]
+            notice_vectors.extend(batch_vectors)
+        
+        # Calculate similarities
+        notice_matrix = np.array(notice_vectors, dtype=np.float32)
+        notice_matrix = notice_matrix / (np.linalg.norm(notice_matrix, axis=1, keepdims=True) + 1e-9)
+        similarities = notice_matrix @ company_vector
+        
+        # Sort by similarity and take top k
+        notices_with_scores = notices.copy()
+        notices_with_scores["similarity_score"] = similarities
+        top_notices = notices_with_scores.sort_values("similarity_score", ascending=False).head(top_k)
+        
+        logging.info(f"Stage 1 complete: {len(top_notices)} candidates selected (similarity range: {top_notices['similarity_score'].min():.3f} - {top_notices['similarity_score'].max():.3f})")
+        
+        return top_notices.drop(columns=["similarity_score"])
+        
+    except Exception as e:
+        logging.warning(f"Stage 1 embedding filter failed: {e}. Using first {top_k} notices as fallback.")
+        return notices.head(top_k)
 
-def _score_notices_for_subscriber(notices: pd.DataFrame, subscriber: dict) -> pd.DataFrame:
-    """Score notices using matrix scorer for a single subscriber"""
+def _stage2_detailed_scoring(notices: pd.DataFrame, subscriber: dict) -> pd.DataFrame:
+    """Stage 2: Detailed matrix scoring on pre-filtered candidates"""
     if notices.empty:
         return notices.copy()
 
-    # Build company profile from subscriber data
+    logging.info(f"Stage 2: Detailed scoring of {len(notices)} candidates")
+    
+    # Build company profile
     company_profile = {
         "description": subscriber.get("company_description", "").strip(),
         "company_name": subscriber.get("company_name", "").strip(),
@@ -142,38 +168,47 @@ def _score_notices_for_subscriber(notices: pd.DataFrame, subscriber: dict) -> pd
     }
 
     if not company_profile["description"]:
+        # No company description - return with default scores
         df = notices.copy()
-        df["score"] = 0.0
-        df["overall_reason"] = "No company description available"
+        df["score"] = 50.0
+        df["overall_reason"] = "No company description available for detailed scoring"
         return df
 
-    # Use the same scoring function from app.py
-    results = ai_matrix_score_solicitations(
-        df=notices,
-        company_profile=company_profile,
-        api_key=OPENAI_API_KEY,
-        top_k=len(notices),  # Score all notices
-        model="gpt-4o-mini"
-    )
+    # Use the matrix scoring from scoring.py
+    try:
+        results = ai_matrix_score_solicitations(
+            df=notices,
+            company_profile=company_profile,
+            api_key=OPENAI_API_KEY,
+            top_k=len(notices),  # Score all candidates
+            model="gpt-4o-mini"
+        )
 
-    # Convert results to DataFrame format
-    scores_map = {r["notice_id"]: r["score"] for r in results}
-    reasons_map = {r["notice_id"]: r.get(
-        "overall_reason", "") for r in results}
+        # Convert results to DataFrame format
+        scores_map = {r["notice_id"]: r["score"] for r in results}
+        reasons_map = {r["notice_id"]: r.get("overall_reason", "") for r in results}
 
-    df = notices.copy()
-    df["score"] = df["notice_id"].astype(str).map(scores_map).fillna(0.0)
-    df["overall_reason"] = df["notice_id"].astype(
-        str).map(reasons_map).fillna("")
+        df = notices.copy()
+        df["score"] = df["notice_id"].astype(str).map(scores_map).fillna(0.0)
+        df["overall_reason"] = df["notice_id"].astype(str).map(reasons_map).fillna("")
 
-    return df.sort_values("score", ascending=False)
+        logging.info(f"Stage 2 complete: Scored {len(df)} notices (score range: {df['score'].min():.1f} - {df['score'].max():.1f})")
+        
+        return df.sort_values("score", ascending=False)
+        
+    except Exception as e:
+        logging.error(f"Stage 2 detailed scoring failed: {e}")
+        # Fallback with default scores
+        df = notices.copy()
+        df["score"] = 50.0
+        df["overall_reason"] = f"Detailed scoring failed: {str(e)[:100]}"
+        return df
 
 def _sam_public_url(notice_id: str, link: str | None) -> str:
     if link and "api.sam.gov" not in link:
         return link
     nid = (notice_id or "").strip()
     return f"https://sam.gov/opp/{nid}/view" if nid else "https://sam.gov/"
-
 
 def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""):
     sg = SendGridAPIClient(SENDGRID_API_KEY)
@@ -190,7 +225,6 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
         logging.info("Sent to %s (status %s)", to_email, resp.status_code)
     except Exception as e:
         logging.error("SendGrid error to %s: %s", to_email, e)
-
 
 def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame) -> tuple[str, str]:
     """Render email with matrix scores and reasons"""
@@ -246,15 +280,14 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
 
 # ---------- Main ----------
 
-
 def main():
     yesterday_date, today_date = _yesterday_utc_window()
-    logging.info("Looking for notices posted on: %s", yesterday_date)
+    logging.info("Processing notices posted on: %s", yesterday_date)
+    logging.info("Two-stage filtering: Stage 1 → %d candidates, Stage 2 → detailed scoring", PREFILTER_CANDIDATES)
 
     with engine.connect() as conn:
-        # Debug: show what dates we have (fixed for PostgreSQL)
+        # Debug: show what dates we have
         try:
-            from sqlalchemy import text
             recent_dates = conn.execute(text("""
                 SELECT posted_date, COUNT(*) 
                 FROM solicitationraw 
@@ -276,17 +309,13 @@ def main():
 
         notices = _fetch_yesterday_notices(conn, yesterday_date, today_date)
         if notices.empty:
-            logging.info(
-                "No notices posted on %s. Sending 'no matches' to all subscribers.", yesterday_date)
+            logging.info("No notices posted on %s. Sending 'no matches' to all subscribers.", yesterday_date)
             for _, s in subs.iterrows():
-                subject, html = _render_email(
-                    s["email"], s["company_description"], pd.DataFrame())
+                subject, html = _render_email(s["email"], s["company_description"], pd.DataFrame())
                 _send_email(s["email"], subject, html)
             return
 
-        # Rest of the function stays the same...
-        logging.info("Found %d notices from %s, processing subscribers...", len(
-            notices), yesterday_date)
+        logging.info("Found %d notices from %s, processing %d subscribers...", len(notices), yesterday_date, len(subs))
 
         for _, s in subs.iterrows():
             email = s["email"].strip()
@@ -296,25 +325,33 @@ def main():
                 continue
 
             if not desc:
-                logging.info(
-                    "Subscriber %s has no company description; sending 'no matches'.", email)
+                logging.info("Subscriber %s has no company description; sending 'no matches'.", email)
                 subject, html = _render_email(email, desc, pd.DataFrame())
                 _send_email(email, subject, html)
                 continue
 
-            # Score notices using matrix scorer
-            logging.info(f"Scoring notices for {email}...")
-            scored_notices = _score_notices_for_subscriber(notices, s.to_dict())
+            logging.info(f"Processing subscriber: {email}")
+            
+            # STAGE 1: Fast embedding-based pre-filter
+            stage1_candidates = _stage1_embedding_filter(notices, desc, top_k=PREFILTER_CANDIDATES)
+            
+            if stage1_candidates.empty:
+                logging.info(f"Stage 1 returned no candidates for {email}")
+                subject, html = _render_email(email, desc, pd.DataFrame())
+                _send_email(email, subject, html)
+                continue
+            
+            # STAGE 2: Detailed scoring on filtered candidates
+            scored_notices = _stage2_detailed_scoring(stage1_candidates, s.to_dict())
 
             # Filter by minimum score and limit results
-            df = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
-            logging.info(f"Found {len(df)} matches above {MIN_SCORE} for {email}")
+            final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
+            logging.info(f"Final results for {email}: {len(final_matches)} matches above {MIN_SCORE}")
 
-            subject, html = _render_email(email, desc, df)
+            subject, html = _render_email(email, desc, final_matches)
             _send_email(email, subject, html)
 
-    logging.info("Done.")
-
+    logging.info("Daily digest complete.")
 
 if __name__ == "__main__":
     main()
