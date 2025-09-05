@@ -16,6 +16,7 @@ Optional:
   DIGEST_MIN_SIMILARITY    -> default 0.35 (0..1 cosine with normalized vectors)
 """
 
+from app import AIMatrixScorer, ai_matrix_score_solicitations
 import os
 import sys
 import math
@@ -41,7 +42,7 @@ FROM_EMAIL = os.getenv("FROM_EMAIL")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
 
 MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
-MIN_SIM = float(os.getenv("DIGEST_MIN_SIMILARITY", "0.35"))
+MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
 
 if not (DB_URL and OPENAI_API_KEY and SENDGRID_API_KEY and FROM_EMAIL):
     print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, SENDGRID_API_KEY, FROM_EMAIL.", file=sys.stderr)
@@ -74,31 +75,25 @@ def _yesterday_utc_window():
 
 
 def _fetch_subscribers(conn) -> pd.DataFrame:
-    """
-    Expect a table `digest_subscribers`:
-      id SERIAL PK
-      user_id INT NOT NULL
-      email TEXT NOT NULL
-      is_enabled BOOL DEFAULT TRUE
-
-    And we will try to pull company description from `company_profile` (description column).
-    """
-    # Minimal, resilient fetch:
+    """Fetch active subscribers with complete company profile info"""
     try:
         df = pd.read_sql_query(
             """
             SELECT s.user_id,
                    s.email,
-                   COALESCE(cp.description, '') AS company_description
+                   COALESCE(cp.description, '') AS company_description,
+                   COALESCE(cp.company_name, '') AS company_name,
+                   COALESCE(cp.city, '') AS city,
+                   COALESCE(cp.state, '') AS state
             FROM digest_subscribers s
             LEFT JOIN company_profile cp ON cp.user_id = s.user_id
-            WHERE COALESCE(s.is_enabled, TRUE) = TRUE
+            WHERE COALESCE(s.is_active, TRUE) = TRUE
             """,
             conn
         )
     except Exception as e:
         logging.error("Error reading subscribers/company_profile: %s", e)
-        return pd.DataFrame(columns=["user_id", "email", "company_description"])
+        return pd.DataFrame(columns=["user_id", "email", "company_description", "company_name", "city", "state"])
     return df.fillna("")
 
 
@@ -133,68 +128,45 @@ def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFra
     return df.fillna("")
 
 
-def _embed_texts(texts: list[str]) -> np.ndarray:
-    """Return L2-normalized embeddings (float32)."""
-    if not texts:
-        return np.zeros((0, 1536), dtype=np.float32)
-    r = oai.embeddings.create(model="text-embedding-3-small", input=texts)
-    X = np.array([d.embedding for d in r.data], dtype=np.float32)
-    X /= (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
-    return X
+def _score_notices_for_subscriber(notices: pd.DataFrame, subscriber: dict) -> pd.DataFrame:
+    """Score notices using matrix scorer for a single subscriber"""
+    if notices.empty:
+        return notices.copy()
 
+    # Build company profile from subscriber data
+    company_profile = {
+        "description": subscriber.get("company_description", "").strip(),
+        "company_name": subscriber.get("company_name", "").strip(),
+        "city": subscriber.get("city", "").strip(),
+        "state": subscriber.get("state", "").strip()
+    }
 
-def _score_matches(company_desc: str, notices: pd.DataFrame) -> pd.DataFrame:
-    """
-    Cosine similarity between company_desc and (title + description).
-    Return df with 'sim' column, sorted desc.
-    """
-    if notices.empty or not company_desc.strip():
-        d = notices.copy()
-        d["sim"] = 0.0
-        return d
+    if not company_profile["description"]:
+        df = notices.copy()
+        df["score"] = 0.0
+        df["overall_reason"] = "No company description available"
+        return df
 
-    # Query vector
-    Xq = _embed_texts([company_desc.strip()])[0]
+    # Use the same scoring function from app.py
+    results = ai_matrix_score_solicitations(
+        df=notices,
+        company_profile=company_profile,
+        api_key=OPENAI_API_KEY,
+        top_k=len(notices),  # Score all notices
+        model="gpt-4o-mini"
+    )
 
-    # Candidate vectors
-    texts = (notices["title"].fillna("") + " " +
-             notices["description"].fillna("")).str.slice(0, 2000).tolist()
-    X = _embed_texts(texts)
+    # Convert results to DataFrame format
+    scores_map = {r["notice_id"]: r["score"] for r in results}
+    reasons_map = {r["notice_id"]: r.get(
+        "overall_reason", "") for r in results}
 
-    sims = X @ Xq  # cosine with normalized vectors
-    out = notices.copy()
-    out["sim"] = sims
-    out.sort_values("sim", ascending=False, inplace=True)
-    return out
+    df = notices.copy()
+    df["score"] = df["notice_id"].astype(str).map(scores_map).fillna(0.0)
+    df["overall_reason"] = df["notice_id"].astype(
+        str).map(reasons_map).fillna("")
 
-
-def _make_blurbs(rows: list[dict]) -> dict[str, str]:
-    """Short (~10 words) blurbs with OpenAI; keep it tiny and robust."""
-    if not rows:
-        return {}
-    items = []
-    for r in rows[:20]:
-        items.append({"id": str(r.get("notice_id", "")), "title": r.get(
-            "title", "")[:200], "description": r.get("description", "")[:600]})
-
-    sys = "You are concise. For each item, write a ~10-word plain-English blurb of what the solicitation needs. Return JSON."
-    user = {"items": items, "format": {
-        "blurbs": [{"id": "string", "blurb": "string"}]}}
-    try:
-        resp = oai.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": sys}, {
-                "role": "user", "content": json.dumps(user)}],
-            temperature=0.2,
-        )
-        data = json.loads(resp.choices[0].message.content or "{}")
-        return {str(d.get("id", "")): str(d.get("blurb", "")).strip() for d in data.get("blurbs", [])}
-    except Exception as e:
-        logging.warning(
-            "Blurb generation failed; sending without blurbs (%s).", e)
-        return {}
-
+    return df.sort_values("score", ascending=False)
 
 def _sam_public_url(notice_id: str, link: str | None) -> str:
     if link and "api.sam.gov" not in link:
@@ -221,44 +193,54 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
 
 
 def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame) -> tuple[str, str]:
-    """
-    Return (subject, html). If no picks, we say 'no close matches today'.
-    """
+    """Render email with matrix scores and reasons"""
     if picks.empty:
         subject = "KIP Daily: no close matches today"
         html = f"""
         <p>Hi,</p>
-        <p>No close matches were found for your company description yesterday.</p>
-        <p>You’ll receive up to {MAX_RESULTS} new matches when there are good fits.</p>
+        <p>No close matches (score ≥ {MIN_SCORE}) were found for your company description yesterday.</p>
+        <p>You'll receive up to {MAX_RESULTS} new matches when there are good fits.</p>
         """
         return subject, html
 
-    # optional blurbs
-    blurbs = _make_blurbs(picks.to_dict(orient="records"))
     rows_html = []
     for _, r in picks.iterrows():
         nid = str(r.get("notice_id", ""))
         title = (r.get("title", "") or "Untitled").strip()
-        sim = float(r.get("sim", 0.0))
+        score = float(r.get("score", 0.0))
+        reason = r.get("overall_reason", "AI assessment of match quality")
         url = _sam_public_url(nid, r.get("link", ""))
-        blurb = blurbs.get(nid, "")
+
+        # Color code the score
+        if score >= 80:
+            score_color = "#28a745"  # green
+            score_icon = "🟢"
+        elif score >= 60:
+            score_color = "#ffc107"  # yellow
+            score_icon = "🟡"
+        else:
+            score_color = "#dc3545"  # red
+            score_icon = "🔴"
+
         rows_html.append(f"""
-          <li style="margin-bottom:10px">
-            <div><a href="{url}"><strong>{title}</strong></a></div>
-            {'<div>'+blurb+'</div>' if blurb else ''}
-            <div style="color:#777">Similarity: {sim:.2f}</div>
+          <li style="margin-bottom:15px; border-left: 3px solid {score_color}; padding-left: 10px;">
+            <div><a href="{url}" style="color: #0066cc; text-decoration: none;"><strong>{title}</strong></a></div>
+            <div style="color: {score_color}; font-weight: bold; margin: 5px 0;">
+              {score_icon} Match Score: {score:.1f}/100
+            </div>
+            {f'<div style="margin: 5px 0; color: #555;">{reason}</div>' if reason else ''}
           </li>
         """)
 
-    subject = "KIP Daily: top matches from yesterday"
+    subject = f"KIP Daily: {len(rows_html)} top matches from yesterday"
     header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
     html = f"""
     <p>Hi,</p>
-    <p>Here are up to {MAX_RESULTS} matches from yesterday that best fit your profile:</p>
-    <ul>
+    <p>Here are your top-scoring opportunities from yesterday (minimum score: {MIN_SCORE}):</p>
+    <ul style="list-style-type: none; padding-left: 0;">
       {''.join(rows_html)}
     </ul>
-    <p><a href="{header_link}">Open KIP</a> to filter, view details, or update your profile.</p>
+    <p><a href="{header_link}" style="color: #0066cc;">Open KIP</a> to view full details and manage preferences.</p>
     """
     return subject, html
 
@@ -303,12 +285,8 @@ def main():
             return
 
         # Rest of the function stays the same...
-        logging.info("Found %d notices from %s, processing subscribers...", len(notices), yesterday_date)
-        
-        # Precompute embeddings for notices once to speed up (if many subs)
-        base_texts = (notices["title"].fillna(
-            "") + " " + notices["description"].fillna("")).str.slice(0, 2000).tolist()
-        X = _embed_texts(base_texts)
+        logging.info("Found %d notices from %s, processing subscribers...", len(
+            notices), yesterday_date)
 
         for _, s in subs.iterrows():
             email = s["email"].strip()
@@ -324,15 +302,13 @@ def main():
                 _send_email(email, subject, html)
                 continue
 
-            # score for this subscriber using precomputed X
-            Xq = _embed_texts([desc])[0]
-            sims = X @ Xq
-            df = notices.copy()
-            df["sim"] = sims
+            # Score notices using matrix scorer
+            logging.info(f"Scoring notices for {email}...")
+            scored_notices = _score_notices_for_subscriber(notices, s.to_dict())
 
-            # keep only strong enough matches
-            df = df[df["sim"] >= MIN_SIM].sort_values(
-                "sim", ascending=False).head(MAX_RESULTS).reset_index(drop=True)
+            # Filter by minimum score and limit results
+            df = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
+            logging.info(f"Found {len(df)} matches above {MIN_SCORE} for {email}")
 
             subject, html = _render_email(email, desc, df)
             _send_email(email, subject, html)

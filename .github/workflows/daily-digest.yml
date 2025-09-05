@@ -38,7 +38,7 @@ jobs:
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           # Optional tuning
           DIGEST_MAX_RESULTS: "5"
-          DIGEST_MIN_SIMILARITY: "0.35"
+          DIGEST_MIN_SCORE: "60"
           PYTHONPATH: ${{ github.workspace }}
         run: |
           python scripts/daily_digest.py
