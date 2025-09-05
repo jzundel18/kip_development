@@ -64,10 +64,13 @@ def _iso_utc_floor_day(dt: datetime) -> datetime:
 
 
 def _yesterday_utc_window():
+    """Return start and end dates as YYYY-MM-DD strings to match database format"""
     now = datetime.now(timezone.utc)
-    end = _iso_utc_floor_day(now)                # today 00:00 UTC
-    start = end - timedelta(days=1)              # yesterday 00:00 UTC
-    return start, end
+    end_date = now.date()  # today
+    start_date = end_date - timedelta(days=1)  # yesterday
+
+    # Return as simple YYYY-MM-DD strings to match your database format
+    return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 
 def _fetch_subscribers(conn) -> pd.DataFrame:
@@ -99,25 +102,27 @@ def _fetch_subscribers(conn) -> pd.DataFrame:
     return df.fillna("")
 
 
-def _fetch_yesterday_notices(conn, start_iso: str, end_iso: str) -> pd.DataFrame:
+def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFrame:
     """
-    solicitationraw.posted_date is TEXT but your app usually stores ISO-8601.
-    Lexicographic string compare works for ISO timestamps, so we filter in SQL.
+    Fetch notices posted on the start_date (yesterday)
+    Database format: YYYY-MM-DD, so we can do exact string match
     """
     cols = [
         "notice_id", "title", "description", "naics_code", "set_aside_code",
         "posted_date", "response_date", "link"
     ]
     try:
+        # Since your dates are YYYY-MM-DD format, we can do exact match for yesterday
         df = pd.read_sql_query(
             f"""
             SELECT {", ".join(cols)}
             FROM solicitationraw
-            WHERE posted_date >= :start AND posted_date < :end
+            WHERE posted_date = :yesterday_date
             """,
             conn,
-            params={"start": start_iso, "end": end_iso},
+            params={"yesterday_date": start_date},
         )
+        logging.info(f"Found {len(df)} notices posted on {start_date}")
     except Exception as e:
         logging.error("Error reading solicitationraw: %s", e)
         return pd.DataFrame(columns=cols)
@@ -257,27 +262,44 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
 
 
 def main():
-    start, end = _yesterday_utc_window()
-    start_iso = start.isoformat()
-    end_iso = end.isoformat()
-    logging.info("Window: %s to %s (UTC yesterday)", start_iso, end_iso)
+    yesterday_date, today_date = _yesterday_utc_window()
+    logging.info("Looking for notices posted on: %s", yesterday_date)
 
     with engine.connect() as conn:
+        # Debug: show what dates we have
+        try:
+            recent_dates = conn.execute(sa.text("""
+                SELECT posted_date, COUNT(*) 
+                FROM solicitationraw 
+                WHERE posted_date IS NOT NULL 
+                GROUP BY posted_date 
+                ORDER BY posted_date DESC 
+                LIMIT 5
+            """)).fetchall()
+            logging.info("Recent posted_dates in database:")
+            for date_val, count in recent_dates:
+                logging.info("  %s: %d records", date_val, count)
+        except Exception as e:
+            logging.warning("Could not fetch recent dates: %s", e)
+
         subs = _fetch_subscribers(conn)
         if subs.empty:
             logging.info("No active subscribers. Exiting.")
             return
 
-        notices = _fetch_yesterday_notices(conn, start_iso, end_iso)
+        notices = _fetch_yesterday_notices(conn, yesterday_date, today_date)
         if notices.empty:
             logging.info(
-                "No notices posted yesterday. Sending 'no matches' to all.")
+                "No notices posted on %s. Sending 'no matches' to all subscribers.", yesterday_date)
             for _, s in subs.iterrows():
                 subject, html = _render_email(
                     s["email"], s["company_description"], pd.DataFrame())
                 _send_email(s["email"], subject, html)
             return
 
+        # Rest of the function stays the same...
+        logging.info("Found %d notices from %s, processing subscribers...", len(notices), yesterday_date)
+        
         # Precompute embeddings for notices once to speed up (if many subs)
         base_texts = (notices["title"].fillna(
             "") + " " + notices["description"].fillna("")).str.slice(0, 2000).tolist()
