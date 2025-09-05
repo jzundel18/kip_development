@@ -543,19 +543,23 @@ def _pick_response_date(rec: Dict[str, Any], search_detail: Dict[str, Any] | Non
     Returns ISO 'YYYY-MM-DD' or "None" if nothing usable is present.
     """
     candidates = [
+        rec.get("responseDeadLine"),
         rec.get("responseDateTime"),
         rec.get("responseDate"),
         rec.get("dueDate"),
         rec.get("closeDate"),
         rec.get("awardDate"),
+        (rec.get("solicitation") or {}).get("deadlines", {}).get("response"),
     ]
     if search_detail:
         candidates.extend([
+            search_detail.get("responseDeadLine"),
             search_detail.get("responseDateTime"),
             search_detail.get("responseDate"),
             search_detail.get("dueDate"),
             search_detail.get("closeDate"),
-        ])
+            (search_detail.get("solicitation") or {}).get(
+                "deadlines", {}).get("response"),])
     for c in candidates:
         d = _normalize_date(c)
         if d and d != "None":
