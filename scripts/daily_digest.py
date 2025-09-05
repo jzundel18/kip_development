@@ -76,7 +76,7 @@ def _fetch_subscribers(conn) -> pd.DataFrame:
       id SERIAL PK
       user_id INT NOT NULL
       email TEXT NOT NULL
-      is_active BOOL DEFAULT TRUE
+      is_enabled BOOL DEFAULT TRUE
 
     And we will try to pull company description from `company_profile` (description column).
     """
@@ -89,7 +89,7 @@ def _fetch_subscribers(conn) -> pd.DataFrame:
                    COALESCE(cp.description, '') AS company_description
             FROM digest_subscribers s
             LEFT JOIN company_profile cp ON cp.user_id = s.user_id
-            WHERE COALESCE(s.is_active, TRUE) = TRUE
+            WHERE COALESCE(s.is_enabled, TRUE) = TRUE
             """,
             conn
         )
