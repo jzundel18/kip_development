@@ -203,7 +203,9 @@ def validate_supplier_and_write_proposal(df, output_directory, Open_AI_API_Key, 
             for line in filled_text.split("\n"):
                 doc.add_paragraph(line)
 
-            filename = f"{output_directory}/{solicitation_number}/{today.replace("/", "")}_{solicitation_number}_INFO.docx"
+
+            today_clean = today.replace("/", "")
+            filename = f"{output_directory}/{solicitation_number}/{today_clean}_{solicitation_number}_INFO.docx"
             doc.save(filename)
                         
             for supplier in suppliers:

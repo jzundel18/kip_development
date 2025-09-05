@@ -16,7 +16,7 @@ Optional:
   DIGEST_MIN_SIMILARITY    -> default 0.35 (0..1 cosine with normalized vectors)
 """
 
-from app import AIMatrixScorer, ai_matrix_score_solicitations
+from scoring import AIMatrixScorer, ai_matrix_score_solicitations
 import os
 import sys
 import math
