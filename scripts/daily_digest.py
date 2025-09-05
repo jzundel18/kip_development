@@ -87,7 +87,7 @@ def _fetch_subscribers(conn) -> pd.DataFrame:
                    COALESCE(cp.state, '') AS state
             FROM digest_subscribers s
             LEFT JOIN company_profile cp ON cp.user_id = s.user_id
-            WHERE COALESCE(s.is_active, TRUE) = TRUE
+            WHERE COALESCE(s.is_enabled, TRUE) = TRUE
             """,
             conn
         )
