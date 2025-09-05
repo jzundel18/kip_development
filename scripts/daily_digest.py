@@ -37,7 +37,7 @@ MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
 MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
 
 # NEW: Controls how many candidates pass stage 1 filtering
-PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "50"))
+PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "25"))
 
 if not (DB_URL and OPENAI_API_KEY and SENDGRID_API_KEY and FROM_EMAIL):
     print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, SENDGRID_API_KEY, FROM_EMAIL.", file=sys.stderr)
@@ -250,12 +250,12 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
                     "score": float(row.get("score", 0))
                 })
 
-            system_prompt = """You explain why government solicitations match companies. Write concise, specific explanations focusing on relevant capabilities and requirements. Keep each explanation to 1-2 sentences maximum."""
+            system_prompt = """You explain why government solicitations match companies. Write concise, specific explanations using second person (your company, your capabilities, your services). Focus on relevant capabilities and requirements. Keep each explanation to 1-2 sentences maximum."""
 
             user_prompt = {
                 "company_description": company_desc[:300],
                 "solicitations": batch_items,
-                "instructions": 'For each solicitation, explain in 1-2 sentences why it matches the company. Return JSON: {"explanations":[{"notice_id":"...","reason":"..."}]}'
+                "instructions": 'For each solicitation, explain in 1-2 sentences why it matches using "your company" language. Return JSON: {"explanations":[{"notice_id":"...","reason":"..."}]}'
             }
 
             response = oai.chat.completions.create(
