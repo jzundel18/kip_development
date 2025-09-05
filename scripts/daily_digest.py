@@ -112,15 +112,19 @@ def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFra
         "posted_date", "response_date", "link"
     ]
     try:
-        # Since your dates are YYYY-MM-DD format, we can do exact match for yesterday
-        df = pd.read_sql_query(
-            f"""
+        # Use SQLAlchemy text() with proper parameter binding for PostgreSQL
+        from sqlalchemy import text
+
+        sql = text(f"""
             SELECT {", ".join(cols)}
             FROM solicitationraw
             WHERE posted_date = :yesterday_date
-            """,
+        """)
+
+        df = pd.read_sql_query(
+            sql,
             conn,
-            params={"yesterday_date": start_date},
+            params={"yesterday_date": start_date}
         )
         logging.info(f"Found {len(df)} notices posted on {start_date}")
     except Exception as e:
@@ -266,9 +270,10 @@ def main():
     logging.info("Looking for notices posted on: %s", yesterday_date)
 
     with engine.connect() as conn:
-        # Debug: show what dates we have
+        # Debug: show what dates we have (fixed for PostgreSQL)
         try:
-            recent_dates = conn.execute(sa.text("""
+            from sqlalchemy import text
+            recent_dates = conn.execute(text("""
                 SELECT posted_date, COUNT(*) 
                 FROM solicitationraw 
                 WHERE posted_date IS NOT NULL 
