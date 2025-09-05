@@ -226,8 +226,70 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
     except Exception as e:
         logging.error("SendGrid error to %s: %s", to_email, e)
 
+
+def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> dict[str, str]:
+    """Generate AI explanations for why each notice matched the company"""
+    if notices.empty or not company_desc.strip():
+        return {}
+
+    explanations = {}
+
+    try:
+        # Process in small batches to avoid token limits
+        batch_size = 3
+        for i in range(0, len(notices), batch_size):
+            batch = notices.iloc[i:i+batch_size]
+
+            # Prepare batch data
+            batch_items = []
+            for _, row in batch.iterrows():
+                batch_items.append({
+                    "notice_id": str(row.get("notice_id", "")),
+                    "title": (row.get("title", "") or "")[:200],
+                    "description": (row.get("description", "") or "")[:400],
+                    "score": float(row.get("score", 0))
+                })
+
+            system_prompt = """You explain why government solicitations match companies. Write concise, specific explanations focusing on relevant capabilities and requirements. Keep each explanation to 1-2 sentences maximum."""
+
+            user_prompt = {
+                "company_description": company_desc[:300],
+                "solicitations": batch_items,
+                "instructions": 'For each solicitation, explain in 1-2 sentences why it matches the company. Return JSON: {"explanations":[{"notice_id":"...","reason":"..."}]}'
+            }
+
+            response = oai.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(user_prompt)}
+                ],
+                temperature=0.2,
+                max_tokens=800,
+                timeout=30
+            )
+
+            # Parse response
+            try:
+                data = json.loads(response.choices[0].message.content or "{}")
+                for item in data.get("explanations", []):
+                    notice_id = str(item.get("notice_id", "")).strip()
+                    reason = (item.get("reason", "") or "").strip()
+                    if notice_id and reason:
+                        explanations[notice_id] = reason
+            except json.JSONDecodeError:
+                logging.warning(
+                    f"Failed to parse match explanations for batch {i//batch_size + 1}")
+                continue
+
+    except Exception as e:
+        logging.warning(f"Failed to generate match explanations: {e}")
+
+    return explanations
+
 def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame) -> tuple[str, str]:
-    """Render email with matrix scores and reasons"""
+    """Render email with matrix scores, reasons, and AI match explanations"""
     if picks.empty:
         subject = "KIP Daily: no close matches today"
         html = f"""
@@ -237,6 +299,11 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
         """
         return subject, html
 
+    # Generate AI explanations for why each notice matched
+    logging.info(
+        f"Generating match explanations for {len(picks)} final candidates")
+    match_explanations = _generate_match_explanations(picks, company_desc)
+
     rows_html = []
     for _, r in picks.iterrows():
         nid = str(r.get("notice_id", ""))
@@ -245,24 +312,22 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
         reason = r.get("overall_reason", "AI assessment of match quality")
         url = _sam_public_url(nid, r.get("link", ""))
 
-        # Color code the score
-        if score >= 80:
-            score_color = "#28a745"  # green
-            score_icon = "🟢"
-        elif score >= 60:
-            score_color = "#ffc107"  # yellow
-            score_icon = "🟡"
-        else:
-            score_color = "#dc3545"  # red
-            score_icon = "🔴"
+        # Get AI match explanation
+        match_explanation = match_explanations.get(
+            nid, "This opportunity aligns with your company's capabilities.")
 
         rows_html.append(f"""
-          <li style="margin-bottom:15px; border-left: 3px solid {score_color}; padding-left: 10px;">
-            <div><a href="{url}" style="color: #0066cc; text-decoration: none;"><strong>{title}</strong></a></div>
-            <div style="color: {score_color}; font-weight: bold; margin: 5px 0;">
-              {score_icon} Match Score: {score:.1f}/100
+          <li style="margin-bottom:20px; border-left: 3px solid #333; padding-left: 15px;">
+            <div style="margin-bottom: 8px;">
+              <a href="{url}" style="color: #0066cc; text-decoration: none; font-size: 16px;"><strong>{title}</strong></a>
             </div>
-            {f'<div style="margin: 5px 0; color: #555;">{reason}</div>' if reason else ''}
+            <div style="color: #000; font-weight: bold; margin: 5px 0;">
+                Match Score: {score:.1f}/100
+            </div>
+            <div style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; font-style: italic; color: #495057;">
+              • {match_explanation}
+            </div>
+            {f'<div style="margin: 5px 0; color: #666; font-size: 14px;"><em>Technical assessment: {reason}</em></div>' if reason else ''}
           </li>
         """)
 
@@ -275,15 +340,20 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
       {''.join(rows_html)}
     </ul>
     <p><a href="{header_link}" style="color: #0066cc;">Open KIP</a> to view full details and manage preferences.</p>
+    <p style="color: #666; font-size: 12px; margin-top: 20px;">
+      <em>Match explanations generated by AI based on your company profile. Technical assessments use detailed scoring matrix.</em>
+    </p>
     """
     return subject, html
 
 # ---------- Main ----------
 
+
 def main():
     yesterday_date, today_date = _yesterday_utc_window()
     logging.info("Processing notices posted on: %s", yesterday_date)
-    logging.info("Two-stage filtering: Stage 1 → %d candidates, Stage 2 → detailed scoring", PREFILTER_CANDIDATES)
+    logging.info(
+        "Two-stage filtering: Stage 1 → %d candidates, Stage 2 → detailed scoring", PREFILTER_CANDIDATES)
 
     with engine.connect() as conn:
         # Debug: show what dates we have
@@ -309,13 +379,16 @@ def main():
 
         notices = _fetch_yesterday_notices(conn, yesterday_date, today_date)
         if notices.empty:
-            logging.info("No notices posted on %s. Sending 'no matches' to all subscribers.", yesterday_date)
+            logging.info(
+                "No notices posted on %s. Sending 'no matches' to all subscribers.", yesterday_date)
             for _, s in subs.iterrows():
-                subject, html = _render_email(s["email"], s["company_description"], pd.DataFrame())
+                subject, html = _render_email(
+                    s["email"], s["company_description"], pd.DataFrame())
                 _send_email(s["email"], subject, html)
             return
 
-        logging.info("Found %d notices from %s, processing %d subscribers...", len(notices), yesterday_date, len(subs))
+        logging.info("Found %d notices from %s, processing %d subscribers...", len(
+            notices), yesterday_date, len(subs))
 
         for _, s in subs.iterrows():
             email = s["email"].strip()
@@ -325,33 +398,37 @@ def main():
                 continue
 
             if not desc:
-                logging.info("Subscriber %s has no company description; sending 'no matches'.", email)
+                logging.info(
+                    "Subscriber %s has no company description; sending 'no matches'.", email)
                 subject, html = _render_email(email, desc, pd.DataFrame())
                 _send_email(email, subject, html)
                 continue
 
             logging.info(f"Processing subscriber: {email}")
-            
+
             # STAGE 1: Fast embedding-based pre-filter
-            stage1_candidates = _stage1_embedding_filter(notices, desc, top_k=PREFILTER_CANDIDATES)
-            
+            stage1_candidates = _stage1_embedding_filter(
+                notices, desc, top_k=PREFILTER_CANDIDATES)
+
             if stage1_candidates.empty:
                 logging.info(f"Stage 1 returned no candidates for {email}")
                 subject, html = _render_email(email, desc, pd.DataFrame())
                 _send_email(email, subject, html)
                 continue
-            
+
             # STAGE 2: Detailed scoring on filtered candidates
-            scored_notices = _stage2_detailed_scoring(stage1_candidates, s.to_dict())
+            scored_notices = _stage2_detailed_scoring(
+                stage1_candidates, s.to_dict())
 
             # Filter by minimum score and limit results
-            final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
-            logging.info(f"Final results for {email}: {len(final_matches)} matches above {MIN_SCORE}")
+            final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(
+                MAX_RESULTS)
+            logging.info(
+                f"Final results for {email}: {len(final_matches)} matches above {MIN_SCORE}")
 
             subject, html = _render_email(email, desc, final_matches)
             _send_email(email, subject, html)
 
     logging.info("Daily digest complete.")
-
 if __name__ == "__main__":
     main()
