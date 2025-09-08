@@ -3,8 +3,8 @@ name: Auto Refresh SAM.gov
 on:
   workflow_dispatch: {}
   schedule:
-    # Run every hour; auto_refresh pulls metadata only, backfill fills in missing descriptions
-    - cron: '0 * * * *'
+    # Reduced frequency: every 2 hours instead of every hour to conserve quota
+    - cron: '0 */2 * * *'
 
 jobs:
   refresh:
@@ -14,6 +14,10 @@ jobs:
       SAM_KEYS:        ${{ secrets.SAM_KEYS }}
       PYTHONPATH:      ${{ github.workspace }}
       TZ:              America/Denver
+      # Quota-conscious settings
+      DAYS_BACK:       '1'           # Only look at last 1 day
+      PAGE_SIZE:       '200'         # Reasonable page size
+      MAX_RECORDS:     '2000'        # Lower max to conserve quota
 
     steps:
       - name: Checkout
@@ -33,21 +37,26 @@ jobs:
             pip install sqlalchemy sqlmodel pandas numpy requests pytz
           fi
 
-      - name: Run auto refresh (hourly, fast)
+      - name: Run auto refresh (quota-conscious)
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SAM_KEYS:        ${{ secrets.SAM_KEYS }}
           DAYS_BACK:       '1'
+          PAGE_SIZE:       '200'
+          MAX_RECORDS:     '2000'
           PYTHONUNBUFFERED: '1'
         run: |
           set -euo pipefail
           echo "=== Auto refresh start ==="
           date
-          timeout 12m python -u scripts/auto_refresh.py
+          # Remove timeout and let the script handle quota limits gracefully
+          python -u scripts/auto_refresh.py
           echo "=== Auto refresh done ==="
 
-      - name: Run backfill descriptions
+      - name: Run backfill descriptions (reduced scope)
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SAM_KEYS:        ${{ secrets.SAM_KEYS }}
+          BACKFILL_MAX:    '100'        # Reduced from default 500
+          BACKFILL_DELAY_SEC: '1.0'     # Slower to be more polite
         run: python -u scripts/backfill_descriptions.py

@@ -5,6 +5,7 @@ Fast auto-refresh for SAM.gov opportunities:
 - Inserts ONLY brand-new notice_ids.
 - Does NOT fetch long descriptions (keeps it fast).
 - Always stores a PUBLIC web URL for each notice (no API key required).
+- FIXED: Better key rotation and quota handling
 """
 
 from __future__ import annotations
@@ -29,8 +30,7 @@ DAYS_BACK = int(os.getenv("DAYS_BACK", "1"))
 DB_URL = os.getenv("SUPABASE_DB_URL") or os.getenv(
     "DB_URL") or "sqlite:///app.db"
 
-# Read keys from env or secrets-like CSV. If you keep them in Streamlit secrets elsewhere,
-# mirror them into an ENV var for this GitHub Action.
+# Read keys from env or secrets-like CSV
 SAM_KEYS_RAW = os.getenv("SAM_KEYS", "")
 SAM_KEYS = [k.strip() for k in SAM_KEYS_RAW.split(",") if k.strip()]
 
@@ -73,7 +73,7 @@ def _engine():
 
 
 def _ensure_table(conn):
-    # Fail fast if table missing; we don’t try to create here—use your app migration
+    # Fail fast if table missing; we don't try to create here—use your app migration
     try:
         conn.execute(text("SELECT 1 FROM solicitationraw LIMIT 1"))
     except Exception as e:
@@ -103,6 +103,114 @@ def _insert_rows(conn, rows: List[Dict[str, Any]]) -> int:
     """)
     conn.execute(sql, rows)
     return len(rows)
+
+# FIXED: Simplified mapping that doesn't call any additional APIs
+
+
+def map_record_basic_fields_only(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map a raw SAM record to our schema fields WITHOUT making any additional API calls.
+    This keeps the refresh fast and avoids quota issues.
+    """
+    def _first_nonempty(obj: Dict[str, Any], *keys: str, default: str = "None") -> str:
+        for k in keys:
+            if k in obj and obj[k] not in (None, "", []):
+                val = obj[k]
+                if isinstance(val, (str, int, float, bool)):
+                    return str(val).strip()
+                elif isinstance(val, dict):
+                    # Try common sub-keys
+                    for subkey in ("name", "text", "value", "code"):
+                        if subkey in val and val[subkey] not in (None, "", []):
+                            return str(val[subkey]).strip()
+                elif isinstance(val, list) and val:
+                    # Take first non-empty item
+                    for item in val:
+                        if item not in (None, "", []):
+                            if isinstance(item, (str, int, float, bool)):
+                                return str(item).strip()
+                            elif isinstance(item, dict):
+                                for subkey in ("name", "text", "value", "code"):
+                                    if subkey in item and item[subkey] not in (None, "", []):
+                                        return str(item[subkey]).strip()
+        return default
+
+    notice_id = _first_nonempty(rec, "noticeId", "id")
+    solicitation_number = _first_nonempty(
+        rec, "solicitationNumber", "solicitationNo")
+    title = _first_nonempty(rec, "title")
+    notice_type = _first_nonempty(rec, "noticeType", "type")
+    posted_date = _first_nonempty(rec, "postedDate", "publicationDate")
+    archive_date = _first_nonempty(rec, "archiveDate")
+    naics_code = _first_nonempty(rec, "naicsCode", "naics")
+    set_aside_code = _first_nonempty(
+        rec, "setAsideCode", "typeOfSetAside", "setAside")
+
+    # Extract response date from various possible fields
+    response_date = _first_nonempty(rec, "responseDeadLine", "responseDateTime",
+                                    "responseDate", "dueDate", "closeDate")
+
+    # Extract link
+    link = "None"
+    links = rec.get("links")
+    if isinstance(links, list) and links:
+        maybe = links[0]
+        if isinstance(maybe, dict) and maybe.get("href"):
+            link = str(maybe["href"])
+    if link == "None":
+        link = _first_nonempty(rec, "url", "samLink")
+
+    # Get basic description from the search result itself (no additional API calls)
+    description = _first_nonempty(rec, "description", "synopsis")
+
+    # Basic place of performance extraction (no additional API calls)
+    pop_city = ""
+    pop_state = ""
+    pop_zip = ""
+    pop_country = ""
+    pop_raw = ""
+
+    # Try to extract from embedded place of performance data
+    pop_data = rec.get("placeOfPerformance") or rec.get(
+        "place_of_performance") or {}
+    if isinstance(pop_data, dict):
+        pop_city = _first_nonempty(pop_data, "city", "cityName")
+        pop_state = _first_nonempty(
+            pop_data, "state", "stateCode", "stateProvince")
+        pop_zip = _first_nonempty(pop_data, "zip", "zipCode", "postalCode")
+        pop_country = _first_nonempty(
+            pop_data, "country", "countryCode", "countryName")
+
+        # Build pop_raw
+        parts = []
+        if pop_city and pop_city != "None":
+            parts.append(pop_city)
+        if pop_state and pop_state != "None":
+            parts.append(pop_state)
+        pop_raw = ", ".join(parts)
+        if pop_zip and pop_zip != "None":
+            pop_raw = (pop_raw + f" {pop_zip}").strip()
+        if pop_country and pop_country != "None" and pop_country.upper() not in ("US", "USA", "UNITED STATES"):
+            pop_raw = (pop_raw + f" ({pop_country})").strip()
+
+    return {
+        "notice_id": _stringify(notice_id),
+        "solicitation_number": _stringify(solicitation_number),
+        "title": _stringify(title),
+        "notice_type": _stringify(notice_type),
+        "posted_date": _stringify(posted_date),
+        "response_date": _stringify(response_date),
+        "archive_date": _stringify(archive_date),
+        "naics_code": _stringify(naics_code),
+        "set_aside_code": _stringify(set_aside_code),
+        "description": _stringify(description),
+        "link": _stringify(link),
+        "pop_city": _stringify(pop_city) if pop_city != "None" else "",
+        "pop_state": _stringify(pop_state) if pop_state != "None" else "",
+        "pop_zip": _stringify(pop_zip) if pop_zip != "None" else "",
+        "pop_country": _stringify(pop_country) if pop_country != "None" else "",
+        "pop_raw": _stringify(pop_raw),
+    }
 
 # ---------------- Main ----------------
 
@@ -165,14 +273,27 @@ def main():
                 print(
                     f"  → Page {offset//PAGE_SIZE + 1}: offset={offset}, limit={limit}")
 
-                # IMPORTANT: keep fetch fast — do not fetch descriptions on refresh
-                raw = gs.get_sam_raw_v3(
-                    days_back=DAYS_BACK,
-                    limit=limit,
-                    api_keys=SAM_KEYS,
-                    filters={},       # we want everything in the window
-                    offset=offset,
-                )
+                try:
+                    # This uses proper key rotation in _request_sam()
+                    raw = gs.get_sam_raw_v3(
+                        days_back=DAYS_BACK,
+                        limit=limit,
+                        api_keys=SAM_KEYS,
+                        filters={},       # we want everything in the window
+                        offset=offset,
+                    )
+                except gs.SamQuotaError:
+                    print("All SAM.gov keys exhausted (quota). Stopping refresh.")
+                    print(
+                        f"Partial success: {total_inserted} new records inserted before quota limit.")
+                    break
+                except gs.SamAuthError:
+                    print("All SAM.gov keys failed authentication. Check your keys.")
+                    sys.exit(2)
+                except Exception as e:
+                    print(f"Unexpected error fetching data: {e}")
+                    sys.exit(2)
+
                 if not raw:
                     break
 
@@ -181,11 +302,8 @@ def main():
                     f"    fetched {len(raw)} records (cumulative fetched: {total_seen})")
 
                 for r in raw:
-                    m = gs.map_record_allowed_fields(
-                        r,
-                        api_keys=SAM_KEYS,
-                        fetch_desc=False,  # keep refresh FAST
-                    )
+                    # FIXED: Use basic mapping that doesn't make additional API calls
+                    m = map_record_basic_fields_only(r)
                     nid = (m.get("notice_id") or "").strip()
                     if not nid or nid in existing:
                         continue
@@ -203,7 +321,7 @@ def main():
                         "archive_date": _stringify(m.get("archive_date")),
                         "naics_code": _stringify(m.get("naics_code")),
                         "set_aside_code": _stringify(m.get("set_aside_code")),
-                        # may be empty
+                        # Basic description only
                         "description": _stringify(m.get("description")),
                         "link": public_link,
                         "pop_city": _stringify(m.get("pop_city")),
@@ -219,6 +337,8 @@ def main():
                 if rows_to_insert:
                     inserted = _insert_rows(conn, rows_to_insert)
                     total_inserted += inserted
+                    print(
+                        f"    inserted {inserted} new records (total new: {total_inserted})")
                     rows_to_insert.clear()
 
                 # Next page
@@ -233,6 +353,7 @@ def main():
     except Exception as e:
         print(f"Auto refresh failed: {e}")
         sys.exit(2)
+
 
 if __name__ == "__main__":
     main()
