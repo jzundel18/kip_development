@@ -82,7 +82,7 @@ jobs:
           with engine.connect() as conn:
               total = conn.execute(text('SELECT COUNT(*) FROM solicitationraw')).scalar()
               with_response_date = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != \'None\' AND response_date != \'\'')).scalar()
-              recent = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE posted_date >= CURRENT_DATE - INTERVAL \'7 days\'')).scalar()
+              recent = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE posted_date::date >= CURRENT_DATE - INTERVAL \'7 days\'')).scalar()
               print(f'Total solicitations: {total}')
               print(f'With response dates: {with_response_date}')
               print(f'Posted in last 7 days: {recent}')
