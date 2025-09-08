@@ -16,11 +16,6 @@ on:
         options:
           - 'false'
           - 'true'
-      max_age_days:
-        description: 'Delete records older than this many days'
-        required: false
-        default: '365'
-        type: string
 
 jobs:
   cleanup:
@@ -54,7 +49,6 @@ jobs:
         env:
           CLEANUP_DRY_RUN: 'false'
           CLEANUP_BATCH_SIZE: '1000'
-          CLEANUP_MAX_AGE_DAYS: '365'
           PYTHONUNBUFFERED: '1'
         run: |
           echo "=== Scheduled cleanup run ==="
@@ -67,12 +61,10 @@ jobs:
         env:
           CLEANUP_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           CLEANUP_BATCH_SIZE: '1000'
-          CLEANUP_MAX_AGE_DAYS: ${{ github.event.inputs.max_age_days || '365' }}
           PYTHONUNBUFFERED: '1'
         run: |
           echo "=== Manual cleanup run ==="
           echo "Dry run: ${{ github.event.inputs.dry_run || 'false' }}"
-          echo "Max age: ${{ github.event.inputs.max_age_days || '365' }} days"
           date
           python -u scripts/cleanup_expired_solicitations.py
           echo "=== Cleanup complete ==="
@@ -89,7 +81,7 @@ jobs:
           engine = sa.create_engine(os.environ['SUPABASE_DB_URL'])
           with engine.connect() as conn:
               total = conn.execute(text('SELECT COUNT(*) FROM solicitationraw')).scalar()
-              with_response_date = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != \"None\"')).scalar()
+              with_response_date = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != \"None\" AND response_date != \"\"')).scalar()
               recent = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE posted_date >= CURRENT_DATE - INTERVAL \"7 days\"')).scalar()
               print(f'Total solicitations: {total}')
               print(f'With response dates: {with_response_date}')

@@ -176,7 +176,7 @@ def main():
     print(f"Database: {DB_URL.split('@')[-1] if '@' in DB_URL else DB_URL}")
     print(f"Dry run mode: {DRY_RUN}")
     print(f"Batch size: {BATCH_SIZE}")
-    print(f"Max age: {MAX_AGE_DAYS} days")
+    print("Cleanup criteria: Delete solicitations where response_date has passed")
     print()
 
     if not DB_URL:
@@ -197,16 +197,21 @@ def main():
             # Get database stats before cleanup
             before_count = conn.execute(
                 text("SELECT COUNT(*) FROM solicitationraw")).scalar() or 0
+            with_response_dates = conn.execute(text(
+                "SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != 'None' AND response_date != ''")).scalar() or 0
             print(f"Total solicitations before cleanup: {before_count}")
+            print(f"Solicitations with response dates: {with_response_dates}")
 
             # Find expired solicitations
             expired_ids, total_to_delete = _get_expired_solicitations(conn)
 
             if total_to_delete == 0:
-                print("\nNo expired solicitations found. Database is up to date.")
+                print(
+                    "\nNo expired solicitations found. All response dates are current or missing.")
                 return
 
-            print(f"\nFound {total_to_delete} solicitations to delete.")
+            print(
+                f"\nFound {total_to_delete} solicitations with expired response dates.")
 
             if DRY_RUN:
                 print("\n*** DRY RUN MODE - No actual deletions will be performed ***")
