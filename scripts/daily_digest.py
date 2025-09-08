@@ -61,6 +61,7 @@ def _yesterday_utc_window():
     start_date = end_date - timedelta(days=1)
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
+
 def _fetch_subscribers(conn) -> pd.DataFrame:
     """Fetch active subscribers with complete company profile info"""
     try:
@@ -81,7 +82,7 @@ def _fetch_subscribers(conn) -> pd.DataFrame:
     except Exception as e:
         logging.error("Error reading subscribers/company_profile: %s", e)
         return pd.DataFrame(columns=["user_id", "email", "company_description", "company_name", "city", "state"])
-    return df.fillna("")
+    return df.fillna('')
 
 def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFrame:
     """Fetch notices posted on the start_date (yesterday)"""
