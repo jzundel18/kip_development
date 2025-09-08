@@ -566,6 +566,7 @@ def _pick_response_date(rec: Dict[str, Any], search_detail: Dict[str, Any] | Non
             return d
     return "None"
 
+
 def map_record_allowed_fields(
     rec: Dict[str, Any],
     *,
@@ -601,8 +602,10 @@ def map_record_allowed_fields(
     response_date = _pick_response_date(rec, search_detail)
 
     description = _take_text_field(rec, ["description", "synopsis"])
-    ds = _safe_str(description).lower()
-    if (not ds) or ds.startswith(("http://", "https://")) or ds in ("none", "n/a", "na"):
+    desc_str = _safe_str(description).lower().strip()
+    if (not desc_str or
+        desc_str.startswith(("http://", "https://")) or
+            desc_str in ("none", "n/a", "na", "null")):
         detail_text = ""
         if search_detail:
             detail_text = _take_text_field(
@@ -620,7 +623,10 @@ def map_record_allowed_fields(
         if not detail_text and fetch_desc and api_keys and notice_id != "None":
             detail_text = fetch_notice_description(notice_id, api_keys)
         description = _safe_str(detail_text) or ""
-    if _safe_str(description).lower() in ("none", "n/a", "na"):
+
+    # Final check on the description we got
+    final_desc_str = _safe_str(description).lower().strip()
+    if final_desc_str in ("none", "n/a", "na", "null") or final_desc_str.startswith(("http://", "https://")):
         description = ""
 
     pop = {"pop_city": "", "pop_state": "",

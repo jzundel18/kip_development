@@ -163,6 +163,10 @@ def map_record_basic_fields_only(rec: Dict[str, Any]) -> Dict[str, Any]:
     # Get basic description from the search result itself (no additional API calls)
     description = _first_nonempty(rec, "description", "synopsis")
 
+    # Check if description is just a URL - if so, clear it
+    if description and (description.startswith(("http://", "https://")) or description.lower() in ("none", "n/a", "na")):
+        description = ""
+        
     # Basic place of performance extraction (no additional API calls)
     pop_city = ""
     pop_state = ""
