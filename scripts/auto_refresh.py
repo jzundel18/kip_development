@@ -6,6 +6,7 @@ Fast auto-refresh for SAM.gov opportunities:
 - Does NOT fetch long descriptions (keeps it fast).
 - Always stores a PUBLIC web URL for each notice (no API key required).
 - FIXED: Better key rotation and quota handling
+- NEW: Filters out solicitations with past response dates
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import os
 import sys
 import time
 import json
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, date
 from typing import Any, Dict, List
 
 import sqlalchemy as sa
@@ -34,7 +36,62 @@ DB_URL = os.getenv("SUPABASE_DB_URL") or os.getenv(
 SAM_KEYS_RAW = os.getenv("SAM_KEYS", "")
 SAM_KEYS = [k.strip() for k in SAM_KEYS_RAW.split(",") if k.strip()]
 
-# ---------------- Helpers ----------------
+# ---------------- Date Parsing Helpers ----------------
+DATE_ISO_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+DATE_US_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
+
+
+def _parse_response_date(date_str: str) -> date | None:
+    """
+    Parse various date formats and return a date object.
+    Returns None if the date cannot be parsed or is invalid.
+    """
+    if not date_str or str(date_str).lower() in ("none", "n/a", "na", "null", ""):
+        return None
+
+    # Try ISO format first (YYYY-MM-DD)
+    match = DATE_ISO_RE.search(str(date_str))
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            pass
+
+    # Try US format (M/D/YYYY or MM/DD/YYYY)
+    match = DATE_US_RE.search(str(date_str))
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%m/%d/%Y").date()
+        except ValueError:
+            pass
+
+    # Try parsing as ISO datetime (with time component)
+    date_str = str(date_str)
+    if "T" in date_str:
+        try:
+            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return dt.date()
+        except ValueError:
+            pass
+
+    return None
+
+
+def _is_response_date_past(response_date_str: str) -> bool:
+    """
+    Check if the response date has already passed.
+    Returns True if the date has passed, False if it's still valid or can't be parsed.
+    """
+    parsed_date = _parse_response_date(response_date_str)
+    if parsed_date is None:
+        # If we can't parse the date, don't exclude it (could be valid)
+        return False
+
+    today = date.today()
+    return parsed_date < today
+
+
+# ---------------- Existing Helper Functions ----------------
 REQUIRED_COLS = [
     "notice_id", "solicitation_number", "title", "notice_type",
     "posted_date", "response_date", "archive_date",
@@ -166,7 +223,7 @@ def map_record_basic_fields_only(rec: Dict[str, Any]) -> Dict[str, Any]:
     # Check if description is just a URL - if so, clear it
     if description and (description.startswith(("http://", "https://")) or description.lower() in ("none", "n/a", "na")):
         description = ""
-        
+
     # Basic place of performance extraction (no additional API calls)
     pop_city = ""
     pop_state = ""
@@ -225,6 +282,7 @@ def main():
     print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)")
     print(f"DAYS_BACK = {DAYS_BACK}")
     print(f"Paging: PAGE_SIZE={PAGE_SIZE}, MAX_RECORDS={MAX_RECORDS}")
+    print(f"Filtering: Will skip solicitations with past response dates")
 
     if not SAM_KEYS:
         print("ERROR: No SAM_KEYS provided (env SAM_KEYS). Exiting.")
@@ -259,6 +317,7 @@ def main():
 
     total_inserted = 0
     total_seen = 0
+    total_skipped_expired = 0
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     try:
@@ -312,6 +371,14 @@ def main():
                     if not nid or nid in existing:
                         continue
 
+                    # NEW: Check if response date has passed
+                    response_date_str = m.get("response_date", "")
+                    if _is_response_date_past(response_date_str):
+                        total_skipped_expired += 1
+                        print(
+                            f"    skipping expired solicitation {nid} (response date: {response_date_str})")
+                        continue
+
                     # Force link to public URL so clicks never need API key
                     public_link = make_sam_public_url(nid, m.get("link"))
                     row = {
@@ -351,6 +418,8 @@ def main():
                     break
 
         print(f"Auto refresh success: inserted {total_inserted} new notices.")
+        print(
+            f"Skipped {total_skipped_expired} notices with expired response dates.")
         if total_seen == 0:
             print("Note: SAM.gov returned no records for the selected window.")
 
