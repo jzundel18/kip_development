@@ -16,7 +16,7 @@ from datetime import date, datetime, timezone, timedelta
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from typing import Dict
-
+from enhanced_matching import EnhancedMatcher
 
 import pandas as pd
 import numpy as np
@@ -710,22 +710,20 @@ def render_internal_results():
                     if not err_msg:
                         st.caption(
                             "No vendors yet. Click the button to fetch.")
-                        
-def render_enhanced_score_results(ranked_results: List[Dict]):
-    """Enhanced results display with detailed component scoring"""
-    if not ranked_results:
-        st.info("No results to display")
+
+def render_enhanced_score_results(results: List[Dict]):
+    """Enhanced results display for new matching system"""
+    if not results:
+        st.info("No matches found")
         return
 
-    st.write(f"**Found {len(ranked_results)} ranked matches**")
+    for idx, result in enumerate(results):
+        score = result.get("score", 0)
+        title = result.get("title", "Untitled")
+        reasoning = result.get("reasoning", "")
+        notice_id = result.get("notice_id", "")
 
-    for idx, item in enumerate(ranked_results):
-        nid = str(item.get('notice_id', ''))
-        title = item.get('title', 'Untitled')
-        score = float(item.get('score', 0.0))
-        blurb = (item.get('blurb') or "").strip()
-
-        # Color-code the score
+        # Color-code scores
         if score >= 80:
             score_color = "🟢"
         elif score >= 60:
@@ -733,60 +731,46 @@ def render_enhanced_score_results(ranked_results: List[Dict]):
         else:
             score_color = "🔴"
 
-        header = f"#{idx+1}: {title} — {score_color} Score: {score:.1f}/100"
-        with st.expander(header, expanded=(idx == 0)):
-            col1, col2 = st.columns([2, 1])
+        with st.expander(f"#{idx+1}: {title} — {score_color} {score:.1f}/100", expanded=(idx == 0)):
+            col1, col2 = st.columns([3, 1])
 
             with col1:
-                st.write(f"**Notice ID:** {nid}")
-                if blurb:
-                    st.write(f"**Summary:** {blurb}")
-                st.markdown(f"**[View on SAM.gov]({item.get('link','')})**")
+                st.markdown(
+                    f"**[View on SAM.gov]({result.get('link', '#')})**")
+                st.write(
+                    f"**NAICS:** {result.get('naics_code', 'Not specified')}")
+                st.write(
+                    f"**Set-aside:** {result.get('set_aside_code', 'Not specified')}")
+                st.write(
+                    f"**Location:** {result.get('pop_location', 'Not specified')}")
+                st.write(
+                    f"**Response Due:** {result.get('response_date', 'Not specified')}")
+
+                if reasoning:
+                    st.markdown("**Match Analysis:**")
+                    st.info(reasoning)
 
             with col2:
-                # Overall score with color coding
+                # Score visualization
                 if score >= 80:
-                    st.success(f"Overall Fit Score: {score:.1f}/100")
+                    st.success(f"Score: {score:.1f}/100")
                 elif score >= 60:
-                    st.warning(f"Overall Fit Score: {score:.1f}/100")
+                    st.warning(f"Score: {score:.1f}/100")
                 else:
-                    st.error(f"Overall Fit Score: {score:.1f}/100")
+                    st.error(f"Score: {score:.1f}/100")
 
-            # Detailed component breakdown
-            st.subheader("📊 Detailed Scoring Breakdown")
-            breakdown = item.get("breakdown") or []
-
-            if breakdown:
-                # Create a more visual breakdown
-                for comp in breakdown:
-                    score_val = comp.get('score', 0)
-                    label = comp.get('label', comp.get('key', 'Unknown'))
-                    reasoning = comp.get('reasoning', 'No reasoning provided')
-                    weight = comp.get('weight', 0)
-                    contribution = comp.get('weighted_contribution', 0)
-
-                    # Score bar visualization
-                    score_bar = "█" * int(score_val) + \
-                        "░" * (10 - int(score_val))
-
-                    # Color code the score
-                    if score_val >= 8:
-                        score_emoji = "🟢"
-                    elif score_val >= 6:
-                        score_emoji = "🟡"
-                    else:
-                        score_emoji = "🔴"
-
-                    with st.container():
-                        st.markdown(f"""
-                        **{label}** {score_emoji}  
-                        Score: {score_val}/10 `{score_bar}` (Weight: {weight}% → +{contribution:.1f} pts)  
-                        *{reasoning}*
-                        """)
-                        st.markdown("---")
-            else:
-                st.info("No detailed breakdown available")
-
+                # Component breakdown if available
+                components = result.get("component_scores", {})
+                if components:
+                    st.markdown("**Top Factors:**")
+                    # Show top 3 components
+                    comp_items = list(components.items())[:3]
+                    for comp_name, comp_data in comp_items:
+                        if isinstance(comp_data, dict):
+                            comp_score = comp_data.get("score", 0)
+                            st.caption(f"{comp_name}: {comp_score}/10")
+                        else:
+                            st.caption(f"{comp_name}: {comp_data}")
 
 def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFrame:
     """Optimized version with better SQL and limits"""
@@ -894,37 +878,6 @@ def render_sidebar_header():
                 st.session_state.view = "auth"
                 st.rerun()
         st.markdown("---")
-
-
-def render_score_results(ranked_results: List[Dict]):
-    if not ranked_results:
-        st.info("No results to display")
-        return
-
-    st.write(f"**Found {len(ranked_results)} ranked matches**")
-    for idx, item in enumerate(ranked_results):
-        nid = str(item.get('notice_id', ''))
-        title = item.get('title', 'Untitled')
-        score = float(item.get('score', 0.0))
-        blurb = (item.get('blurb') or "").strip()
-
-        header = f"#{idx+1}: {title} — Score: {score:.1f}"
-        with st.expander(header, expanded=(idx == 0)):
-            left, right = st.columns([2, 1])
-            with left:
-                st.write(f"**Notice ID:** {nid}")
-                if blurb:
-                    st.write(f"**Summary:** {blurb}")
-                st.markdown(f"**[View on SAM.gov]({item.get('link','')})**")
-            with right:
-                st.metric("Fit Score", f"{score:.1f}")
-
-            st.subheader("Scoring Rationale")
-            b = item.get("breakdown") or []
-            for comp in b:
-                st.write(
-                    f"- {comp['key']}: {comp['score']:.2f} — {comp.get('why','')}")
-
 
 def render_auth_screen():
     st.title("Welcome to KIP")
@@ -1147,76 +1100,69 @@ with tab1:
                 status_text = st.empty()
 
                 if use_ai_downselect and company_desc.strip():
-                    status_text.text(
-                        "🔍 Finding most relevant solicitations...")
+                    status_text.text("🔍 Stage 1: Pre-filtering solicitations...")
                     progress_bar.progress(20)
-
-                    pretrim = ai_downselect_df(company_desc.strip(), df, OPENAI_API_KEY, top_k=min(
-                        100, max(20, 8*int(top_k_select))))
+                    
+                    # Build enhanced company profile
+                    prof = st.session_state.get('profile', {}) or {}
+                    company_profile_dict = {
+                        'company_name': prof.get('company_name', ''),
+                        'description': company_desc.strip(),
+                        'city': prof.get('city', ''),
+                        'state': prof.get('state', '')
+                    }
+                    
+                    # Initialize enhanced matcher
+                    matcher = EnhancedMatcher(api_key=OPENAI_API_KEY)
+                    
+                    status_text.text("🎯 Stage 2: Finding semantic matches...")
                     progress_bar.progress(50)
-
-                    if pretrim.empty:
-                        st.info(
-                            "AI pre-filter found no matches. Showing manual results.")
-                        show_df = df.head(int(limit_results))
-                        status_text.text("📝 Generating summaries...")
-                        blurbs = ai_make_blurbs_fast(
-                            show_df, OPENAI_API_KEY, max_items=20)
-                        show_df["blurb"] = show_df["notice_id"].astype(
-                            str).map(blurbs).fillna(show_df["title"])
-                        progress_bar.progress(100)
+                    
+                    status_text.text("📊 Stage 3: Detailed scoring analysis...")
+                    progress_bar.progress(80)
+                    
+                    # Run complete matching pipeline
+                    enhanced_ranked = matcher.match_solicitations(
+                        solicitations=df,
+                        raw_company_profile=company_profile_dict,
+                        prefilter_limit=200,
+                        embedding_limit=50,
+                        final_limit=int(top_k_select)
+                    )
+                    
+                    progress_bar.progress(100)
+                    
+                    if enhanced_ranked:
+                        # Convert results to dataframe format for compatibility
+                        id_order = [x["notice_id"] for x in enhanced_ranked]
+                        top_df = df[df["notice_id"].astype(str).isin(id_order)].copy()
+                        
+                        # Maintain result order
+                        preorder = {nid: i for i, nid in enumerate(id_order)}
+                        top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
+                        top_df = top_df.sort_values("_order").drop(columns=["_order"])
+                        
+                        # Add scores from matching results
+                        score_map = {x["notice_id"]: x["score"] for x in enhanced_ranked}
+                        top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_map)
+                        
+                        # Generate blurbs
+                        blurbs = ai_make_blurbs_fast(top_df, OPENAI_API_KEY, max_items=int(top_k_select))
+                        top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"])
+                        
+                        show_df = top_df
+                        
+                        st.success(f"Top {len(top_df)} matches by enhanced company fit:")
+                        render_enhanced_score_results(enhanced_ranked)  # Use new display function
+                        
+                        st.session_state.topn_df = top_df.reset_index(drop=True)
+                        st.session_state.sol_df = top_df.copy()
+                        st.session_state.enhanced_ranked = enhanced_ranked
                     else:
-                        status_text.text("🎯 Ranking by company fit...")
-                        progress_bar.progress(70)
-
-                        prof = st.session_state.get('profile', {}) or {}
-                        company_profile = {
-                            'description': company_desc.strip(),
-                            'city': prof.get('city', ''),
-                            'state': prof.get('state', ''),
-                            'company_name': prof.get('company_name', '')
-                        }
-
-                        enhanced_ranked = ai_score_and_rank_solicitations_by_fit(
-                            pretrim, company_desc.strip(), company_profile, OPENAI_API_KEY, top_k=int(top_k_select))
-                        progress_bar.progress(90)
-
-                        if enhanced_ranked:
-                            id_order = [x["notice_id"]
-                                        for x in enhanced_ranked]
-                            top_df = pretrim[pretrim["notice_id"].astype(
-                                str).isin(id_order)].copy()
-                            preorder = {nid: i for i,
-                                        nid in enumerate(id_order)}
-                            top_df["_order"] = top_df["notice_id"].astype(
-                                str).map(preorder)
-                            top_df = top_df.sort_values(
-                                "_order").drop(columns=["_order"])
-
-                            status_text.text("📝 Generating summaries...")
-                            blurbs = ai_make_blurbs_fast(
-                                top_df, OPENAI_API_KEY, max_items=int(top_k_select))
-                            top_df["blurb"] = top_df["notice_id"].astype(
-                                str).map(blurbs)
-
-                            show_df = top_df
-                            progress_bar.progress(100)
-
-                            st.success(
-                                f"Top {len(top_df)} matches by company fit:")
-                            render_enhanced_score_results(enhanced_ranked)
-
-                            st.session_state.topn_df = top_df.reset_index(
-                                drop=True)
-                            st.session_state.sol_df = top_df.copy()
-                            st.session_state.enhanced_ranked = enhanced_ranked
-                        else:
-                            st.info("Enhanced ranking found no results.")
-                            show_df = df.head(int(limit_results))
-                            blurbs = ai_make_blurbs_fast(
-                                show_df, OPENAI_API_KEY, max_items=20)
-                            show_df["blurb"] = show_df["notice_id"].astype(
-                                str).map(blurbs)
+                        st.info("Enhanced matching found no results. Showing manual results.")
+                        show_df = df.head(int(limit_results))
+                        blurbs = ai_make_blurbs_fast(show_df, OPENAI_API_KEY, max_items=20)
+                        show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"])
 
                     progress_bar.empty()
                     status_text.empty()

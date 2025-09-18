@@ -98,7 +98,8 @@ def _get_expired_solicitations(conn) -> Tuple[List[str], int]:
 
     print(f"Today's date: {today}")
     print(f"Max age cutoff: {max_age_cutoff}")
-    print(f"Old solicitations cutoff (for 'None' response dates): {old_solicitations_cutoff}")
+    print(
+        f"Old solicitations cutoff (for 'None' response dates): {old_solicitations_cutoff}")
     print("Analyzing solicitations for expiration...")
 
     total_processed = 0
@@ -155,7 +156,8 @@ def _get_expired_solicitations(conn) -> Tuple[List[str], int]:
     print(f"  Total solicitations processed: {total_processed}")
     print(f"  Expired by response date: {expired_by_response_date}")
     print(f"  Expired by age ({MAX_AGE_DAYS}+ days): {expired_by_age}")
-    print(f"  Expired 'None' response dates (>{OLD_SOLICITATIONS_DAYS} days old): {expired_by_old_none_response}")
+    print(
+        f"  Expired 'None' response dates (>{OLD_SOLICITATIONS_DAYS} days old): {expired_by_old_none_response}")
     print(f"  Total to delete: {len(expired_ids)}")
     print(f"  Unparseable dates: {unparseable_dates}")
 
@@ -194,14 +196,15 @@ def main():
         print(f"Mountain Time: {mt_time.strftime('%a %b %d %H:%M:%S %Z %Y')}")
     except:
         print("Mountain Time: (timezone conversion unavailable)")
-    
+
     # Hide credentials
     print(f"Database: {DB_URL.split('@')[-1] if '@' in DB_URL else DB_URL}")
     print(f"Dry run mode: {DRY_RUN}")
     print(f"Batch size: {BATCH_SIZE}")
     print("Cleanup criteria:")
     print(f"  • Delete solicitations where response_date has passed")
-    print(f"  • Delete solicitations with 'None' response_date posted >{OLD_SOLICITATIONS_DAYS} days ago")
+    print(
+        f"  • Delete solicitations with 'None' response_date posted >{OLD_SOLICITATIONS_DAYS} days ago")
     print(f"  • Delete any solicitations posted >{MAX_AGE_DAYS} days ago")
     print()
 
@@ -227,10 +230,11 @@ def main():
                 "SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != 'None' AND response_date != ''")).scalar() or 0
             none_response_dates = conn.execute(text(
                 "SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NULL OR response_date = 'None' OR response_date = ''")).scalar() or 0
-            
+
             print(f"Total solicitations before cleanup: {before_count}")
             print(f"Solicitations with response dates: {with_response_dates}")
-            print(f"Solicitations with None/missing response dates: {none_response_dates}")
+            print(
+                f"Solicitations with None/missing response dates: {none_response_dates}")
 
             # Find expired solicitations
             expired_ids, total_to_delete = _get_expired_solicitations(conn)
