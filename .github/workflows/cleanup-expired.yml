@@ -1,9 +1,11 @@
 name: Cleanup Expired Solicitations
 
 on:
-  # Run daily at 2:00 AM UTC (after the auto-refresh has completed)
+  # Run daily at 6:00 AM UTC (which is 12:00 AM MT in winter / 11:00 PM MT in summer)
+  # To run at 6:00 AM MT consistently, we'd use 12:00 UTC (winter) or 13:00 UTC (summer)
+  # Using 13:00 UTC to cover both seasons - this is 7:00 AM MT winter / 6:00 AM MT summer
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 13 * * *"
   
   # Allow manual triggering for testing
   workflow_dispatch:
@@ -24,7 +26,7 @@ jobs:
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       PYTHONPATH: ${{ github.workspace }}
-      TZ: America/Denver
+      TZ: America/Denver  # Mountain Time
       
     steps:
       - name: Checkout
@@ -49,10 +51,12 @@ jobs:
         env:
           CLEANUP_DRY_RUN: 'false'
           CLEANUP_BATCH_SIZE: '1000'
+          CLEANUP_OLD_SOLICITATIONS_DAYS: '30'  # New: delete 'None' response_date older than 30 days
           PYTHONUNBUFFERED: '1'
         run: |
-          echo "=== Scheduled cleanup run ==="
-          date
+          echo "=== Scheduled morning cleanup run ==="
+          echo "Mountain Time: $(TZ=America/Denver date)"
+          echo "UTC Time: $(date -u)"
           python -u scripts/cleanup_expired_solicitations.py
           echo "=== Cleanup complete ==="
 
@@ -61,11 +65,13 @@ jobs:
         env:
           CLEANUP_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           CLEANUP_BATCH_SIZE: '1000'
+          CLEANUP_OLD_SOLICITATIONS_DAYS: '30'
           PYTHONUNBUFFERED: '1'
         run: |
           echo "=== Manual cleanup run ==="
           echo "Dry run: ${{ github.event.inputs.dry_run || 'false' }}"
-          date
+          echo "Mountain Time: $(TZ=America/Denver date)"
+          echo "UTC Time: $(date -u)"
           python -u scripts/cleanup_expired_solicitations.py
           echo "=== Cleanup complete ==="
 
@@ -82,8 +88,10 @@ jobs:
           with engine.connect() as conn:
               total = conn.execute(text('SELECT COUNT(*) FROM solicitationraw')).scalar()
               with_response_date = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != \'None\' AND response_date != \'\'')).scalar()
+              none_response_date = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NULL OR response_date = \'None\' OR response_date = \'\'')).scalar()
               recent = conn.execute(text('SELECT COUNT(*) FROM solicitationraw WHERE posted_date::date >= CURRENT_DATE - INTERVAL \'7 days\'')).scalar()
               print(f'Total solicitations: {total}')
               print(f'With response dates: {with_response_date}')
+              print(f'With None/missing response dates: {none_response_date}')
               print(f'Posted in last 7 days: {recent}')
           "

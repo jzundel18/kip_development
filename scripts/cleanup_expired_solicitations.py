@@ -2,15 +2,16 @@
 """
 Cleanup expired solicitations script for KIP.
 
-This script removes solicitations from the database where the response_date 
-has already passed (is before today's date). This helps keep the database 
-clean and focused on current opportunities.
+This script removes solicitations from the database where:
+1. The response_date has already passed (is before today's date)
+2. The response_date is 'None'/missing and the solicitation was posted more than 30 days ago
 
 Environment variables:
   SUPABASE_DB_URL - Database connection string (required)
   CLEANUP_DRY_RUN - Set to 'true' to preview deletions without actually deleting
   CLEANUP_BATCH_SIZE - Number of records to delete per batch (default: 1000)
   CLEANUP_MAX_AGE_DAYS - Also delete records older than this many days regardless of response_date (default: 365)
+  CLEANUP_OLD_SOLICITATIONS_DAYS - Delete solicitations with 'None' response_date older than this many days (default: 30)
 """
 
 import os
@@ -26,6 +27,7 @@ DB_URL = os.getenv("SUPABASE_DB_URL", "sqlite:///app.db")
 DRY_RUN = os.getenv("CLEANUP_DRY_RUN", "false").lower() == "true"
 BATCH_SIZE = int(os.getenv("CLEANUP_BATCH_SIZE", "1000"))
 MAX_AGE_DAYS = int(os.getenv("CLEANUP_MAX_AGE_DAYS", "365"))
+OLD_SOLICITATIONS_DAYS = int(os.getenv("CLEANUP_OLD_SOLICITATIONS_DAYS", "30"))
 
 # Date patterns for parsing response_date field
 DATE_ISO_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -82,6 +84,7 @@ def _get_expired_solicitations(conn) -> Tuple[List[str], int]:
     """
     today = date.today()
     max_age_cutoff = today - timedelta(days=MAX_AGE_DAYS)
+    old_solicitations_cutoff = today - timedelta(days=OLD_SOLICITATIONS_DAYS)
 
     # Get all solicitations with their response dates and posted dates
     sql = text("""
@@ -95,11 +98,13 @@ def _get_expired_solicitations(conn) -> Tuple[List[str], int]:
 
     print(f"Today's date: {today}")
     print(f"Max age cutoff: {max_age_cutoff}")
+    print(f"Old solicitations cutoff (for 'None' response dates): {old_solicitations_cutoff}")
     print("Analyzing solicitations for expiration...")
 
     total_processed = 0
     expired_by_response_date = 0
     expired_by_age = 0
+    expired_by_old_none_response = 0
     unparseable_dates = 0
 
     for row in result:
@@ -119,7 +124,15 @@ def _get_expired_solicitations(conn) -> Tuple[List[str], int]:
             reason = f"response date {response_date} has passed"
             expired_by_response_date += 1
 
-        # Check if record is too old (regardless of response date)
+        # Check if response_date is 'None'/missing and solicitation is older than OLD_SOLICITATIONS_DAYS
+        elif not response_date and response_date_str and response_date_str.lower() in ("none", "n/a", "na", "null", ""):
+            posted_date = _parse_date(posted_date_str)
+            if posted_date and posted_date < old_solicitations_cutoff:
+                should_delete = True
+                reason = f"no response date and posted {posted_date} (>{OLD_SOLICITATIONS_DAYS} days ago)"
+                expired_by_old_none_response += 1
+
+        # Check if record is too old (regardless of response date) - existing logic
         if not should_delete:
             posted_date = _parse_date(posted_date_str)
             if posted_date and posted_date < max_age_cutoff:
@@ -142,6 +155,7 @@ def _get_expired_solicitations(conn) -> Tuple[List[str], int]:
     print(f"  Total solicitations processed: {total_processed}")
     print(f"  Expired by response date: {expired_by_response_date}")
     print(f"  Expired by age ({MAX_AGE_DAYS}+ days): {expired_by_age}")
+    print(f"  Expired 'None' response dates (>{OLD_SOLICITATIONS_DAYS} days old): {expired_by_old_none_response}")
     print(f"  Total to delete: {len(expired_ids)}")
     print(f"  Unparseable dates: {unparseable_dates}")
 
@@ -172,11 +186,23 @@ def _delete_solicitations_batch(conn, notice_ids: List[str]) -> int:
 def main():
     print("=== Cleanup Expired Solicitations ===")
     print(datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y"))
+    # Show Mountain Time as well
+    try:
+        import pytz
+        mt_tz = pytz.timezone('America/Denver')
+        mt_time = datetime.now(mt_tz)
+        print(f"Mountain Time: {mt_time.strftime('%a %b %d %H:%M:%S %Z %Y')}")
+    except:
+        print("Mountain Time: (timezone conversion unavailable)")
+    
     # Hide credentials
     print(f"Database: {DB_URL.split('@')[-1] if '@' in DB_URL else DB_URL}")
     print(f"Dry run mode: {DRY_RUN}")
     print(f"Batch size: {BATCH_SIZE}")
-    print("Cleanup criteria: Delete solicitations where response_date has passed")
+    print("Cleanup criteria:")
+    print(f"  • Delete solicitations where response_date has passed")
+    print(f"  • Delete solicitations with 'None' response_date posted >{OLD_SOLICITATIONS_DAYS} days ago")
+    print(f"  • Delete any solicitations posted >{MAX_AGE_DAYS} days ago")
     print()
 
     if not DB_URL:
@@ -199,19 +225,23 @@ def main():
                 text("SELECT COUNT(*) FROM solicitationraw")).scalar() or 0
             with_response_dates = conn.execute(text(
                 "SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NOT NULL AND response_date != 'None' AND response_date != ''")).scalar() or 0
+            none_response_dates = conn.execute(text(
+                "SELECT COUNT(*) FROM solicitationraw WHERE response_date IS NULL OR response_date = 'None' OR response_date = ''")).scalar() or 0
+            
             print(f"Total solicitations before cleanup: {before_count}")
             print(f"Solicitations with response dates: {with_response_dates}")
+            print(f"Solicitations with None/missing response dates: {none_response_dates}")
 
             # Find expired solicitations
             expired_ids, total_to_delete = _get_expired_solicitations(conn)
 
             if total_to_delete == 0:
                 print(
-                    "\nNo expired solicitations found. All response dates are current or missing.")
+                    "\nNo expired solicitations found. All response dates are current or missing solicitations are recent.")
                 return
 
             print(
-                f"\nFound {total_to_delete} solicitations with expired response dates.")
+                f"\nFound {total_to_delete} solicitations to delete based on cleanup criteria.")
 
             if DRY_RUN:
                 print("\n*** DRY RUN MODE - No actual deletions will be performed ***")
