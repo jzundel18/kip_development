@@ -630,18 +630,22 @@ def render_internal_results():
                     btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
 
                     if st.button(btn_label, key=btn_key):
-                        sol_dict = {
-                            "notice_id": nid,
-                            "title": getattr(row, "title", ""),
-                            "description": getattr(row, "description", ""),
-                            "naics_code": getattr(row, "naics_code", ""),
-                            "set_aside_code": getattr(row, "set_aside_code", ""),
-                            "response_date": getattr(row, "response_date", ""),
-                            "posted_date": getattr(row, "posted_date", ""),
-                            "link": getattr(row, "link", ""),
-                            "pop_city": getattr(row, "pop_city", ""),
-                            "pop_state": getattr(row, "pop_state", ""),
-                        }
+                        try:
+                            sol_dict = {
+                                "notice_id": nid,
+                                "title": _s(getattr(row, "title", "")),
+                                "description": _s(getattr(row, "description", "")),
+                                "naics_code": _s(getattr(row, "naics_code", "")),
+                                "set_aside_code": _s(getattr(row, "set_aside_code", "")),
+                                "response_date": _s(getattr(row, "response_date", "")),
+                                "posted_date": _s(getattr(row, "posted_date", "")),
+                                "link": _s(getattr(row, "link", "")),
+                                "pop_city": _s(getattr(row, "pop_city", "")),
+                                "pop_state": _s(getattr(row, "pop_state", "")),
+                            }
+                        except Exception as e:
+                            st.error(f"Error creating solicitation data: {e}")
+                            continue
 
                         # Extract locality
                         locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
@@ -661,21 +665,25 @@ def render_internal_results():
                             st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
 
                         # Find vendors
-                        vendors_df, note = find_service_vendors_for_opportunity(
-                            sol_dict, OPENAI_API_KEY, GOOGLE_API_KEY, top_n=3)
+                        try:
+                            vendors_df, note = find_service_vendors_for_opportunity(
+                                sol_dict, GOOGLE_API_KEY, GOOGLE_CX, OPENAI_API_KEY, top_n=3)
 
-                        if vendors_df is None or vendors_df.empty:
-                            loc_msg = ""
-                            if _has_locality(locality):
-                                where = ", ".join([x for x in [locality.get("city", ""), locality.get(
-                                    "state", "")] if x]) or locality.get("state", "")
-                                loc_msg = f" for the specified locality ({where})"
-                            st.session_state.vendor_errors[
-                                nid] = f"No service providers found{loc_msg}."
-                        else:
-                            st.session_state.vendor_errors.pop(nid, None)
-
-                        st.session_state.vendor_suggestions[nid] = vendors_df
+                            if vendors_df is None or vendors_df.empty:
+                                loc_msg = ""
+                                if _has_locality(locality):
+                                    where = ", ".join([x for x in [locality.get("city", ""), locality.get(
+                                        "state", "")] if x]) or locality.get("state", "")
+                                    loc_msg = f" for the specified locality ({where})"
+                                st.session_state.vendor_errors[
+                                    nid] = f"No service providers found{loc_msg}."
+                            else:
+                                st.session_state.vendor_errors.pop(nid, None)
+                                st.session_state.vendor_suggestions[nid] = vendors_df
+                                
+                        except Exception as e:
+                            st.session_state.vendor_errors[nid] = f"Error finding vendors: {str(e)[:100]}"
+                            st.session_state.vendor_suggestions[nid] = pd.DataFrame()
                         st.rerun()
 
             with right:
@@ -1413,12 +1421,6 @@ with tab5:
             
         except Exception as e:
             return None, f"Vendor search failed: {str(e)[:100]}"
-
-    # Update the function call in the render_internal_results function
-    # Find this section and update the function call:
-
-    # Find vendors
-    vendors_df, note = find_service_vendors_for_opportunity(sol_dict, OPENAI_API_KEY, GOOGLE_API_KEY, GOOGLE_CX, top_n=3)  # Updated parameters
 
     def ai_research_direction(title: str, description: str, api_key: str) -> str:
         """Generate research direction for R&D opportunities"""
