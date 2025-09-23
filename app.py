@@ -36,7 +36,258 @@ import get_relevant_solicitations as gs
 import secrets
 
 from scoring import AIMatrixScorer, ai_matrix_score_solicitations, ai_score_and_rank_solicitations_by_fit
+# =========================
+# Performance Optimization Functions
+# =========================
 
+
+@st.cache_data(show_spinner=False, ttl=86400)  # 24 hour cache
+def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
+    """Fetch cached embeddings from database"""
+    if not text_hashes:
+        return {}
+
+    with engine.connect() as conn:
+        placeholders = ",".join("?" if engine.url.get_dialect(
+        ).name == "sqlite" else "%s" for _ in text_hashes)
+        df = pd.read_sql_query(
+            f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders})",
+            conn,
+            params=text_hashes
+        )
+
+    result = {}
+    for _, row in df.iterrows():
+        try:
+            embedding_data = json.loads(row['embedding'])
+            result[row['text_hash']] = np.array(
+                embedding_data, dtype=np.float32)
+        except Exception:
+            continue
+
+    return result
+
+
+def store_embeddings_batch(embeddings_data: list[dict]):
+    """Store multiple embeddings efficiently"""
+    if not embeddings_data:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            INSERT INTO solicitation_embeddings (notice_id, embedding, text_hash, created_at)
+            VALUES (:notice_id, :embedding, :text_hash, :created_at)
+            ON CONFLICT (notice_id) DO UPDATE SET
+                embedding = EXCLUDED.embedding,
+                text_hash = EXCLUDED.text_hash,
+                created_at = EXCLUDED.created_at
+        """), embeddings_data)
+
+
+def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFrame:
+    """Optimized version with better SQL and limits"""
+    where_conditions = []
+    params = {}
+
+    where_conditions.append("LOWER(notice_type) != 'justification'")
+
+    # NAICS filter
+    naics = [re.sub(r"[^\d]", "", str(x))
+             for x in (filters.get("naics") or []) if x]
+    if naics:
+        # Use tuple format for IN clause with pandas/psycopg2
+        naics_tuple = tuple(naics)
+        where_conditions.append(f"naics_code IN {naics_tuple}")
+
+    # Date filter
+    due_before = filters.get("due_before")
+    if due_before:
+        where_conditions.append("response_date <= %(due_before)s")
+        params["due_before"] = str(due_before)
+
+    # Set-aside filter
+    sas = [str(s).lower() for s in (filters.get("set_asides") or []) if s]
+    if sas:
+        sa_conditions = []
+        for i, sa in enumerate(sas):
+            sa_conditions.append(
+                f"LOWER(set_aside_code) LIKE %(setaside_{i})s")
+            params[f"setaside_{i}"] = f"%{sa}%"
+        where_conditions.append(f"({' OR '.join(sa_conditions)})")
+
+    # Notice types
+    nts = [str(nt).lower() for nt in (filters.get("notice_types") or []) if nt]
+    if nts:
+        nt_conditions = []
+        for i, nt in enumerate(nts):
+            nt_conditions.append(f"LOWER(notice_type) LIKE %(noticetype_{i})s")
+            params[f"noticetype_{i}"] = f"%{nt}%"
+        where_conditions.append(f"({' OR '.join(nt_conditions)})")
+
+    where_clause = " AND ".join(
+        where_conditions) if where_conditions else "1=1"
+
+    # Keywords - PostgreSQL full-text search
+    kws = [str(k).lower() for k in (filters.get("keywords_or") or []) if k]
+    if kws and engine.url.get_dialect().name == 'postgresql':
+        keyword_query = " | ".join(kws)
+        where_conditions.append(
+            "to_tsvector('english', title || ' ' || description) @@ to_tsquery(%(keyword_query)s)")
+        params["keyword_query"] = keyword_query
+        where_clause = " AND ".join(where_conditions)
+
+    # Use direct integer substitution for LIMIT to avoid parameter binding issues
+    limit_safe = min(int(limit), 5000)
+    sql = f"""
+        SELECT notice_id, solicitation_number, title, notice_type, posted_date, response_date, archive_date,
+               naics_code, set_aside_code, description, link, pop_city, pop_state, pop_zip, pop_country, pop_raw
+        FROM solicitationraw 
+        WHERE {where_clause}
+        ORDER BY posted_date DESC NULLS LAST
+        LIMIT {limit_safe}
+    """
+
+    with engine.connect() as conn:
+        df = pd.read_sql_query(sql, conn, params=params)
+
+    if df.empty:
+        return df
+
+    # Handle keyword filtering for non-PostgreSQL databases
+    if kws and engine.url.get_dialect().name != 'postgresql':
+        for c in ["title", "description"]:
+            if c in df.columns:
+                df[c] = df[c].astype(str)
+        blob = (df["title"] + " " + df["description"]).str.lower()
+        df = df[blob.apply(lambda t: any(k in t for k in kws))]
+
+    return df.reset_index(drop=True)
+
+
+def optimize_database():
+    """Add indexes and optimize database for faster queries"""
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("""
+                CREATE INDEX IF NOT EXISTS idx_sol_posted_naics 
+                ON solicitationraw (posted_date DESC, naics_code)
+            """))
+            conn.execute(sa.text("""
+                CREATE INDEX IF NOT EXISTS idx_sol_response_date 
+                ON solicitationraw (response_date) 
+                WHERE response_date IS NOT NULL AND response_date != 'None'
+            """))
+            conn.execute(sa.text("""
+                CREATE INDEX IF NOT EXISTS idx_sol_notice_type 
+                ON solicitationraw (notice_type) 
+                WHERE notice_type IS NOT NULL
+            """))
+            if engine.url.get_dialect().name == 'postgresql':
+                conn.execute(sa.text("""
+                    CREATE INDEX IF NOT EXISTS idx_sol_fulltext 
+                    ON solicitationraw USING gin(to_tsvector('english', title || ' ' || description))
+                """))
+    except Exception as e:
+        st.warning(f"Database optimization note: {e}")
+
+
+def ai_downselect_df_optimized(company_desc: str, df: pd.DataFrame, api_key: str,
+                               threshold: float = 0.20, top_k: int | None = None) -> pd.DataFrame:
+    """Optimized version using cached embeddings"""
+    if df.empty:
+        return df
+
+    # Prepare texts and compute hashes
+    texts = (df["title"].fillna("") + " " +
+             df["description"].fillna("")).str.slice(0, 2000)
+    text_hashes = []
+    hash_to_idx = {}
+
+    for idx, text in enumerate(texts):
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        text_hashes.append(text_hash)
+        hash_to_idx[text_hash] = idx
+
+    # Get cached embeddings
+    cached = get_cached_embeddings(text_hashes)
+
+    # Identify missing embeddings
+    missing_hashes = [h for h in text_hashes if h not in cached]
+    missing_texts = [texts.iloc[hash_to_idx[h]] for h in missing_hashes]
+
+    # Compute missing embeddings in batch
+    if missing_texts:
+        try:
+            client = OpenAI(api_key=api_key)
+
+            # Company query embedding
+            q = client.embeddings.create(
+                model="text-embedding-3-small", input=[company_desc])
+            Xq = np.array(q.data[0].embedding, dtype=np.float32)
+            Xq_norm = Xq / (np.linalg.norm(Xq) + 1e-9)
+
+            # Batch compute missing embeddings
+            X_list = []
+            batch_size = 500
+            for i in range(0, len(missing_texts), batch_size):
+                batch = missing_texts[i:i+batch_size]
+                r = client.embeddings.create(
+                    model="text-embedding-3-small", input=batch)
+                X_list.extend([d.embedding for d in r.data])
+
+            # Store new embeddings
+            embeddings_to_store = []
+            for i, text_hash in enumerate(missing_hashes):
+                embedding = np.array(X_list[i], dtype=np.float32)
+                embedding_norm = embedding / (np.linalg.norm(embedding) + 1e-9)
+                cached[text_hash] = embedding_norm
+
+                embeddings_to_store.append({
+                    "notice_id": str(df.iloc[hash_to_idx[text_hash]]["notice_id"]),
+                    "embedding": json.dumps(embedding_norm.tolist()),
+                    "text_hash": text_hash,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+
+            # Store in background (non-blocking)
+            if embeddings_to_store:
+                store_embeddings_batch(embeddings_to_store)
+
+        except Exception as e:
+            st.warning(
+                f"AI downselect failed ({e}). Using simple keyword filter.")
+            # Fallback to keyword matching
+            kws = [w.lower() for w in re.findall(
+                r"[a-zA-Z0-9]{4,}", company_desc)]
+            if not kws:
+                return df
+            blob = (df["title"].fillna("") + " " +
+                    df["description"].fillna("")).str.lower()
+            mask = blob.apply(lambda t: any(k in t for k in kws))
+            return df[mask].reset_index(drop=True)
+    else:
+        # All embeddings cached, just get company embedding
+        client = OpenAI(api_key=api_key)
+        q = client.embeddings.create(
+            model="text-embedding-3-small", input=[company_desc])
+        Xq_norm = np.array(q.data[0].embedding, dtype=np.float32)
+        Xq_norm = Xq_norm / (np.linalg.norm(Xq_norm) + 1e-9)
+
+    # Compute similarities using cached embeddings
+    X = np.array([cached[h] for h in text_hashes])
+    sims = X @ Xq_norm
+
+    df_result = df.copy()
+    df_result["ai_score"] = sims
+
+    if top_k is not None and top_k > 0:
+        df_result = df_result.sort_values(
+            "ai_score", ascending=False).head(int(top_k))
+    else:
+        df_result = df_result[df_result["ai_score"] >= float(
+            threshold)].sort_values("ai_score", ascending=False)
+
+    return df_result.reset_index(drop=True)
 
 # =========================
 # Configuration & Secrets
@@ -1783,8 +2034,9 @@ with tab5:
         # Pre-trim with embeddings
         pretrim_cap = min(int(max_candidates_cap),
                         max(20, 12 * int(internal_top_k)))
-        pretrim = ai_downselect_df(
-            company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
+        pretrim = ai_downselect_df_optimized(
+            company_desc.strip(), df, OPENAI_API_KEY, top_k=80)
+
         if pretrim.empty:
             st.info("AI pre-filter returned nothing.")
             return None
