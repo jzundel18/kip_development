@@ -157,6 +157,15 @@ if "sol_df" not in st.session_state:
     st.session_state.sol_df = None
 if "sup_df" not in st.session_state:
     st.session_state.sup_df = None
+# Add these to your session state initialization
+if "topn_df" not in st.session_state:
+    st.session_state.topn_df = None
+if "partner_matches" not in st.session_state:
+    st.session_state.partner_matches = None
+if "partner_matches_stamp" not in st.session_state:
+    st.session_state.partner_matches_stamp = None
+if "topn_stamp" not in st.session_state:
+    st.session_state.topn_stamp = None
 
 # =========================
 # Utility Functions
@@ -321,6 +330,29 @@ try:
 except Exception as e:
     st.warning(f"Migration note: {e}")
 
+# Company table migration (add after your existing migrations)
+try:
+    insp = inspect(engine)
+    if "company" in [t.lower() for t in insp.get_table_names()]:
+        existing_cols = {c["name"] for c in insp.get_columns("company")}
+        REQUIRED_COMPANY_COLS = {
+            "name": "TEXT",
+            "description": "TEXT",
+            "city": "TEXT",
+            "state": "TEXT",
+        }
+        missing_cols = [
+            c for c in REQUIRED_COMPANY_COLS if c not in existing_cols]
+        if missing_cols:
+            with engine.begin() as conn:
+                for col in missing_cols:
+                    conn.execute(
+                        sa.text(f'ALTER TABLE company ADD COLUMN "{col}" {REQUIRED_COMPANY_COLS[col]}'))
+except Exception as e:
+    st.warning(f"Company table migration note: {e}")
+
+
+
 # =========================
 # Authentication Functions
 # =========================
@@ -447,6 +479,136 @@ if st.session_state.user is None:
             st.session_state.user = {"id": row["id"], "email": row["email"]}
             st.session_state.profile = get_profile(row["id"])
             st.session_state.view = "main"
+
+
+# =========================
+# Partner Matching Functions
+# =========================
+
+def ai_identify_gaps(company_desc: str, solicitation_text: str, api_key: str) -> str:
+    """
+    Ask the model to identify key capability gaps we'd need to fill to bid solo.
+    Returns a short paragraph (1–3 sentences).
+    """
+    client = OpenAI(api_key=api_key)
+    sys = "You are a federal contracting expert. Be concise and specific."
+    user = (
+        "Company description:\n"
+        f"{company_desc}\n\n"
+        "Solicitation (title+description):\n"
+        f"{solicitation_text[:6000]}\n\n"
+        "List the biggest capability gaps this company would need to fill to bid competitively. "
+        "Return a short paragraph (no bullets)."
+    )
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": sys},
+                      {"role": "user", "content": user}],
+            temperature=0.2
+        )
+        return (r.choices[0].message.content or "").strip()
+    except Exception as e:
+        st.warning(f"Gap identification unavailable ({e}).")
+        return ""
+
+
+def pick_best_partner_for_gaps(gap_text: str, companies: pd.DataFrame, api_key: str, top_n: int = 1) -> pd.DataFrame:
+    """
+    Use embeddings to match companies to the gap text. Returns top_n rows from `companies`.
+    """
+    if companies.empty or not gap_text.strip():
+        return companies.head(0)
+    # Embed gap_text
+    q = _embed_texts([gap_text], api_key)[0]  # normalized
+    # Embed companies (cached)
+    emb = cached_company_embeddings(companies, api_key)
+    dfc, X = emb["df"], emb["X"]
+    if X.shape[0] == 0:
+        return dfc.head(0)
+    sims = X @ q  # cosine similarity
+    dfc = dfc.copy()
+    dfc["score"] = sims
+    return dfc.sort_values("score", ascending=False).head(top_n)
+
+
+def ai_partner_justification(company_row: dict, solicitation_text: str, gap_text: str, api_key: str) -> dict:
+    """
+    Returns {"justification": "...", "joint_proposal": "..."} short blurbs.
+    """
+    client = OpenAI(api_key=api_key)
+    sys = (
+        "You are a federal contracts strategist. Be concise, concrete, and persuasive. "
+        "You MUST reply with a single JSON object only."
+    )
+    # IMPORTANT: include the word "JSON" and the exact shape
+    instructions = (
+        'Return ONLY a JSON object of the form: '
+        '{"justification":"one short sentence", "joint_proposal":"one short sentence"} '
+        '— no markdown, no extra text.'
+    )
+    user_payload = {
+        "partner_company": {
+            "name": company_row.get("name", ""),
+            "capabilities": company_row.get("description", ""),
+            "location": f'{company_row.get("city","")}, {company_row.get("state","")}'.strip(", "),
+        },
+        "our_capability_gaps": gap_text,
+        "solicitation": solicitation_text[:6000],
+        "instructions": instructions,
+    }
+
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": sys},
+                # include "JSON" in the user message content as well
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+            temperature=0.2,
+        )
+        content = (r.choices[0].message.content or "").strip()
+        data = json.loads(content or "{}")
+        j = str(data.get("justification", "")).strip()
+        jp = str(data.get("joint_proposal", "")).strip()
+        if not j and not jp:
+            # graceful fallback
+            return {"justification": "No justification returned.", "joint_proposal": ""}
+        return {"justification": j, "joint_proposal": jp}
+    except Exception as e:
+        return {"justification": f"Justification unavailable ({e})", "joint_proposal": ""}
+
+
+def companies_df() -> pd.DataFrame:
+    """Get companies from the database"""
+    with engine.connect() as conn:
+        try:
+            return pd.read_sql_query(
+                "SELECT id, name, description, city, state FROM company ORDER BY name",
+                conn
+            )
+        except Exception:
+            return pd.DataFrame(columns=["id", "name", "description", "city", "state"])
+
+
+def bulk_insert_companies(df: pd.DataFrame) -> int:
+    """Insert multiple companies into the database"""
+    needed = ["name", "description", "city", "state"]
+    for c in needed:
+        if c not in df.columns:
+            df[c] = ""
+
+    with engine.begin() as conn:
+        rows = df[needed].fillna("").to_dict(orient="records")
+        for row in rows:
+            conn.execute(sa.text("""
+                INSERT INTO company (name, description, city, state)
+                VALUES (:name, :description, :city, :state)
+            """), {k: (row.get(k) or "") for k in needed})
+    return len(df)
+
 
 # =========================
 # AI & Embedding Functions
@@ -1161,7 +1323,7 @@ with tab1:
                         top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"])
                         
                         show_df = top_df
-                        
+
                         st.success(f"Top {len(top_df)} matches by enhanced company fit:")
                         render_enhanced_score_results(enhanced_ranked)  # Use new display function
                         
@@ -1209,7 +1371,139 @@ with tab3:
     st.header("This feature is in development...")
 
 with tab4:
-    st.header("This feature is in development...")
+    with tab4:
+        st.header("Partner Matches (from AI-ranked results)")
+
+        # Need AI-ranked results from Tab 1
+        topn = st.session_state.get("topn_df")
+        df_companies = companies_df()
+
+        if topn is None or topn.empty:
+            st.info(
+                "No AI-ranked results available. In Tab 1, run AI ranking to generate matches first.")
+        elif df_companies.empty:
+            st.info("Your company database is empty. Upload company data below or populate the 'company' table in your database.")
+
+            # Option to upload company data
+            uploaded_companies = st.file_uploader("Upload company database (CSV)", type=[
+                                                "csv"], key="company_upload")
+            if uploaded_companies is not None:
+                try:
+                    companies_upload_df = pd.read_csv(uploaded_companies)
+                    if "name" in companies_upload_df.columns and "description" in companies_upload_df.columns:
+                        inserted = bulk_insert_companies(companies_upload_df)
+                        st.success(
+                            f"Uploaded {inserted} companies to the database.")
+                        st.rerun()
+                    else:
+                        st.error(
+                            "CSV must have at least 'name' and 'description' columns.")
+                except Exception as e:
+                    st.error(f"Failed to read CSV: {e}")
+        else:
+            # Reuse company description from Tab 1 (stored there)
+            company_desc_global = (st.session_state.get(
+                "company_desc") or "").strip()
+            if not company_desc_global:
+                st.info(
+                    "No company description provided in Tab 1. Please enter one there and rerun.")
+            else:
+                # Auto-compute matches when Top-n changes or cache is empty
+                need_recompute = (
+                    st.session_state.get("partner_matches") is None or
+                    st.session_state.get(
+                        "partner_matches_stamp") != st.session_state.get("topn_stamp")
+                )
+
+                if need_recompute:
+                    with st.spinner("Analyzing gaps and selecting partners..."):
+                        matches = []
+                        for _, row in topn.iterrows():
+                            title = str(row.get("title", "")) or "Untitled"
+                            blurb = str(row.get("blurb", "")).strip()
+                            desc = str(row.get("description", "")) or ""
+                            sol_text = f"{title}\n\n{desc}"
+
+                            # 1) Identify our capability gaps for this solicitation
+                            gaps = ai_identify_gaps(
+                                company_desc_global, sol_text, OPENAI_API_KEY)
+
+                            # 2) Pick best partner from company DB to fill those gaps
+                            best = pick_best_partner_for_gaps(
+                                gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
+                            if best.empty:
+                                matches.append({
+                                    "title": title,
+                                    "blurb": blurb,
+                                    "partner": None,
+                                    "gaps": gaps,
+                                    "ai": {"justification": "No suitable partner found.", "joint_proposal": ""}
+                                })
+                                continue
+
+                            partner = best.iloc[0].to_dict()
+
+                            # 3) Short justification + joint-proposal sketch (JSON-safe)
+                            ai = ai_partner_justification(
+                                partner, sol_text, gaps, OPENAI_API_KEY)
+
+                            matches.append({
+                                "title": title,
+                                "blurb": blurb,
+                                "partner": partner,
+                                "gaps": gaps,
+                                "ai": ai
+                            })
+
+                    # Cache results with a stamp tied to the Top-n
+                    st.session_state.partner_matches = matches
+                    st.session_state.partner_matches_stamp = st.session_state.get(
+                        "topn_stamp")
+
+                # Render cached matches
+                matches = st.session_state.get("partner_matches", [])
+                if not matches:
+                    st.info("No partner matches computed yet.")
+                else:
+                    for m in matches:
+                        hdr = (m.get("blurb") or m.get(
+                            "title") or "Untitled").strip()
+                        partner_name = (m.get("partner") or {}).get("name", "")
+                        exp_title = f"Opportunity: {hdr}"
+                        if partner_name:
+                            exp_title += f" — Partner: {partner_name}"
+
+                        with st.expander(exp_title):
+                            # Partner block
+                            if m.get("partner"):
+                                p = m["partner"]
+                                loc = ", ".join(
+                                    [x for x in [p.get("city", ""), p.get("state", "")] if x])
+                                st.markdown("**Recommended Partner:**")
+                                st.write(f"{p.get('name','')}" +
+                                        (f" — {loc}" if loc else ""))
+                            else:
+                                st.warning(
+                                    "No suitable partner found for this opportunity.")
+
+                            # Gaps
+                            if m.get("gaps"):
+                                st.markdown(
+                                    "**Why we need a partner (our capability gaps):**")
+                                st.write(m["gaps"])
+
+                            # Why this partner
+                            just = (m.get("ai", {}) or {}).get("justification", "")
+                            if just:
+                                st.markdown("**Why this partner:**")
+                                st.info(just)
+
+                            # Joint proposal idea
+                            jp = (m.get("ai", {}) or {}).get(
+                                "joint_proposal", "").strip()
+                            if jp:
+                                st.markdown("**Targeted joint proposal idea:**")
+                                st.write(jp)
 
 with tab5:
     # Add these functions to your app.py file (before the Internal Use tab section)
