@@ -1,28 +1,16 @@
+# Enhanced find_relevant_suppliers.py
 """
-find_relevant_suppliers.py
+Enhanced vendor discovery for KIP using Google Custom Search JSON API.
 
-Vendor discovery helpers for KIP - Updated to use Google Custom Search JSON API.
-
-Goals:
-- Given a solicitation (title/description/etc) find real vendors (manufacturers/distributors/system integrators)
-- Avoid aggregator/bid repost sites (sam.gov, govtribe, bidnet, etc.)
-- Return a clean DataFrame with: name, website, location (best-effort), reason
-- Be resilient when fields are missing; never crash if title/description is None
-
-This module exposes two public entry points:
-
-- find_vendors_for_notice(sol: dict, google_api_key: str, google_cx: str, openai_api_key: str, max_google: int = 8, top_n: int = 3, return_debug: bool = False)
-    -> DataFrame (and optional debug dict)
-
-- get_suppliers(solicitations: list[dict], our_recommended_suppliers: list[str], our_not_recommended_suppliers: list[str], Max_Google_Results: int, OpenAi_API_Key: str, Google_API_Key: str, Google_CX: str)
-    -> Compatibility wrapper returning a list of rows across solicitations, preserving the old signature used elsewhere.
-
-Notes:
-- Network calls are done via Google Custom Search JSON API by simple HTTP; we avoid parsing HTML.
-- LLM is used only to score and produce a short reason; failures fall back to heuristic reasons.
+Key improvements:
+1. Less restrictive filtering - allows more results through
+2. Better location handling with fallback to national search
+3. Removed all "SERP" references 
+4. Smarter query building with location awareness
+5. Better error handling and fallbacks
 """
+
 from __future__ import annotations
-
 import os
 import re
 import json
@@ -30,179 +18,137 @@ import time
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, Optional
+from urllib.parse import urlparse
 
 import requests
 import pandas as pd
 
 try:
     from openai import OpenAI
-except Exception:  # pragma: no cover
-    OpenAI = None  # type: ignore
+except Exception:
+    OpenAI = None
 
 # -----------------------------
-# Domain filters / heuristics
+# Configuration
 # -----------------------------
 
+# Aggregator domains to avoid (still filter out obvious non-vendors)
 AGGREGATOR_DOMAINS: set[str] = {
     "sam.gov", "beta.sam.gov", "govtribe.com", "bidnet.com", "bidnetdirect.com",
-    "bidlink.net", "govwin.com", "govology.com", "usaspending.gov", "usaopps.com",
-    "grants.gov", "fedconnect.net", "fbo.gov", "highergov.com", "govsearch.com",
-    "govdirections.com", "procureport.com", "periscopeholdings.com", "p1.gov",
-    "app.box.com", "state.gov", "mil", "army.mil", "navy.mil", "af.mil", "af.mil",
-    "defense.gov", "dfars", "codeofsupport.org", "linkedin.com", "facebook.com",
-    "twitter.com", "instagram.com", "x.com", "youtube.com", "tiktok.com",
+    "fedconnect.net", "fbo.gov", "grants.gov", "usaspending.gov",
+    "linkedin.com", "facebook.com", "twitter.com", "instagram.com", "x.com"
 }
 
+# Keywords that indicate aggregator/bid sites (reduced list)
 AGGREGATOR_KEYWORDS: tuple[str, ...] = (
-    "solicitation", "rfq", "rfp", "sources sought", "notice", "sam.gov", "bid", "tender",
-    "opportunity", "govtribe", "bidnet", "government", "contract", "award", "posting",
+    "sam.gov", "govtribe", "bidnet", "government contracts", "federal opportunities"
 )
 
-LIKELY_VENDOR_KEYWORDS: tuple[str, ...] = (
-    "manufacturer", "supplier", "distributor", "oem", "fabrication", "machine shop",
-    "cnc", "molding", "turning", "milling", "weld", "assembly", "reseller",
-    "parts", "components",
+# Vendor indicators (expanded and more flexible)
+VENDOR_INDICATORS: tuple[str, ...] = (
+    "manufacturer", "supplier", "distributor", "contractor", "services", "solutions",
+    "company", "corporation", "llc", "inc", "industries", "systems", "technology",
+    "engineering", "fabrication", "machining", "maintenance", "repair", "installation"
 )
 
-# Some public suffixes that are commonly vendors (heuristic; we do *not* outright block .gov)
-VENDOR_TLDS: tuple[str, ...] = (".com", ".net", ".co", ".io", ".us", ".biz",
-                                ".tech", ".systems", ".solutions", ".engineering", ".industries")
+# Broader list of TLDs that could be vendors
+POTENTIAL_VENDOR_TLDS: tuple[str, ...] = (
+    ".com", ".net", ".co", ".io", ".us", ".biz", ".org", ".tech", ".systems",
+    ".solutions", ".engineering", ".industries", ".services", ".group"
+)
+
+USER_AGENT = "KIP_VendorFinder/1.0"
+
+# -----------------------------
+# Utility Functions
+# -----------------------------
 
 
 def _netloc(url: str) -> str:
+    """Extract netloc from URL"""
     try:
-        from urllib.parse import urlparse
         return urlparse(url).netloc.lower()
     except Exception:
         return ""
 
 
-def _is_aggregator(url: str, title: str, snippet: str) -> bool:
-    host = _netloc(url)
-    if not host:
-        return True
-    host_agg = any(h in host for h in AGGREGATOR_DOMAINS)
-    kw_agg = any(k in (title + " " + snippet).lower()
-                 for k in AGGREGATOR_KEYWORDS)
-    return host_agg or kw_agg
-
-
-def _looks_like_vendor(url: str) -> bool:
-    host = _netloc(url)
-    if not host:
-        return False
-    return host.endswith(VENDOR_TLDS)
-
-
 def _clean_text(x: Optional[str]) -> str:
+    """Clean and normalize text"""
     if not x:
         return ""
     return re.sub(r"\s+", " ", str(x)).strip()
 
 
-def _extract_part_tokens(title: str, description: str) -> List[str]:
-    """
-    Pulls candidate tokens like part numbers / NSNs and meaningful nouns.
-    """
-    s = f"{title} {description}".upper()
-    # NSN-like (e.g., 5305-00-123-4567) or part-ish words with hyphens/digits
-    tokens = set(re.findall(r"[A-Z0-9]{3,}(?:-[A-Z0-9]{2,})+", s))
-    # add long alphanum words
-    tokens |= set(re.findall(r"\b[A-Z0-9]{6,}\b", s))
-    # ensure at least some tokens
-    out = [t for t in tokens if not t.isdigit()]
-    return out[:6]
-
-
-def _build_queries(title: str, description: str) -> List[str]:
-    title = _clean_text(title)
-    description = _clean_text(description)
-
-    # Primary query focuses on title with vendor-intent terms
-    base = title or description[:80]
-    vendor_terms = " manufacturer OR supplier OR distributor OR OEM"
-    q1 = f'{base} {vendor_terms}'
-
-    # Secondary query: add extracted tokens
-    tokens = _extract_part_tokens(title, description)
-    q2 = f'{base} {" ".join(tokens)} {vendor_terms}'.strip()
-
-    # Last chance: narrow to machine shop/manufacturing terms
-    q3 = f'{base} ("machine shop" OR fabrication OR "precision machining" OR CNC)'
-
-    # Deduplicate while preserving order
-    seen = set()
-    out = []
-    for q in [q1, q2, q3]:
-        if q and q not in seen:
-            seen.add(q)
-            out.append(q)
-    return out
-
-
-def _google_custom_search(query: str, api_key: str, cx: str, max_results: int = 10) -> Dict[str, Any]:
-    """
-    Search using Google Custom Search JSON API
-    
-    Args:
-        query: Search query string
-        api_key: Google API key
-        cx: Custom Search Engine ID
-        max_results: Maximum number of results to return
-    
-    Returns:
-        Dict containing search results in Google Custom Search format
-    """
-    params = {
-        "key": api_key,
-        "cx": cx,
-        "q": query,
-        # Google Custom Search max is 10 per request
-        "num": min(10, max_results),
-        "safe": "off",
-        "lr": "lang_en",  # Prefer English results
-    }
-
+def _company_name_from_url(url: str) -> str:
+    """Extract company name from URL"""
     try:
-        r = requests.get(
-            "https://www.googleapis.com/customsearch/v1", params=params, timeout=25)
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.RequestException as e:
-        # Return empty structure that matches expected format
-        return {"items": []}
+        domain = urlparse(url).netloc.lower()
+        # Remove common prefixes
+        for prefix in ['www.', 'm.', 'en.']:
+            if domain.startswith(prefix):
+                domain = domain[len(prefix):]
+        # Remove .com, .org, etc and capitalize
+        name = domain.split('.')[0]
+        return name.replace('-', ' ').replace('_', ' ').title()
+    except:
+        return "Company"
 
 
-def _llm_reason(openai_api_key: str, solicitation_title: str, solicitation_desc: str, vendor_name: str, vendor_url: str, vendor_snippet: str) -> str:
-    if not openai_api_key or OpenAI is None:
-        return ""
+def _extract_service_type(title: str, description: str, openai_api_key: str) -> str:
+    """Extract what type of service/product is needed using AI"""
+    if not openai_api_key or not OpenAI:
+        # Fallback: basic keyword extraction
+        text = f"{title} {description}".lower()
+        if any(kw in text for kw in ["machining", "cnc", "fabrication", "manufacturing"]):
+            return "manufacturing services"
+        elif any(kw in text for kw in ["maintenance", "repair", "installation", "service"]):
+            return "service providers"
+        elif any(kw in text for kw in ["software", "it", "technology"]):
+            return "technology services"
+        else:
+            return "contractors"
+
     try:
         client = OpenAI(api_key=openai_api_key)
-        sys = "You are a concise sourcing analyst. One sentence. No fluff."
-        user = (
-            f"Solicitation title:\n{solicitation_title}\n\n"
-            f"Solicitation description:\n{(solicitation_desc or '')[:1500]}\n\n"
-            f"Vendor candidate:\nName: {vendor_name}\nURL: {vendor_url}\nSnippet: {vendor_snippet}\n\n"
-            "In one short sentence, explain why this vendor likely can provide the item/service. "
-            "Do not repeat the URL."
-        )
-        r = client.chat.completions.create(
+        service_prompt = f"""Based on this government solicitation, what type of service company or product supplier should I search for? 
+        
+Title: {title[:200]}
+Description: {description[:400]}
+
+Respond with 2-4 search keywords for the type of provider needed (e.g., "HVAC maintenance contractor", "precision machining services", "IT support services"). Be specific and practical."""
+
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": sys},
-                      {"role": "user", "content": user}],
-            temperature=0.2,
+            messages=[{"role": "user", "content": service_prompt}],
+            temperature=0.1,
+            max_tokens=50,
+            timeout=15
         )
-        return (r.choices[0].message.content or "").strip()
+
+        return response.choices[0].message.content.strip()
     except Exception:
-        return ""
+        return "contractors and suppliers"
+
+
+def _is_likely_aggregator(url: str, title: str, snippet: str) -> bool:
+    """Check if result is likely an aggregator site (less restrictive)"""
+    host = _netloc(url)
+    if not host:
+        return True
+
+    # Only filter out obvious aggregators
+    host_agg = any(domain in host for domain in AGGREGATOR_DOMAINS)
+
+    # Only filter if multiple aggregator keywords present
+    combined_text = (title + " " + snippet).lower()
+    agg_keyword_count = sum(
+        1 for k in AGGREGATOR_KEYWORDS if k in combined_text)
+
+    return host_agg or agg_keyword_count >= 2
 
 
 def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-    """
-    Heuristic score combining presence of vendor keywords and overlap with title/part tokens.
-    Adapted for Google Custom Search JSON API format.
-    """
-    # Google Custom Search format: {"title": "...", "link": "...", "snippet": "..."}
+    """Score a search result candidate (more permissive scoring)"""
     vendor_url = _clean_text(result.get("link"))
     vendor_name = _clean_text(result.get("title"))
     snippet = _clean_text(result.get("snippet"))
@@ -210,32 +156,46 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
     if not vendor_url:
         return 0.0, result
 
-    if _is_aggregator(vendor_url, vendor_name, snippet):
+    # Skip obvious aggregators
+    if _is_likely_aggregator(vendor_url, vendor_name, snippet):
         return 0.0, result
-    if not _looks_like_vendor(vendor_url):
-        # Allow non-standard TLDs but with strong vendor keywords
-        if not any(k in (vendor_name + " " + snippet).lower() for k in LIKELY_VENDOR_KEYWORDS):
-            return 0.0, result
 
-    base = (title + " " + description).lower()
-    score = 0.0
-    for k in LIKELY_VENDOR_KEYWORDS:
-        if k in (vendor_name + " " + snippet).lower():
-            score += 1.0
-
-    # overlap with tokens
-    tokens = [t.lower() for t in _extract_part_tokens(title, description)]
-    for t in tokens:
-        if t and t in (vendor_name + " " + snippet).lower():
-            score += 1.0
-
-    # small bump if domain isn't obviously marketplace (amazon/ebay/alibaba)
+    # More permissive vendor detection
     host = _netloc(vendor_url)
-    if not any(m in host for m in ("amazon.", "ebay.", "alibaba.", "walmart.", "grainger.", "mcmaster.", "zoro.com")):
-        score += 0.5
+    combined_text = (vendor_name + " " + snippet).lower()
 
-    return score, {
-        "name": vendor_name[:120] or host.split(":")[0],
+    # Start with base score
+    score = 1.0  # Give everything a chance
+
+    # Boost for vendor indicators
+    for indicator in VENDOR_INDICATORS:
+        if indicator in combined_text:
+            score += 1.5
+
+    # Boost for having vendor-like domain
+    if host.endswith(POTENTIAL_VENDOR_TLDS):
+        score += 1.0
+
+    # Boost for relevance to solicitation
+    sol_keywords = re.findall(
+        r'\b\w{4,}\b', (title + " " + description).lower())
+    for keyword in sol_keywords[:10]:  # Check top 10 keywords
+        if keyword in combined_text:
+            score += 0.5
+
+    # Small penalty for marketplaces (but don't exclude entirely)
+    marketplace_domains = ("amazon.", "ebay.", "alibaba.", "walmart.")
+    if any(m in host for m in marketplace_domains):
+        score *= 0.7  # Reduce score but don't eliminate
+
+    # Penalty for social media/directories
+    social_domains = ("facebook.com", "linkedin.com",
+                      "yellowpages.com", "yelp.com")
+    if any(s in host for s in social_domains):
+        score *= 0.3
+
+    return max(score, 0.0), {
+        "name": vendor_name[:120] if vendor_name else _company_name_from_url(vendor_url),
         "website": vendor_url,
         "location": "",
         "snippet": snippet[:240],
@@ -243,26 +203,131 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
     }
 
 
-def _pick_top_candidates(title: str, description: str, google_json: Dict[str, Any], limit: int = 3) -> List[Dict[str, Any]]:
-    """
-    Extract top candidates from Google Custom Search results.
-    Google format: {"items": [{"title": "...", "link": "...", "snippet": "..."}, ...]}
-    """
-    items = google_json.get("items", [])
-    candidates: List[Tuple[float, Dict[str, Any]]] = []
+def _build_search_queries(title: str, description: str, service_type: str, location: dict = None) -> List[str]:
+    """Build multiple search queries with location awareness"""
+    queries = []
 
-    for item in items:
-        sc, payload = _score_candidate(title, description, item)
-        if sc > 0:
-            candidates.append((sc, payload))
+    # Location handling
+    location_str = ""
+    use_location = False
 
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    out = []
-    for sc, payload in candidates:
-        out.append(payload)
-        if len(out) >= limit:
-            break
-    return out
+    if location and (location.get("city") or location.get("state")):
+        city = location.get("city", "").strip()
+        state = location.get("state", "").strip()
+
+        if city and state:
+            location_str = f"{city} {state}"
+            use_location = True
+        elif state:
+            location_str = state
+            use_location = True
+
+    # Base search terms
+    base_terms = title[:100] if title else description[:100]
+
+    # Query 1: Service type + location (if available)
+    if use_location:
+        queries.append(f"{service_type} {location_str}")
+        queries.append(f"{service_type} near {location_str}")
+        queries.append(f"{base_terms} contractor {location_str}")
+    else:
+        # National search queries
+        queries.append(f"{service_type} United States")
+        queries.append(f"{service_type} nationwide")
+        queries.append(f"{base_terms} contractor nationwide")
+
+    # Query 2: More specific based on solicitation content
+    if "machining" in (title + description).lower():
+        loc_part = f" {location_str}" if use_location else " USA"
+        queries.append(f"CNC machining services{loc_part}")
+        queries.append(f"precision machining{loc_part}")
+    elif "maintenance" in (title + description).lower():
+        loc_part = f" {location_str}" if use_location else " nationwide"
+        queries.append(f"maintenance services{loc_part}")
+    elif "software" in (title + description).lower():
+        loc_part = f" {location_str}" if use_location else " USA"
+        queries.append(f"software development{loc_part}")
+
+    # Fallback general query
+    if not queries:
+        queries.append(f"contractors suppliers {service_type}")
+
+    return queries[:3]  # Limit to 3 queries max
+
+
+def _google_custom_search(query: str, api_key: str, cx: str, location: dict = None, max_results: int = 10) -> Dict[str, Any]:
+    """
+    Search using Google Custom Search JSON API with enhanced location handling
+    """
+    params = {
+        "key": api_key,
+        "cx": cx,
+        "q": query,
+        "num": min(10, max_results),  # Google Custom Search max is 10
+        "safe": "off",
+        "lr": "lang_en",
+        "filter": "0",  # Disable duplicate filtering for more results
+    }
+
+    # Add location parameters if available
+    if location:
+        state = location.get("state", "").upper()
+        # Use 'gl' parameter for country/state-level geolocation
+        if state and len(state) == 2:
+            # For US states, we can't use 'gl' directly, but we can bias results
+            # The query already includes location, so we rely on that
+            pass
+
+        # Could add 'cr' parameter for country restriction if needed
+        # params["cr"] = "countryUS"  # Restrict to US results
+
+    try:
+        response = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params=params,
+            timeout=25,
+            headers={"User-Agent": USER_AGENT}
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException:
+        # Return empty structure on failure
+        return {"items": []}
+
+
+def _generate_ai_reason(openai_api_key: str, solicitation_title: str, solicitation_desc: str,
+                        vendor_name: str, vendor_url: str, vendor_snippet: str) -> str:
+    """Generate AI reason for vendor recommendation"""
+    if not openai_api_key or not OpenAI:
+        return f"This vendor appears to offer relevant services based on their profile."
+
+    try:
+        client = OpenAI(api_key=openai_api_key)
+        prompt = f"""Explain in one short sentence why this vendor would be good for this government solicitation:
+
+Solicitation: {solicitation_title[:150]}
+Description: {(solicitation_desc or '')[:400]}
+
+Vendor: {vendor_name}
+About: {vendor_snippet[:200]}
+
+Focus on what specific work they could do. Be concise and practical."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=100,
+            timeout=15
+        )
+
+        return response.choices[0].message.content.strip()
+    except Exception:
+        return f"This vendor appears to have relevant capabilities for the requested work."
+
+# -----------------------------
+# Main Search Function
+# -----------------------------
 
 
 def find_vendors_for_notice(
@@ -270,119 +335,201 @@ def find_vendors_for_notice(
     google_api_key: str,
     google_cx: str,
     openai_api_key: str,
-    max_google: int = 8,
+    max_google: int = 10,
     top_n: int = 3,
     return_debug: bool = False,
 ) -> Tuple[pd.DataFrame, Optional[Dict[str, Any]]]:
     """
-    Primary function used by the Streamlit UI.
-
-    sol must include: title, description (best effort), and optionally naics_code etc.
-    Returns a DataFrame with up to top_n vendors and (optionally) a debug dict of raw Google data.
-    
-    Args:
-        sol: Solicitation dictionary with title, description, etc.
-        google_api_key: Google API key
-        google_cx: Google Custom Search Engine ID  
-        openai_api_key: OpenAI API key for generating reasons
-        max_google: Maximum results per Google query
-        top_n: Number of final vendors to return
-        return_debug: Whether to return debug information
+    Enhanced vendor search with less restrictive filtering and better location handling
     """
     title = _clean_text(str(sol.get("title", "")))
     description = _clean_text(str(sol.get("description", "")))
+
     if not title and not description:
         df = pd.DataFrame(columns=["name", "website", "location", "reason"])
         return (df, {"error": "empty_solicitation"} if return_debug else None)
 
-    queries = _build_queries(title, description)
+    # Extract place of performance
+    location = {
+        "city": _clean_text(str(sol.get("pop_city", ""))),
+        "state": _clean_text(str(sol.get("pop_state", "")))
+    }
 
-    debug: Dict[str, Any] = {"queries": queries, "raw": []}
-    accepted: List[Dict[str, Any]] = []
+    # Determine service type
+    service_type = _extract_service_type(title, description, openai_api_key)
 
-    for qi, q in enumerate(queries, start=1):
+    # Build search queries
+    queries = _build_search_queries(title, description, service_type, location)
+
+    debug = {"queries": queries, "location": location,
+             "service_type": service_type, "raw": []}
+    candidates = []
+    seen_domains = set()
+
+    # Execute searches
+    for i, query in enumerate(queries):
         try:
-            data = _google_custom_search(
-                q, google_api_key, google_cx, max_results=max_google)
+            search_results = _google_custom_search(
+                query, google_api_key, google_cx, location, max_results=max_google
+            )
+
             if return_debug:
-                debug["raw"].append({"query": q, "hits": len(
-                    data.get("items", [])), "data": data})
+                debug["raw"].append({
+                    "query": query,
+                    "hits": len(search_results.get("items", [])),
+                    "data": search_results
+                })
 
-            picks = _pick_top_candidates(
-                title, description, data, limit=top_n * 2)
-            # De-dup by domain
-            seen = set()
-            for p in picks:
-                host = p.get("host", "")
-                if host in seen:
-                    continue
-                seen.add(host)
-                accepted.append(p)
-                if len(accepted) >= top_n:
-                    break
+            # Process results
+            for item in search_results.get("items", []):
+                score, candidate = _score_candidate(title, description, item)
 
-            if accepted:
-                break  # got enough
+                if score > 0:
+                    host = candidate.get("host", "")
+
+                    # Allow more results by being less restrictive on duplicates
+                    if host in seen_domains:
+                        continue
+
+                    seen_domains.add(host)
+                    candidate["score"] = score
+                    candidate["query_used"] = query
+                    candidates.append(candidate)
+
+                    if len(candidates) >= top_n * 3:  # Get extra candidates
+                        break
+
+            # If we have enough good candidates, we can stop early
+            if len(candidates) >= top_n * 2:
+                break
 
         except Exception as e:
             if return_debug:
-                debug["raw"].append({"query": q, "error": str(e)})
+                debug["raw"].append({"query": query, "error": str(e)})
+            continue
 
-    # Build DataFrame and add AI reason
-    rows: List[Dict[str, Any]] = []
-    for p in accepted[:top_n]:
-        reason = _llm_reason(openai_api_key, title, description, p.get(
-            "name", ""), p.get("website", ""), p.get("snippet", ""))
+    # Sort candidates by score and take top N
+    candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+    top_candidates = candidates[:top_n]
+
+    # Build result DataFrame
+    rows = []
+    for candidate in top_candidates:
+        # Generate AI reason
+        reason = _generate_ai_reason(
+            openai_api_key, title, description,
+            candidate.get("name", ""), candidate.get("website", ""),
+            candidate.get("snippet", "")
+        )
+
+        # Try to extract location from snippet
+        snippet = candidate.get("snippet", "")
+        location_match = re.search(
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
+        extracted_location = ""
+        if location_match:
+            extracted_location = f"{location_match.group(1)}, {location_match.group(2)}"
+        elif location.get("state"):
+            extracted_location = f"Serving {location['state']}"
+
         rows.append({
-            "name": p.get("name", ""),
-            "website": p.get("website", ""),
-            "location": p.get("location", ""),
-            "reason": reason or p.get("snippet", ""),
+            "name": candidate.get("name", ""),
+            "website": candidate.get("website", ""),
+            "location": extracted_location,
+            "reason": reason,
         })
 
     df = pd.DataFrame(rows, columns=["name", "website", "location", "reason"])
     return (df, debug if return_debug else None)
 
+# -----------------------------
+# Service Vendor Search (for Internal Use tab)
+# -----------------------------
 
-# --------------------------------------
-# Back-compat: original get_suppliers API
-# --------------------------------------
+
+def find_service_vendors_for_opportunity(solicitation: dict, google_api_key: str, google_cx: str,
+                                         openai_api_key: str, top_n: int = 3) -> tuple:
+    """
+    Find service vendors for a solicitation opportunity with enhanced location handling
+    """
+    try:
+        # Extract solicitation details
+        title = solicitation.get("title", "")
+        description = solicitation.get("description", "")
+
+        # Extract location with better fallback
+        pop_city = (solicitation.get("pop_city") or "").strip()
+        pop_state = (solicitation.get("pop_state") or "").strip()
+
+        location = {"city": pop_city, "state": pop_state}
+
+        # Use the enhanced search function
+        vendors_df, search_note = find_vendors_for_notice(
+            sol=solicitation,
+            google_api_key=google_api_key,
+            google_cx=google_cx,
+            openai_api_key=openai_api_key,
+            max_google=15,  # Get more candidates
+            top_n=top_n,
+            return_debug=False
+        )
+
+        # Generate appropriate status message
+        if pop_city and pop_state:
+            note = f"Searching for providers in {pop_city}, {pop_state}"
+        elif pop_state:
+            note = f"Searching for providers in {pop_state}"
+        else:
+            note = "No specific location found - conducting national search"
+
+        return vendors_df, note
+
+    except Exception as e:
+        return None, f"Vendor search failed: {str(e)[:100]}"
+
+# -----------------------------
+# Compatibility Functions
+# -----------------------------
+
+
 def get_suppliers(
     solicitations: List[Dict[str, Any]],
     our_recommended_suppliers: List[str] | None = None,
     our_not_recommended_suppliers: List[str] | None = None,
-    Max_Google_Results: int = 8,
+    Max_Google_Results: int = 10,
     OpenAi_API_Key: str | None = None,
     Google_API_Key: str | None = None,
     Google_CX: str | None = None,
 ) -> List[Dict[str, Any]]:
     """
-    Returns a flat list of vendor rows across all solicitations to keep old callers working.
-    Each row: {"notice_id","name","website","location","reason"}
-    
-    Updated to use Google Custom Search instead of SerpAPI.
+    Compatibility wrapper that returns vendor results across all solicitations
     """
-    out: List[Dict[str, Any]] = []
+    results = []
     our_recommended_suppliers = our_recommended_suppliers or []
     our_not_recommended_suppliers = our_not_recommended_suppliers or []
 
     for sol in solicitations:
-        df, _ = find_vendors_for_notice(
-            sol=sol,
-            google_api_key=Google_API_Key or "",
-            google_cx=Google_CX or "",
-            openai_api_key=OpenAi_API_Key or "",
-            max_google=Max_Google_Results,
-            top_n=3,
-            return_debug=False,
-        )
-        nid = str(sol.get("notice_id", ""))
-        for _, r in df.iterrows():
-            out.append({
-                "notice_id": nid,
-                "name": r.get("name", ""),
-                "website": r.get("website", ""),
-                "location": r.get("location", ""),
-                "reason": r.get("reason", ""),
-            })
-    return out
+        try:
+            df, _ = find_vendors_for_notice(
+                sol=sol,
+                google_api_key=Google_API_Key or "",
+                google_cx=Google_CX or "",
+                openai_api_key=OpenAi_API_Key or "",
+                max_google=Max_Google_Results,
+                top_n=3,
+                return_debug=False,
+            )
+
+            notice_id = str(sol.get("notice_id", ""))
+            for _, row in df.iterrows():
+                results.append({
+                    "notice_id": notice_id,
+                    "name": row.get("name", ""),
+                    "website": row.get("website", ""),
+                    "location": row.get("location", ""),
+                    "reason": row.get("reason", ""),
+                })
+        except Exception:
+            continue
+
+    return results

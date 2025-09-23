@@ -289,6 +289,7 @@ def ai_downselect_df_optimized(company_desc: str, df: pd.DataFrame, api_key: str
 
     return df_result.reset_index(drop=True)
 
+
 # =========================
 # Configuration & Secrets
 # =========================
@@ -307,8 +308,8 @@ def get_secret(name, default=None):
 
 # Load secrets
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
-GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY") 
-GOOGLE_CX = get_secret("GOOGLE_CX") 
+GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
+GOOGLE_CX = get_secret("GOOGLE_CX")
 SAM_KEYS = get_secret("SAM_KEYS", [])
 
 if isinstance(SAM_KEYS, str):
@@ -348,6 +349,8 @@ if "vendor_suggestions" not in st.session_state:
     st.session_state.vendor_suggestions = {}
 if "vendor_errors" not in st.session_state:
     st.session_state.vendor_errors = {}
+
+
 @st.cache_resource
 def get_optimized_engine(db_url: str):
     """Create optimized database engine with connection pooling"""
@@ -601,7 +604,6 @@ try:
                         sa.text(f'ALTER TABLE company ADD COLUMN "{col}" {REQUIRED_COMPANY_COLS[col]}'))
 except Exception as e:
     st.warning(f"Company table migration note: {e}")
-
 
 
 # =========================
@@ -987,6 +989,7 @@ def ai_make_blurbs_fast(df: pd.DataFrame, api_key: str, model: str = "gpt-4o-min
 # AI Matrix Scorer
 # =========================
 
+
 def render_internal_results():
     """Render the results with vendor finding functionality."""
     data = st.session_state.get('iu_results')
@@ -1016,9 +1019,11 @@ def render_internal_results():
             with left:
                 st.write(f"**Notice Type:** {getattr(row, 'notice_type', '')}")
                 st.write(f"**Posted:** {getattr(row, 'posted_date', '')}")
-                st.write(f"**Response Due:** {getattr(row, 'response_date', '')}")
+                st.write(
+                    f"**Response Due:** {getattr(row, 'response_date', '')}")
                 st.write(f"**NAICS:** {getattr(row, 'naics_code', '')}")
-                st.write(f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
+                st.write(
+                    f"**Set-aside:** {getattr(row, 'set_aside_code', '')}")
 
                 link = make_sam_public_url(
                     str(getattr(row, 'notice_id', '')), getattr(row, 'link', ''))
@@ -1038,7 +1043,7 @@ def render_internal_results():
                     st.write(direction)
                 else:
                     # Services/Machine shop mode - show vendor finder
-                    btn_label = "Find 3 potential vendors (SerpAPI)" if st.session_state.get(
+                    btn_label = "Find 3 potential vendors" if st.session_state.get(
                         "iu_mode") == "machine" else "Find 3 local service providers"
                     btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
 
@@ -1093,10 +1098,12 @@ def render_internal_results():
                             else:
                                 st.session_state.vendor_errors.pop(nid, None)
                                 st.session_state.vendor_suggestions[nid] = vendors_df
-                                
+
                         except Exception as e:
-                            st.session_state.vendor_errors[nid] = f"Error finding vendors: {str(e)[:100]}"
-                            st.session_state.vendor_suggestions[nid] = pd.DataFrame()
+                            st.session_state.vendor_errors[
+                                nid] = f"Error finding vendors: {str(e)[:100]}"
+                            st.session_state.vendor_suggestions[nid] = pd.DataFrame(
+                            )
                         st.rerun()
 
             with right:
@@ -1133,6 +1140,7 @@ def render_internal_results():
                     if not err_msg:
                         st.caption(
                             "No vendors yet. Click the button to fetch.")
+
 
 def render_enhanced_score_results(results: List[Dict]):
     """Enhanced results display for new matching system"""
@@ -1194,6 +1202,7 @@ def render_enhanced_score_results(results: List[Dict]):
                             st.caption(f"{comp_name}: {comp_score}/10")
                         else:
                             st.caption(f"{comp_name}: {comp_data}")
+
 
 def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFrame:
     """Optimized version with better SQL and limits"""
@@ -1279,6 +1288,243 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=[c for c in ["notice_id", "description", "link"] if c in df.columns], errors="ignore")
 
 # =========================
+# Enhanced Vendor Search Functions
+# =========================
+
+
+def find_service_vendors_for_opportunity(solicitation: dict, google_api_key: str, google_cx: str, openai_api_key: str, top_n: int = 3) -> tuple:
+    """Find service vendors for a solicitation using Google Custom Search API"""
+    try:
+        # Extract what type of service is needed
+        title = solicitation.get("title", "")
+        description = solicitation.get("description", "")
+        naics = solicitation.get("naics_code", "")
+
+        # Extract location
+        pop_city = (solicitation.get("pop_city") or "").strip()
+        pop_state = (solicitation.get("pop_state") or "").strip()
+
+        # Build search query for the type of service needed
+        client = OpenAI(api_key=openai_api_key)
+
+        service_prompt = f"""Based on this government solicitation, what type of service company should I search for? 
+        
+Title: {title[:200]}
+Description: {description[:400]}
+
+Respond with 2-4 search keywords for the type of service provider needed (e.g., "HVAC maintenance contractor", "IT support services", "janitorial services"). Be specific and practical."""
+
+        service_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": service_prompt}],
+            temperature=0.1,
+            max_tokens=50,
+            timeout=15
+        )
+
+        service_type = service_response.choices[0].message.content.strip()
+
+        # Build location-aware search query
+        if pop_city and pop_state:
+            location_query = f"{pop_city} {pop_state}"
+            search_query = f"{service_type} {location_query}"
+            search_note = f"Searching for providers in {pop_city}, {pop_state}"
+        elif pop_state:
+            location_query = pop_state
+            search_query = f"{service_type} {pop_state}"
+            search_note = f"Searching for providers in {pop_state}"
+        else:
+            search_query = f"{service_type} contractors United States"
+            search_note = "No specific location found - conducting national search"
+
+        # Search using Google Custom Search API
+        google_params = {
+            "key": google_api_key,
+            "cx": google_cx,
+            "q": search_query,
+            "num": min(10, 15),  # Get more results for better selection
+            "safe": "off",
+            "lr": "lang_en",
+            "filter": "0",  # Disable duplicate filtering for more results
+        }
+
+        response = requests.get(
+            "https://www.googleapis.com/customsearch/v1", params=google_params, timeout=15)
+
+        if response.status_code != 200:
+            return None, f"Search API error: {response.status_code}"
+
+        data = response.json()
+        search_results = data.get("items", [])
+
+        if not search_results:
+            return None, "No search results found"
+
+        # Enhanced filtering - less restrictive but still quality-focused
+        vendors = []
+        seen_domains = set()
+
+        # Domains to still avoid (obvious non-vendors)
+        skip_domains = ['sam.gov', 'govtribe.com', 'facebook.com', 'linkedin.com',
+                        'indeed.com', 'glassdoor.com', 'wikipedia.org']
+
+        for result in search_results:
+            title_text = result.get("title", "")
+            snippet = result.get("snippet", "")
+            link = result.get("link", "")
+
+            # Skip if no link
+            if not link.startswith('http'):
+                continue
+
+            # Extract domain for deduplication
+            try:
+                domain = urlparse(link).netloc.lower()
+                if domain in seen_domains:
+                    continue
+                seen_domains.add(domain)
+            except:
+                continue
+
+            # Skip obvious non-vendors (more permissive than before)
+            if any(skip_domain in link.lower() for skip_domain in skip_domains):
+                continue
+
+            # Extract company info
+            company_name = _company_name_from_url(link)
+            if title_text and len(title_text) < 100:
+                # Use title if it looks like a company name
+                company_name = title_text.split('|')[0].split('-')[0].strip()
+
+            # Extract location from snippet if possible
+            location_text = ""
+            location_match = re.search(
+                r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
+            if location_match:
+                location_text = f"{location_match.group(1)}, {location_match.group(2)}"
+            elif pop_state:
+                location_text = f"Serving {pop_state}"
+
+            # Generate relevance reason using AI
+            try:
+                reason_prompt = f"""Why would "{company_name}" be a good vendor for this work: {title[:100]}?
+                
+Based on: {snippet[:200]}
+
+Give a 1 sentence reason focusing on their relevant capabilities."""
+
+                reason_response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": reason_prompt}],
+                    temperature=0.1,
+                    max_tokens=50,
+                    timeout=10
+                )
+
+                reason = reason_response.choices[0].message.content.strip()
+            except:
+                reason = "Appears to offer relevant services for this opportunity."
+
+            vendors.append({
+                "name": company_name,
+                "website": link,
+                "location": location_text,
+                "reason": reason,
+                "snippet": snippet[:150]
+            })
+
+            if len(vendors) >= top_n:
+                break
+
+        if not vendors:
+            return None, "No relevant service providers found after filtering"
+
+        # Convert to DataFrame
+        vendors_df = pd.DataFrame(vendors)
+
+        return vendors_df, search_note
+
+    except Exception as e:
+        return None, f"Vendor search failed: {str(e)[:100]}"
+
+
+def _has_locality(locality: dict) -> bool:
+    """Check if locality has meaningful location data"""
+    city = (locality.get("city") or "").strip()
+    state = (locality.get("state") or "").strip()
+    return bool(city or state)
+
+
+def _extract_locality(text: str) -> dict:
+    """Extract city/state from text using simple regex patterns"""
+
+    # Common patterns for city, state
+    patterns = [
+        r'(\w+(?:\s+\w+)*),\s*([A-Z]{2})',  # "City Name, ST"
+        r'(\w+(?:\s+\w+)*)\s+([A-Z]{2})\s',  # "City Name ST "
+        # Proper case cities
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s*([A-Z]{2})',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return {
+                "city": match.group(1).strip(),
+                "state": match.group(2).strip()
+            }
+
+    # Just look for state codes
+    state_match = re.search(r'\b([A-Z]{2})\b', text)
+    if state_match:
+        return {
+            "city": "",
+            "state": state_match.group(1)
+        }
+
+    return {}
+
+
+def _company_name_from_url(url: str) -> str:
+    """Extract company name from URL"""
+    try:
+        domain = urlparse(url).netloc.lower()
+        # Remove common prefixes
+        for prefix in ['www.', 'm.', 'en.']:
+            if domain.startswith(prefix):
+                domain = domain[len(prefix):]
+        # Remove .com, .org, etc and capitalize
+        name = domain.split('.')[0]
+        return name.replace('-', ' ').replace('_', ' ').title()
+    except:
+        return "Company"
+
+
+def ai_research_direction(title: str, description: str, api_key: str) -> str:
+    """Generate research direction for R&D opportunities"""
+    try:
+        client = OpenAI(api_key=api_key)
+
+        prompt = f"""Based on this R&D solicitation, suggest a specific research direction or approach:
+
+Title: {title[:200]}
+Description: {description[:400]}
+
+Provide 2-3 sentences describing a promising research approach or technology solution. Be specific and innovative."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4,
+            max_tokens=200,
+            timeout=15
+        )
+
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return "Consider leveraging cutting-edge technology and innovative methodologies to address the stated research objectives."
+
+# =========================
 # UI Components
 # =========================
 
@@ -1301,6 +1547,7 @@ def render_sidebar_header():
                 st.session_state.view = "auth"
                 st.rerun()
         st.markdown("---")
+
 
 def render_auth_screen():
     st.title("Welcome to KIP")
@@ -1429,6 +1676,7 @@ st.caption("Don't be jealous that I've been chatting online with babes *all day*
 
 with st.sidebar:
     st.success("✅ API keys loaded from Secrets")
+    st.caption("Google Custom Search configured for vendor discovery")
     st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
 
@@ -1523,9 +1771,10 @@ with tab1:
                 status_text = st.empty()
 
                 if use_ai_downselect and company_desc.strip():
-                    status_text.text("🔍 Stage 1: Pre-filtering solicitations...")
+                    status_text.text(
+                        "🔍 Stage 1: Pre-filtering solicitations...")
                     progress_bar.progress(20)
-                    
+
                     # Build enhanced company profile
                     prof = st.session_state.get('profile', {}) or {}
                     company_profile_dict = {
@@ -1534,16 +1783,16 @@ with tab1:
                         'city': prof.get('city', ''),
                         'state': prof.get('state', '')
                     }
-                    
+
                     # Initialize enhanced matcher
                     matcher = EnhancedMatcher(api_key=OPENAI_API_KEY)
-                    
+
                     status_text.text("🎯 Stage 2: Finding semantic matches...")
                     progress_bar.progress(50)
-                    
+
                     status_text.text("📊 Stage 3: Detailed scoring analysis...")
                     progress_bar.progress(80)
-                    
+
                     # Run complete matching pipeline
                     enhanced_ranked = matcher.match_solicitations(
                         solicitations=df,
@@ -1552,40 +1801,53 @@ with tab1:
                         embedding_limit=50,
                         final_limit=int(top_k_select)
                     )
-                    
+
                     progress_bar.progress(100)
-                    
+
                     if enhanced_ranked:
                         # Convert results to dataframe format for compatibility
                         id_order = [x["notice_id"] for x in enhanced_ranked]
-                        top_df = df[df["notice_id"].astype(str).isin(id_order)].copy()
-                        
+                        top_df = df[df["notice_id"].astype(
+                            str).isin(id_order)].copy()
+
                         # Maintain result order
                         preorder = {nid: i for i, nid in enumerate(id_order)}
-                        top_df["_order"] = top_df["notice_id"].astype(str).map(preorder)
-                        top_df = top_df.sort_values("_order").drop(columns=["_order"])
-                        
+                        top_df["_order"] = top_df["notice_id"].astype(
+                            str).map(preorder)
+                        top_df = top_df.sort_values(
+                            "_order").drop(columns=["_order"])
+
                         # Add scores from matching results
-                        score_map = {x["notice_id"]: x["score"] for x in enhanced_ranked}
-                        top_df["fit_score"] = top_df["notice_id"].astype(str).map(score_map)
-                        
+                        score_map = {x["notice_id"]: x["score"]
+                                     for x in enhanced_ranked}
+                        top_df["fit_score"] = top_df["notice_id"].astype(
+                            str).map(score_map)
+
                         # Generate blurbs
-                        blurbs = ai_make_blurbs_fast(top_df, OPENAI_API_KEY, max_items=int(top_k_select))
-                        top_df["blurb"] = top_df["notice_id"].astype(str).map(blurbs).fillna(top_df["title"])
-                        
+                        blurbs = ai_make_blurbs_fast(
+                            top_df, OPENAI_API_KEY, max_items=int(top_k_select))
+                        top_df["blurb"] = top_df["notice_id"].astype(
+                            str).map(blurbs).fillna(top_df["title"])
+
                         show_df = top_df
 
-                        st.success(f"Top {len(top_df)} matches by enhanced company fit:")
-                        render_enhanced_score_results(enhanced_ranked)  # Use new display function
-                        
-                        st.session_state.topn_df = top_df.reset_index(drop=True)
+                        st.success(
+                            f"Top {len(top_df)} matches by enhanced company fit:")
+                        render_enhanced_score_results(
+                            enhanced_ranked)  # Use new display function
+
+                        st.session_state.topn_df = top_df.reset_index(
+                            drop=True)
                         st.session_state.sol_df = top_df.copy()
                         st.session_state.enhanced_ranked = enhanced_ranked
                     else:
-                        st.info("Enhanced matching found no results. Showing manual results.")
+                        st.info(
+                            "Enhanced matching found no results. Showing manual results.")
                         show_df = df.head(int(limit_results))
-                        blurbs = ai_make_blurbs_fast(show_df, OPENAI_API_KEY, max_items=20)
-                        show_df["blurb"] = show_df["notice_id"].astype(str).map(blurbs).fillna(show_df["title"])
+                        blurbs = ai_make_blurbs_fast(
+                            show_df, OPENAI_API_KEY, max_items=20)
+                        show_df["blurb"] = show_df["notice_id"].astype(
+                            str).map(blurbs).fillna(show_df["title"])
 
                     progress_bar.empty()
                     status_text.empty()
@@ -1622,479 +1884,267 @@ with tab3:
     st.header("This feature is in development...")
 
 with tab4:
-    with tab4:
-        st.header("Partner Matches (from AI-ranked results)")
+    st.header("Partner Matches (from AI-ranked results)")
 
-        # Need AI-ranked results from Tab 1
-        topn = st.session_state.get("topn_df")
-        df_companies = companies_df()
+    # Need AI-ranked results from Tab 1
+    topn = st.session_state.get("topn_df")
+    df_companies = companies_df()
 
-        if topn is None or topn.empty:
+    if topn is None or topn.empty:
+        st.info(
+            "No AI-ranked results available. In Tab 1, run AI ranking to generate matches first.")
+    elif df_companies.empty:
+        st.info("Your company database is empty. Upload company data below or populate the 'company' table in your database.")
+
+        # Option to upload company data
+        uploaded_companies = st.file_uploader("Upload company database (CSV)", type=[
+            "csv"], key="company_upload")
+        if uploaded_companies is not None:
+            try:
+                companies_upload_df = pd.read_csv(uploaded_companies)
+                if "name" in companies_upload_df.columns and "description" in companies_upload_df.columns:
+                    inserted = bulk_insert_companies(companies_upload_df)
+                    st.success(
+                        f"Uploaded {inserted} companies to the database.")
+                    st.rerun()
+                else:
+                    st.error(
+                        "CSV must have at least 'name' and 'description' columns.")
+            except Exception as e:
+                st.error(f"Failed to read CSV: {e}")
+    else:
+        # Reuse company description from Tab 1 (stored there)
+        company_desc_global = (st.session_state.get(
+            "company_desc") or "").strip()
+        if not company_desc_global:
             st.info(
-                "No AI-ranked results available. In Tab 1, run AI ranking to generate matches first.")
-        elif df_companies.empty:
-            st.info("Your company database is empty. Upload company data below or populate the 'company' table in your database.")
-
-            # Option to upload company data
-            uploaded_companies = st.file_uploader("Upload company database (CSV)", type=[
-                                                "csv"], key="company_upload")
-            if uploaded_companies is not None:
-                try:
-                    companies_upload_df = pd.read_csv(uploaded_companies)
-                    if "name" in companies_upload_df.columns and "description" in companies_upload_df.columns:
-                        inserted = bulk_insert_companies(companies_upload_df)
-                        st.success(
-                            f"Uploaded {inserted} companies to the database.")
-                        st.rerun()
-                    else:
-                        st.error(
-                            "CSV must have at least 'name' and 'description' columns.")
-                except Exception as e:
-                    st.error(f"Failed to read CSV: {e}")
+                "No company description provided in Tab 1. Please enter one there and rerun.")
         else:
-            # Reuse company description from Tab 1 (stored there)
-            company_desc_global = (st.session_state.get(
-                "company_desc") or "").strip()
-            if not company_desc_global:
-                st.info(
-                    "No company description provided in Tab 1. Please enter one there and rerun.")
-            else:
-                # Auto-compute matches when Top-n changes or cache is empty
-                need_recompute = (
-                    st.session_state.get("partner_matches") is None or
-                    st.session_state.get(
-                        "partner_matches_stamp") != st.session_state.get("topn_stamp")
-                )
+            # Auto-compute matches when Top-n changes or cache is empty
+            need_recompute = (
+                st.session_state.get("partner_matches") is None or
+                st.session_state.get(
+                    "partner_matches_stamp") != st.session_state.get("topn_stamp")
+            )
 
-                if need_recompute:
-                    with st.spinner("Analyzing gaps and selecting partners..."):
-                        matches = []
-                        for _, row in topn.iterrows():
-                            title = str(row.get("title", "")) or "Untitled"
-                            blurb = str(row.get("blurb", "")).strip()
-                            desc = str(row.get("description", "")) or ""
-                            sol_text = f"{title}\n\n{desc}"
+            if need_recompute:
+                with st.spinner("Analyzing gaps and selecting partners..."):
+                    matches = []
+                    for _, row in topn.iterrows():
+                        title = str(row.get("title", "")) or "Untitled"
+                        blurb = str(row.get("blurb", "")).strip()
+                        desc = str(row.get("description", "")) or ""
+                        sol_text = f"{title}\n\n{desc}"
 
-                            # 1) Identify our capability gaps for this solicitation
-                            gaps = ai_identify_gaps(
-                                company_desc_global, sol_text, OPENAI_API_KEY)
+                        # 1) Identify our capability gaps for this solicitation
+                        gaps = ai_identify_gaps(
+                            company_desc_global, sol_text, OPENAI_API_KEY)
 
-                            # 2) Pick best partner from company DB to fill those gaps
-                            best = pick_best_partner_for_gaps(
-                                gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
-                            if best.empty:
-                                matches.append({
-                                    "title": title,
-                                    "blurb": blurb,
-                                    "partner": None,
-                                    "gaps": gaps,
-                                    "ai": {"justification": "No suitable partner found.", "joint_proposal": ""}
-                                })
-                                continue
-
-                            partner = best.iloc[0].to_dict()
-
-                            # 3) Short justification + joint-proposal sketch (JSON-safe)
-                            ai = ai_partner_justification(
-                                partner, sol_text, gaps, OPENAI_API_KEY)
-
+                        # 2) Pick best partner from company DB to fill those gaps
+                        best = pick_best_partner_for_gaps(
+                            gaps or sol_text, df_companies, OPENAI_API_KEY, top_n=1)
+                        if best.empty:
                             matches.append({
                                 "title": title,
                                 "blurb": blurb,
-                                "partner": partner,
+                                "partner": None,
                                 "gaps": gaps,
-                                "ai": ai
+                                "ai": {"justification": "No suitable partner found.", "joint_proposal": ""}
                             })
+                            continue
 
-                    # Cache results with a stamp tied to the Top-n
-                    st.session_state.partner_matches = matches
-                    st.session_state.partner_matches_stamp = st.session_state.get(
-                        "topn_stamp")
+                        partner = best.iloc[0].to_dict()
 
-                # Render cached matches
-                matches = st.session_state.get("partner_matches", [])
-                if not matches:
-                    st.info("No partner matches computed yet.")
-                else:
-                    for m in matches:
-                        hdr = (m.get("blurb") or m.get(
-                            "title") or "Untitled").strip()
-                        partner_name = (m.get("partner") or {}).get("name", "")
-                        exp_title = f"Opportunity: {hdr}"
-                        if partner_name:
-                            exp_title += f" — Partner: {partner_name}"
+                        # 3) Short justification + joint-proposal sketch (JSON-safe)
+                        ai = ai_partner_justification(
+                            partner, sol_text, gaps, OPENAI_API_KEY)
 
-                        with st.expander(exp_title):
-                            # Partner block
-                            if m.get("partner"):
-                                p = m["partner"]
-                                loc = ", ".join(
-                                    [x for x in [p.get("city", ""), p.get("state", "")] if x])
-                                st.markdown("**Recommended Partner:**")
-                                st.write(f"{p.get('name','')}" +
-                                        (f" — {loc}" if loc else ""))
-                            else:
-                                st.warning(
-                                    "No suitable partner found for this opportunity.")
+                        matches.append({
+                            "title": title,
+                            "blurb": blurb,
+                            "partner": partner,
+                            "gaps": gaps,
+                            "ai": ai
+                        })
 
-                            # Gaps
-                            if m.get("gaps"):
-                                st.markdown(
-                                    "**Why we need a partner (our capability gaps):**")
-                                st.write(m["gaps"])
+                # Cache results with a stamp tied to the Top-n
+                st.session_state.partner_matches = matches
+                st.session_state.partner_matches_stamp = st.session_state.get(
+                    "topn_stamp")
 
-                            # Why this partner
-                            just = (m.get("ai", {}) or {}).get("justification", "")
-                            if just:
-                                st.markdown("**Why this partner:**")
-                                st.info(just)
+            # Render cached matches
+            matches = st.session_state.get("partner_matches", [])
+            if not matches:
+                st.info("No partner matches computed yet.")
+            else:
+                for m in matches:
+                    hdr = (m.get("blurb") or m.get(
+                        "title") or "Untitled").strip()
+                    partner_name = (m.get("partner") or {}).get("name", "")
+                    exp_title = f"Opportunity: {hdr}"
+                    if partner_name:
+                        exp_title += f" — Partner: {partner_name}"
 
-                            # Joint proposal idea
-                            jp = (m.get("ai", {}) or {}).get(
-                                "joint_proposal", "").strip()
-                            if jp:
-                                st.markdown("**Targeted joint proposal idea:**")
-                                st.write(jp)
+                    with st.expander(exp_title):
+                        # Partner block
+                        if m.get("partner"):
+                            p = m["partner"]
+                            loc = ", ".join(
+                                [x for x in [p.get("city", ""), p.get("state", "")] if x])
+                            st.markdown("**Recommended Partner:**")
+                            st.write(f"{p.get('name','')}" +
+                                     (f" — {loc}" if loc else ""))
+                        else:
+                            st.warning(
+                                "No suitable partner found for this opportunity.")
 
-with tab5:
-    # Add these functions to your app.py file (before the Internal Use tab section)
+                        # Gaps
+                        if m.get("gaps"):
+                            st.markdown(
+                                "**Why we need a partner (our capability gaps):**")
+                            st.write(m["gaps"])
 
-    def _has_locality(locality: dict) -> bool:
-        """Check if locality has meaningful location data"""
-        city = (locality.get("city") or "").strip()
-        state = (locality.get("state") or "").strip()
-        return bool(city or state)
+                        # Why this partner
+                        just = (m.get("ai", {}) or {}).get("justification", "")
+                        if just:
+                            st.markdown("**Why this partner:**")
+                            st.info(just)
 
-    def _extract_locality(text: str) -> dict:
-        """Extract city/state from text using simple regex patterns"""
-        import re
-        
-        # Common patterns for city, state
-        patterns = [
-            r'(\w+(?:\s+\w+)*),\s*([A-Z]{2})',  # "City Name, ST"
-            r'(\w+(?:\s+\w+)*)\s+([A-Z]{2})\s',  # "City Name ST "
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s*([A-Z]{2})',  # Proper case cities
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return {
-                    "city": match.group(1).strip(),
-                    "state": match.group(2).strip()
-                }
-        
-        # Just look for state codes
-        state_match = re.search(r'\b([A-Z]{2})\b', text)
-        if state_match:
-            return {
-                "city": "",
-                "state": state_match.group(1)
-            }
-        
-        return {}
+                        # Joint proposal idea
+                        jp = (m.get("ai", {}) or {}).get(
+                            "joint_proposal", "").strip()
+                        if jp:
+                            st.markdown("**Targeted joint proposal idea:**")
+                            st.write(jp)
 
-    def _company_name_from_url(url: str) -> str:
-        """Extract company name from URL"""
+# Internal Use helper functions
+
+
+def compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
+    """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
+    # Get all solicitations
+    df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [
+    ], "due_before": None, "notice_types": []})
+    if df_all.empty:
+        st.warning("No solicitations in the database to evaluate.")
+        return None
+
+    # Optional: restrict to research-type before AI ranking
+    if research_only:
+        rd_naics_prefixes = ("5417",)  # R&D NAICS codes
+        naics_mask = df_all["naics_code"].fillna("").astype(
+            str).str.startswith(rd_naics_prefixes)
+
+        text = (df_all["title"].astype(str) + " " +
+                df_all["description"].astype(str)).str.lower()
+        kw_any = ["research", "r&d", "development", "sbir", "sttr", "prototype", "baa", "technology demonstration",
+                  "feasibility study", "innovative", "scientific", "laboratory", "experimentation"]
+        kw_mask = text.apply(lambda t: any(k in t for k in kw_any))
+
+        nt = df_all["notice_type"].fillna("").str.lower()
+        nt_mask = nt.str.contains("baa") | nt.str.contains(
+            "sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
+
+        df_all = df_all[naics_mask | kw_mask |
+                        nt_mask].reset_index(drop=True)
+        if df_all.empty:
+            st.info("No likely research-type opportunities found.")
+            return None
+
+    # Build company description for AI
+    base_desc = (st.session_state.get("company_desc") or "").strip()
+    company_desc_internal = preset_desc.strip()
+    if base_desc:
+        company_desc_internal = base_desc + "\n\n" + company_desc_internal
+    if negative_hint.strip():
+        company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
+
+    # Pre-trim with embeddings
+    pretrim_cap = min(int(max_candidates_cap),
+                      max(20, 12 * int(internal_top_k)))
+    pretrim = ai_downselect_df_optimized(
+        company_desc_internal, df_all, OPENAI_API_KEY, top_k=pretrim_cap)
+
+    if pretrim.empty:
+        st.info("AI pre-filter returned nothing.")
+        return None
+
+    # For Internal Use, we want simpler reasons, not matrix scoring
+    # Use a lightweight ranking approach instead
+    ranked_simple = []
+
+    # Determine company type for reasoning
+    if research_only:
+        company_type = "research and development company"
+    elif "machine" in st.session_state.get("iu_mode", ""):
+        company_type = "machine shop and manufacturing company"
+    else:
+        company_type = "services company"
+
+    for idx, row in pretrim.head(int(internal_top_k)).iterrows():
+        title = row.get("title", "")
+        description = row.get("description", "")
+        notice_id = str(row.get("notice_id", ""))
+
+        # Generate simple match reason
         try:
-            from urllib.parse import urlparse
-            domain = urlparse(url).netloc.lower()
-            # Remove common prefixes
-            for prefix in ['www.', 'm.', 'en.']:
-                if domain.startswith(prefix):
-                    domain = domain[len(prefix):]
-            # Remove .com, .org, etc and capitalize
-            name = domain.split('.')[0]
-            return name.replace('-', ' ').replace('_', ' ').title()
-        except:
-            return "Company"
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            reason_prompt = f"""Explain in 1-2 sentences why this government solicitation would be a good match for a {company_type}:
 
-    def ai_simple_match_reason(title: str, description: str, company_type: str, api_key: str) -> str:
-        """Generate simple reason why this solicitation matches for the given company type"""
-        try:
-            client = OpenAI(api_key=api_key)
-            
-            prompt = f"""Explain in 1-2 sentences why this government solicitation would be a good match for a {company_type}:
+Title: {title[:200]}
+Description: {description[:500]}
 
-    Title: {title[:200]}
-    Description: {description[:500]}
-
-    Focus on what specific work the {company_type} would actually do. Be concise and practical."""
+Focus on what specific work the {company_type} would actually do. Be concise and practical."""
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": reason_prompt}],
                 temperature=0.3,
                 max_tokens=150,
                 timeout=15
             )
-            
-            return response.choices[0].message.content.strip()
+
+            reason = response.choices[0].message.content.strip()
         except Exception as e:
-            return f"This solicitation appears to need {company_type} capabilities."
+            reason = f"This solicitation appears to need {company_type} capabilities."
 
-    # In app.py, update the find_service_vendors_for_opportunity function call
+        ranked_simple.append({
+            "notice_id": notice_id,
+            "score": 75,  # Default good score for internal use
+            "reason": reason
+        })
 
-    def find_service_vendors_for_opportunity(solicitation: dict, openai_key: str, google_api_key: str, google_cx: str, top_n: int = 3) -> tuple:
-        """Find service vendors for a solicitation using Google Custom Search API"""
-        try:
-            # Extract what type of service is needed
-            title = solicitation.get("title", "")
-            description = solicitation.get("description", "")
-            naics = solicitation.get("naics_code", "")
-            
-            # Extract location
-            pop_city = (solicitation.get("pop_city") or "").strip()
-            pop_state = (solicitation.get("pop_state") or "").strip()
-            
-            # Build search query for the type of service needed
-            client = OpenAI(api_key=openai_key)
-            
-            service_prompt = f"""Based on this government solicitation, what type of service company should I search for? 
-            
-    Title: {title[:200]}
-    Description: {description[:400]}
+    if not ranked_simple:
+        st.info("No results generated.")
+        return None
 
-    Respond with 2-4 search keywords for the type of service provider needed (e.g., "HVAC maintenance contractor", "IT support services", "janitorial services"). Be specific and practical."""
+    # Order by original pretrim order (already relevance-sorted by embeddings)
+    id_order = [x["notice_id"] for x in ranked_simple]
+    preorder = {nid: i for i, nid in enumerate(id_order)}
+    top_df = pretrim[pretrim["notice_id"].astype(
+        str).isin(id_order)].copy()
+    top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
+    top_df = top_df.sort_values("__order").drop_duplicates(
+        subset=["notice_id"]).drop(columns="__order").reset_index(drop=True)
 
-            service_response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": service_prompt}],
-                temperature=0.1,
-                max_tokens=50,
-                timeout=15
-            )
-            
-            service_type = service_response.choices[0].message.content.strip()
-            
-            # Build location-specific search
-            if pop_city and pop_state:
-                location_query = f"{pop_city} {pop_state}"
-                search_query = f"{service_type} {location_query}"
-                search_note = f"Searching for providers in {pop_city}, {pop_state}"
-            elif pop_state:
-                location_query = pop_state
-                search_query = f"{service_type} {pop_state}"
-                search_note = f"Searching for providers in {pop_state}"
-            else:
-                search_query = f"{service_type} contractors United States"
-                search_note = "No specific location found - conducting national search"
-            
-            # Search using Google Custom Search API
-            import requests
-            
-            google_params = {
-                "key": google_api_key,
-                "cx": google_cx,
-                "q": search_query,
-                "num": min(10, 20)  # Get more results to filter, but Google max is 10
-            }
-            
-            response = requests.get("https://www.googleapis.com/customsearch/v1", params=google_params, timeout=10)
-            
-            if response.status_code != 200:
-                return None, f"Search API error: {response.status_code}"
-            
-            data = response.json()
-            search_results = data.get("items", [])
-            
-            if not search_results:
-                return None, "No search results found"
-            
-            # Filter and process results (similar logic but adapted for Google Custom Search format)
-            vendors = []
-            for result in search_results[:15]:  # Check first 15 results
-                title_text = result.get("title", "")
-                snippet = result.get("snippet", "")
-                link = result.get("link", "")
-                
-                # Skip unwanted results (same logic as before)
-                skip_domains = ['yelp.com', 'yellowpages.com', 'facebook.com', 'linkedin.com', 
-                            'indeed.com', 'glassdoor.com', 'wikipedia.org', 'angi.com',
-                            'homeadvisor.com', 'thumbtack.com']
-                
-                if any(domain in link.lower() for domain in skip_domains):
-                    continue
-                    
-                if not link.startswith('http'):
-                    continue
-                
-                # Extract company info
-                company_name = _company_name_from_url(link)
-                if title_text and len(title_text) < 100:  # Use title if it looks like a company name
-                    company_name = title_text.split('|')[0].split('-')[0].strip()
-                
-                # Generate relevance reason
-                try:
-                    reason_prompt = f"""Why would "{company_name}" be a good vendor for this work: {title[:100]}?
-                    
-    Based on: {snippet[:200]}
+    # Add blurbs and scores
+    blurbs = ai_make_blurbs_fast(
+        top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
+    top_df["blurb"] = top_df["notice_id"].astype(str).map(
+        blurbs).fillna(top_df["title"].fillna(""))
 
-    Give a 1 sentence reason focusing on their relevant capabilities."""
+    # Extract simple reasons
+    reason_by_id = {x["notice_id"]: x["reason"] for x in ranked_simple}
 
-                    reason_response = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[{"role": "user", "content": reason_prompt}],
-                        temperature=0.1,
-                        max_tokens=50,
-                        timeout=10
-                    )
-                    
-                    reason = reason_response.choices[0].message.content.strip()
-                except:
-                    reason = "Appears to offer relevant services for this opportunity."
-                
-                vendors.append({
-                    "name": company_name,
-                    "website": link,
-                    "location": location_query if 'location_query' in locals() else "",
-                    "reason": reason,
-                    "snippet": snippet[:150]
-                })
-                
-                if len(vendors) >= top_n:
-                    break
-            
-            if not vendors:
-                return None, "No relevant service providers found"
-            
-            # Convert to DataFrame
-            import pandas as pd
-            vendors_df = pd.DataFrame(vendors)
-            
-            return vendors_df, search_note
-            
-        except Exception as e:
-            return None, f"Vendor search failed: {str(e)[:100]}"
+    # Add fit scores
+    score_by_id = {x["notice_id"]: x["score"] for x in ranked_simple}
+    top_df["fit_score"] = top_df["notice_id"].astype(
+        str).map(score_by_id).fillna(75).astype(float)
 
-    def ai_research_direction(title: str, description: str, api_key: str) -> str:
-        """Generate research direction for R&D opportunities"""
-        try:
-            client = OpenAI(api_key=api_key)
-            
-            prompt = f"""Based on this R&D solicitation, suggest a specific research direction or approach:
+    return {"top_df": top_df, "reason_by_id": reason_by_id}
 
-    Title: {title[:200]}
-    Description: {description[:400]}
 
-    Provide 2-3 sentences describing a promising research approach or technology solution. Be specific and innovative."""
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
-                max_tokens=200,
-                timeout=15
-            )
-            
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            return "Consider leveraging cutting-edge technology and innovative methodologies to address the stated research objectives."
-
-    # Updated compute_internal_results function
-    def compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
-        """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
-        # Get all solicitations
-        df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [
-        ], "due_before": None, "notice_types": []})
-        if df_all.empty:
-            st.warning("No solicitations in the database to evaluate.")
-            return None
-
-        # Optional: restrict to research-type before AI ranking
-        if research_only:
-            rd_naics_prefixes = ("5417",)  # R&D NAICS codes
-            naics_mask = df_all["naics_code"].fillna("").astype(
-                str).str.startswith(rd_naics_prefixes)
-
-            text = (df_all["title"].astype(str) + " " +
-                    df_all["description"].astype(str)).str.lower()
-            kw_any = ["research", "r&d", "development", "sbir", "sttr", "prototype", "baa", "technology demonstration",
-                    "feasibility study", "innovative", "scientific", "laboratory", "experimentation"]
-            kw_mask = text.apply(lambda t: any(k in t for k in kw_any))
-
-            nt = df_all["notice_type"].fillna("").str.lower()
-            nt_mask = nt.str.contains("baa") | nt.str.contains(
-                "sources sought") | nt.str.contains("rfi") | nt.str.contains("special notice")
-
-            df_all = df_all[naics_mask | kw_mask |
-                            nt_mask].reset_index(drop=True)
-            if df_all.empty:
-                st.info("No likely research-type opportunities found.")
-                return None
-
-        # Build company description for AI
-        base_desc = (st.session_state.get("company_desc") or "").strip()
-        company_desc_internal = preset_desc.strip()
-        if base_desc:
-            company_desc_internal = base_desc + "\n\n" + company_desc_internal
-        if negative_hint.strip():
-            company_desc_internal += f"\n\nDo NOT include non-fits: {negative_hint.strip()}"
-
-        # Pre-trim with embeddings
-        pretrim_cap = min(int(max_candidates_cap),
-                        max(20, 12 * int(internal_top_k)))
-        pretrim = ai_downselect_df_optimized(
-            company_desc.strip(), df, OPENAI_API_KEY, top_k=80)
-
-        if pretrim.empty:
-            st.info("AI pre-filter returned nothing.")
-            return None
-
-        # For Internal Use, we want simpler reasons, not matrix scoring
-        # Use a lightweight ranking approach instead
-        ranked_simple = []
-        
-        # Determine company type for reasoning
-        if research_only:
-            company_type = "research and development company"
-        elif "machine" in st.session_state.get("iu_mode", ""):
-            company_type = "machine shop and manufacturing company"
-        else:
-            company_type = "services company"
-        
-        for idx, row in pretrim.head(int(internal_top_k)).iterrows():
-            title = row.get("title", "")
-            description = row.get("description", "")
-            notice_id = str(row.get("notice_id", ""))
-            
-            # Generate simple match reason
-            reason = ai_simple_match_reason(title, description, company_type, OPENAI_API_KEY)
-            
-            ranked_simple.append({
-                "notice_id": notice_id,
-                "score": 75,  # Default good score for internal use
-                "reason": reason
-            })
-        
-        if not ranked_simple:
-            st.info("No results generated.")
-            return None
-
-        # Order by original pretrim order (already relevance-sorted by embeddings)
-        id_order = [x["notice_id"] for x in ranked_simple]
-        preorder = {nid: i for i, nid in enumerate(id_order)}
-        top_df = pretrim[pretrim["notice_id"].astype(
-            str).isin(id_order)].copy()
-        top_df["__order"] = top_df["notice_id"].astype(str).map(preorder)
-        top_df = top_df.sort_values("__order").drop_duplicates(
-            subset=["notice_id"]).drop(columns="__order").reset_index(drop=True)
-
-        # Add blurbs and scores
-        blurbs = ai_make_blurbs_fast(
-            top_df, OPENAI_API_KEY, model="gpt-4o-mini", max_items=len(top_df))
-        top_df["blurb"] = top_df["notice_id"].astype(str).map(
-            blurbs).fillna(top_df["title"].fillna(""))
-        
-        # Extract simple reasons
-        reason_by_id = {x["notice_id"]: x["reason"] for x in ranked_simple}
-        
-        # Add fit scores
-        score_by_id = {x["notice_id"]: x["score"] for x in ranked_simple}
-        top_df["fit_score"] = top_df["notice_id"].astype(
-            str).map(score_by_id).fillna(75).astype(float)
-
-        return {"top_df": top_df, "reason_by_id": reason_by_id}
+with tab5:
     st.header("Internal Use")
     st.caption("Quick presets that filter/rank solicitations with AI. Results appear below in relevance order with short blurbs.")
 
