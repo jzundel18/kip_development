@@ -56,7 +56,8 @@ def get_secret(name, default=None):
 
 # Load secrets
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
-SERP_API_KEY = get_secret("SERP_API_KEY")
+GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY") 
+GOOGLE_CX = get_secret("GOOGLE_CX") 
 SAM_KEYS = get_secret("SAM_KEYS", [])
 
 if isinstance(SAM_KEYS, str):
@@ -66,7 +67,8 @@ elif not isinstance(SAM_KEYS, (list, tuple)):
 
 missing = [k for k, v in {
     "OPENAI_API_KEY": OPENAI_API_KEY,
-    "SERP_API_KEY": SERP_API_KEY,
+    "GOOGLE_API_KEY": GOOGLE_API_KEY,  # Updated
+    "GOOGLE_CX": GOOGLE_CX,  # New
     "SAM_KEYS": SAM_KEYS,
 }.items() if not v]
 
@@ -660,7 +662,7 @@ def render_internal_results():
 
                         # Find vendors
                         vendors_df, note = find_service_vendors_for_opportunity(
-                            sol_dict, OPENAI_API_KEY, SERP_API_KEY, top_n=3)
+                            sol_dict, OPENAI_API_KEY, GOOGLE_API_KEY, top_n=3)
 
                         if vendors_df is None or vendors_df.empty:
                             loc_msg = ""
@@ -1278,8 +1280,10 @@ with tab5:
         except Exception as e:
             return f"This solicitation appears to need {company_type} capabilities."
 
-    def find_service_vendors_for_opportunity(solicitation: dict, openai_key: str, serp_key: str, top_n: int = 3) -> tuple:
-        """Find service vendors for a solicitation using SerpAPI"""
+    # In app.py, update the find_service_vendors_for_opportunity function call
+
+    def find_service_vendors_for_opportunity(solicitation: dict, openai_key: str, google_api_key: str, google_cx: str, top_n: int = 3) -> tuple:
+        """Find service vendors for a solicitation using Google Custom Search API"""
         try:
             # Extract what type of service is needed
             title = solicitation.get("title", "")
@@ -1323,35 +1327,35 @@ with tab5:
                 search_query = f"{service_type} contractors United States"
                 search_note = "No specific location found - conducting national search"
             
-            # Search using SerpAPI
+            # Search using Google Custom Search API
             import requests
             
-            serp_params = {
-                "engine": "google",
+            google_params = {
+                "key": google_api_key,
+                "cx": google_cx,
                 "q": search_query,
-                "api_key": serp_key,
-                "num": 20  # Get more results to filter
+                "num": min(10, 20)  # Get more results to filter, but Google max is 10
             }
             
-            response = requests.get("https://serpapi.com/search", params=serp_params, timeout=10)
+            response = requests.get("https://www.googleapis.com/customsearch/v1", params=google_params, timeout=10)
             
             if response.status_code != 200:
                 return None, f"Search API error: {response.status_code}"
             
             data = response.json()
-            organic_results = data.get("organic_results", [])
+            search_results = data.get("items", [])
             
-            if not organic_results:
+            if not search_results:
                 return None, "No search results found"
             
-            # Filter and process results
+            # Filter and process results (similar logic but adapted for Google Custom Search format)
             vendors = []
-            for result in organic_results[:15]:  # Check first 15 results
+            for result in search_results[:15]:  # Check first 15 results
                 title_text = result.get("title", "")
                 snippet = result.get("snippet", "")
                 link = result.get("link", "")
                 
-                # Skip unwanted results
+                # Skip unwanted results (same logic as before)
                 skip_domains = ['yelp.com', 'yellowpages.com', 'facebook.com', 'linkedin.com', 
                             'indeed.com', 'glassdoor.com', 'wikipedia.org', 'angi.com',
                             'homeadvisor.com', 'thumbtack.com']
@@ -1409,6 +1413,12 @@ with tab5:
             
         except Exception as e:
             return None, f"Vendor search failed: {str(e)[:100]}"
+
+    # Update the function call in the render_internal_results function
+    # Find this section and update the function call:
+
+    # Find vendors
+    vendors_df, note = find_service_vendors_for_opportunity(sol_dict, OPENAI_API_KEY, GOOGLE_API_KEY, GOOGLE_CX, top_n=3)  # Updated parameters
 
     def ai_research_direction(title: str, description: str, api_key: str) -> str:
         """Generate research direction for R&D opportunities"""

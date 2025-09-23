@@ -1,8 +1,7 @@
-
 """
 find_relevant_suppliers.py
 
-Vendor discovery helpers for KIP.
+Vendor discovery helpers for KIP - Updated to use Google Custom Search JSON API.
 
 Goals:
 - Given a solicitation (title/description/etc) find real vendors (manufacturers/distributors/system integrators)
@@ -12,16 +11,15 @@ Goals:
 
 This module exposes two public entry points:
 
-- find_vendors_for_notice(sol: dict, serp_api_key: str, openai_api_key: str, max_google: int = 8, top_n: int = 3, return_debug: bool = False)
+- find_vendors_for_notice(sol: dict, google_api_key: str, google_cx: str, openai_api_key: str, max_google: int = 8, top_n: int = 3, return_debug: bool = False)
     -> DataFrame (and optional debug dict)
 
-- get_suppliers(solicitations: list[dict], our_recommended_suppliers: list[str], our_not_recommended_suppliers: list[str], Max_Google_Results: int, OpenAi_API_Key: str, Serp_API_Key: str)
+- get_suppliers(solicitations: list[dict], our_recommended_suppliers: list[str], our_not_recommended_suppliers: list[str], Max_Google_Results: int, OpenAi_API_Key: str, Google_API_Key: str, Google_CX: str)
     -> Compatibility wrapper returning a list of rows across solicitations, preserving the old signature used elsewhere.
 
 Notes:
-- Network calls are done via SerpAPI (Google engine) by simple HTTP; we avoid parsing HTML.
+- Network calls are done via Google Custom Search JSON API by simple HTTP; we avoid parsing HTML.
 - LLM is used only to score and produce a short reason; failures fall back to heuristic reasons.
-
 """
 from __future__ import annotations
 
@@ -67,7 +65,8 @@ LIKELY_VENDOR_KEYWORDS: tuple[str, ...] = (
 )
 
 # Some public suffixes that are commonly vendors (heuristic; we do *not* outright block .gov)
-VENDOR_TLDS: tuple[str, ...] = (".com", ".net", ".co", ".io", ".us", ".biz", ".tech", ".systems", ".solutions", ".engineering", ".industries")
+VENDOR_TLDS: tuple[str, ...] = (".com", ".net", ".co", ".io", ".us", ".biz",
+                                ".tech", ".systems", ".solutions", ".engineering", ".industries")
 
 
 def _netloc(url: str) -> str:
@@ -83,7 +82,8 @@ def _is_aggregator(url: str, title: str, snippet: str) -> bool:
     if not host:
         return True
     host_agg = any(h in host for h in AGGREGATOR_DOMAINS)
-    kw_agg = any(k in (title + " " + snippet).lower() for k in AGGREGATOR_KEYWORDS)
+    kw_agg = any(k in (title + " " + snippet).lower()
+                 for k in AGGREGATOR_KEYWORDS)
     return host_agg or kw_agg
 
 
@@ -140,18 +140,37 @@ def _build_queries(title: str, description: str) -> List[str]:
     return out
 
 
-def _serpapi_search(query: str, serp_api_key: str, max_results: int = 10) -> Dict[str, Any]:
+def _google_custom_search(query: str, api_key: str, cx: str, max_results: int = 10) -> Dict[str, Any]:
+    """
+    Search using Google Custom Search JSON API
+    
+    Args:
+        query: Search query string
+        api_key: Google API key
+        cx: Custom Search Engine ID
+        max_results: Maximum number of results to return
+    
+    Returns:
+        Dict containing search results in Google Custom Search format
+    """
     params = {
-        "engine": "google",
+        "key": api_key,
+        "cx": cx,
         "q": query,
-        "api_key": serp_api_key,
-        "num": max(10, int(max_results)),
-        "hl": "en",
+        # Google Custom Search max is 10 per request
+        "num": min(10, max_results),
         "safe": "off",
+        "lr": "lang_en",  # Prefer English results
     }
-    r = requests.get("https://serpapi.com/search.json", params=params, timeout=25)
-    r.raise_for_status()
-    return r.json()
+
+    try:
+        r = requests.get(
+            "https://www.googleapis.com/customsearch/v1", params=params, timeout=25)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        # Return empty structure that matches expected format
+        return {"items": []}
 
 
 def _llm_reason(openai_api_key: str, solicitation_title: str, solicitation_desc: str, vendor_name: str, vendor_url: str, vendor_snippet: str) -> str:
@@ -169,7 +188,8 @@ def _llm_reason(openai_api_key: str, solicitation_title: str, solicitation_desc:
         )
         r = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
+            messages=[{"role": "system", "content": sys},
+                      {"role": "user", "content": user}],
             temperature=0.2,
         )
         return (r.choices[0].message.content or "").strip()
@@ -180,10 +200,13 @@ def _llm_reason(openai_api_key: str, solicitation_title: str, solicitation_desc:
 def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
     """
     Heuristic score combining presence of vendor keywords and overlap with title/part tokens.
+    Adapted for Google Custom Search JSON API format.
     """
-    vendor_url   = _clean_text(result.get("link") or result.get("source") or result.get("url"))
-    vendor_name  = _clean_text(result.get("title"))
-    snippet      = _clean_text(result.get("snippet") or result.get("snippet_highlighted_words") or "")
+    # Google Custom Search format: {"title": "...", "link": "...", "snippet": "..."}
+    vendor_url = _clean_text(result.get("link"))
+    vendor_name = _clean_text(result.get("title"))
+    snippet = _clean_text(result.get("snippet"))
+
     if not vendor_url:
         return 0.0, result
 
@@ -220,15 +243,19 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
     }
 
 
-def _pick_top_candidates(title: str, description: str, serp_json: Dict[str, Any], limit: int = 3) -> List[Dict[str, Any]]:
-    organic = serp_json.get("organic_results") or []
+def _pick_top_candidates(title: str, description: str, google_json: Dict[str, Any], limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    Extract top candidates from Google Custom Search results.
+    Google format: {"items": [{"title": "...", "link": "...", "snippet": "..."}, ...]}
+    """
+    items = google_json.get("items", [])
     candidates: List[Tuple[float, Dict[str, Any]]] = []
-    for r in organic:
-        sc, payload = _score_candidate(title, description, r)
+
+    for item in items:
+        sc, payload = _score_candidate(title, description, item)
         if sc > 0:
             candidates.append((sc, payload))
 
-    # Sometimes SerpAPI returns a "top_stories" or "shopping_results"; ignore those for B2B vendors
     candidates.sort(key=lambda x: x[0], reverse=True)
     out = []
     for sc, payload in candidates:
@@ -240,7 +267,8 @@ def _pick_top_candidates(title: str, description: str, serp_json: Dict[str, Any]
 
 def find_vendors_for_notice(
     sol: Dict[str, Any],
-    serp_api_key: str,
+    google_api_key: str,
+    google_cx: str,
     openai_api_key: str,
     max_google: int = 8,
     top_n: int = 3,
@@ -250,7 +278,16 @@ def find_vendors_for_notice(
     Primary function used by the Streamlit UI.
 
     sol must include: title, description (best effort), and optionally naics_code etc.
-    Returns a DataFrame with up to top_n vendors and (optionally) a debug dict of raw SerpAPI data.
+    Returns a DataFrame with up to top_n vendors and (optionally) a debug dict of raw Google data.
+    
+    Args:
+        sol: Solicitation dictionary with title, description, etc.
+        google_api_key: Google API key
+        google_cx: Google Custom Search Engine ID  
+        openai_api_key: OpenAI API key for generating reasons
+        max_google: Maximum results per Google query
+        top_n: Number of final vendors to return
+        return_debug: Whether to return debug information
     """
     title = _clean_text(str(sol.get("title", "")))
     description = _clean_text(str(sol.get("description", "")))
@@ -265,11 +302,14 @@ def find_vendors_for_notice(
 
     for qi, q in enumerate(queries, start=1):
         try:
-            data = _serpapi_search(q, serp_api_key, max_results=max_google)
+            data = _google_custom_search(
+                q, google_api_key, google_cx, max_results=max_google)
             if return_debug:
-                debug["raw"].append({"query": q, "hits": len(data.get("organic_results") or []), "data": data})
+                debug["raw"].append({"query": q, "hits": len(
+                    data.get("items", [])), "data": data})
 
-            picks = _pick_top_candidates(title, description, data, limit=top_n * 2)
+            picks = _pick_top_candidates(
+                title, description, data, limit=top_n * 2)
             # De-dup by domain
             seen = set()
             for p in picks:
@@ -291,15 +331,16 @@ def find_vendors_for_notice(
     # Build DataFrame and add AI reason
     rows: List[Dict[str, Any]] = []
     for p in accepted[:top_n]:
-        reason = _llm_reason(openai_api_key, title, description, p.get("name",""), p.get("website",""), p.get("snippet",""))
+        reason = _llm_reason(openai_api_key, title, description, p.get(
+            "name", ""), p.get("website", ""), p.get("snippet", ""))
         rows.append({
-            "name": p.get("name",""),
-            "website": p.get("website",""),
-            "location": p.get("location",""),
-            "reason": reason or p.get("snippet",""),
+            "name": p.get("name", ""),
+            "website": p.get("website", ""),
+            "location": p.get("location", ""),
+            "reason": reason or p.get("snippet", ""),
         })
 
-    df = pd.DataFrame(rows, columns=["name","website","location","reason"])
+    df = pd.DataFrame(rows, columns=["name", "website", "location", "reason"])
     return (df, debug if return_debug else None)
 
 
@@ -312,11 +353,14 @@ def get_suppliers(
     our_not_recommended_suppliers: List[str] | None = None,
     Max_Google_Results: int = 8,
     OpenAi_API_Key: str | None = None,
-    Serp_API_Key: str | None = None,
+    Google_API_Key: str | None = None,
+    Google_CX: str | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Returns a flat list of vendor rows across all solicitations to keep old callers working.
     Each row: {"notice_id","name","website","location","reason"}
+    
+    Updated to use Google Custom Search instead of SerpAPI.
     """
     out: List[Dict[str, Any]] = []
     our_recommended_suppliers = our_recommended_suppliers or []
@@ -325,19 +369,20 @@ def get_suppliers(
     for sol in solicitations:
         df, _ = find_vendors_for_notice(
             sol=sol,
-            serp_api_key=Serp_API_Key or "",
+            google_api_key=Google_API_Key or "",
+            google_cx=Google_CX or "",
             openai_api_key=OpenAi_API_Key or "",
             max_google=Max_Google_Results,
             top_n=3,
             return_debug=False,
         )
-        nid = str(sol.get("notice_id",""))
+        nid = str(sol.get("notice_id", ""))
         for _, r in df.iterrows():
             out.append({
                 "notice_id": nid,
-                "name": r.get("name",""),
-                "website": r.get("website",""),
-                "location": r.get("location",""),
-                "reason": r.get("reason",""),
+                "name": r.get("name", ""),
+                "website": r.get("website", ""),
+                "location": r.get("location", ""),
+                "reason": r.get("reason", ""),
             })
     return out
