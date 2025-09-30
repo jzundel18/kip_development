@@ -47,51 +47,55 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
     if not text_hashes:
         return {}
 
-    with engine.connect() as conn:
-        if engine.url.get_dialect().name == 'postgresql':
-            # PostgreSQL: Use raw SQL with proper array binding
-            from sqlalchemy import text
-            sql = text("""
-                SELECT notice_id, embedding, text_hash 
-                FROM solicitation_embeddings 
-                WHERE text_hash = ANY(:hashes)
-            """)
-            # Execute directly and fetch to DataFrame
-            result = conn.execute(sql, {"hashes": text_hashes})
-            rows = result.fetchall()
-            df = pd.DataFrame(rows, columns=['notice_id', 'embedding', 'text_hash'])
-        else:
-            # SQLite: Chunk into smaller batches to avoid parameter limits
-            chunk_size = 500
-            dfs = []
-            for i in range(0, len(text_hashes), chunk_size):
-                chunk = text_hashes[i:i+chunk_size]
-                params = {}
-                placeholders = []
-                for j, hash_val in enumerate(chunk):
-                    param_name = f"hash_{j}"
-                    placeholders.append(f":{param_name}")
-                    params[param_name] = hash_val
+    try:
+        with engine.connect() as conn:
+            if engine.url.get_dialect().name == 'postgresql':
+                # PostgreSQL: Use ANY() with array parameter
+                from sqlalchemy import text
+                sql = text("""
+                    SELECT notice_id, embedding, text_hash 
+                    FROM solicitation_embeddings 
+                    WHERE text_hash = ANY(:hashes)
+                """)
+                # Execute directly and fetch to DataFrame
+                result = conn.execute(sql, {"hashes": text_hashes})
+                rows = result.fetchall()
+                df = pd.DataFrame(rows, columns=['notice_id', 'embedding', 'text_hash'])
+            else:
+                # SQLite: Chunk into smaller batches
+                chunk_size = 500
+                dfs = []
+                for i in range(0, len(text_hashes), chunk_size):
+                    chunk = text_hashes[i:i+chunk_size]
+                    params = {}
+                    placeholders = []
+                    for j, hash_val in enumerate(chunk):
+                        param_name = f"hash_{j}"
+                        placeholders.append(f":{param_name}")
+                        params[param_name] = hash_val
+                    
+                    placeholders_str = ", ".join(placeholders)
+                    sql_chunk = f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders_str})"
+                    df_chunk = pd.read_sql_query(sql_chunk, conn, params=params)
+                    dfs.append(df_chunk)
                 
-                placeholders_str = ", ".join(placeholders)
-                sql_chunk = f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders_str})"
-                df_chunk = pd.read_sql_query(sql_chunk, conn, params=params)
-                dfs.append(df_chunk)
-            
-            df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=['notice_id', 'embedding', 'text_hash'])
+                df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=['notice_id', 'embedding', 'text_hash'])
 
-    result = {}
-    for _, row in df.iterrows():
-        try:
-            embedding_data = json.loads(row['embedding'])
-            result[row['text_hash']] = np.array(
-                embedding_data, dtype=np.float32)
-        except Exception:
-            continue
+        result = {}
+        for _, row in df.iterrows():
+            try:
+                embedding_data = json.loads(row['embedding'])
+                result[row['text_hash']] = np.array(embedding_data, dtype=np.float32)
+            except Exception:
+                continue
 
-    return result
-
+        return result
     
+    except Exception as e:
+        # Table doesn't exist or other error - return empty dict
+        # This allows the system to compute embeddings fresh
+        return {}
+
 def store_embeddings_batch(embeddings_data: list[dict]):
     """Store multiple embeddings efficiently"""
     if not embeddings_data:
@@ -550,6 +554,25 @@ if "db_optimized" not in st.session_state:
 # =========================
 # Database Schema & Migration
 # =========================
+
+# Create solicitation_embeddings table
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE TABLE IF NOT EXISTS solicitation_embeddings (
+                notice_id TEXT PRIMARY KEY,
+                embedding TEXT NOT NULL,
+                text_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_embeddings_hash 
+            ON solicitation_embeddings (text_hash)
+        """))
+except Exception as e:
+    st.warning(f"Embedding table creation note: {e}")
+
 # Create auth tokens table
 try:
     with engine.begin() as conn:
