@@ -30,7 +30,6 @@ from openai import OpenAI
 import requests
 
 # Local imports
-from find_relevant_suppliers import find_service_vendors_for_opportunity
 import generate_proposal as gp
 import get_relevant_solicitations as gs
 import secrets
@@ -1358,6 +1357,7 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # Enhanced Vendor Search Functions
 # =========================
 
+
 def find_service_vendors_for_opportunity(
     solicitation: dict,
     google_api_key: str,
@@ -1367,12 +1367,12 @@ def find_service_vendors_for_opportunity(
     streamlit_debug: Any = None
 ) -> tuple:
     """Find service vendors for a solicitation using Google Custom Search API with Streamlit debugging"""
-    
+
     def debug_log(msg: str):
         """Log to streamlit if available"""
         if streamlit_debug is not None:
             streamlit_debug.write(msg)
-    
+
     try:
         # Extract what type of service is needed
         title = solicitation.get("title", "")
@@ -1381,7 +1381,7 @@ def find_service_vendors_for_opportunity(
 
         debug_log("🔍 **Starting vendor search**")
         debug_log(f"**Title:** {title[:100]}")
-        
+
         # Extract location
         pop_city = (solicitation.get("pop_city") or "").strip()
         pop_state = (solicitation.get("pop_state") or "").strip()
@@ -1398,7 +1398,7 @@ def find_service_vendors_for_opportunity(
 
         debug_log("")
         debug_log("**Step 1: Analyzing service type needed...**")
-        
+
         service_prompt = f"""Based on this government solicitation, what type of service company should I search for? 
         
 Title: {title[:200]}
@@ -1420,7 +1420,7 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         # Build location-aware search query
         debug_log("")
         debug_log("**Step 2: Building search queries...**")
-        
+
         if pop_city and pop_state:
             location_query = f"{pop_city} {pop_state}"
             search_query = f"{service_type} {location_query}"
@@ -1438,7 +1438,7 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         # Search using Google Custom Search API
         debug_log("")
         debug_log("**Step 3: Searching Google...**")
-        
+
         google_params = {
             "key": google_api_key,
             "cx": google_cx,
@@ -1468,7 +1468,7 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         # Enhanced filtering
         debug_log("")
         debug_log("**Step 4: Filtering and scoring candidates...**")
-        
+
         vendors = []
         seen_domains = set()
 
@@ -1478,7 +1478,7 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
 
         accepted_count = 0
         skipped_count = 0
-        
+
         for result in search_results:
             title_text = result.get("title", "")
             snippet = result.get("snippet", "")
@@ -1540,13 +1540,14 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
                 "reason": reason,
                 "snippet": snippet[:150]
             })
-            
+
             accepted_count += 1
 
             if len(vendors) >= top_n:
                 break
 
-        debug_log(f"✅ Accepted **{accepted_count}** candidates (skipped {skipped_count})")
+        debug_log(
+            f"✅ Accepted **{accepted_count}** candidates (skipped {skipped_count})")
 
         if not vendors:
             debug_log("")
@@ -1559,9 +1560,10 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
 
         debug_log("")
         debug_log(f"**Step 5: Final vendor selection (Top {top_n}):**")
-        
-        vendors_df = pd.DataFrame(vendors[:top_n], columns=["name", "website", "location", "reason"])
-        
+
+        vendors_df = pd.DataFrame(vendors[:top_n], columns=[
+                                  "name", "website", "location", "reason"])
+
         for i, row in vendors_df.iterrows():
             debug_log(f"**{i+1}. {row['name']}**")
             debug_log(f"   Website: {row['website'][:60]}")
@@ -1571,7 +1573,7 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
             debug_log("")
 
         debug_log(f"✅ **Search complete!** Found {len(vendors_df)} vendors")
-        
+
         return vendors_df, search_note
 
     except Exception as e:
