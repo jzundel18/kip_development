@@ -91,13 +91,17 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
 
     where_conditions.append("LOWER(notice_type) != 'justification'")
 
-    # NAICS filter
+    # NAICS filter - FIXED
     naics = [re.sub(r"[^\d]", "", str(x))
              for x in (filters.get("naics") or []) if x]
     if naics:
-        # Use tuple format for IN clause with pandas/psycopg2
-        naics_tuple = tuple(naics)
-        where_conditions.append(f"naics_code IN {naics_tuple}")
+        # Create individual placeholders for each NAICS code
+        naics_placeholders = []
+        for i, naics_code in enumerate(naics):
+            param_name = f"naics_{i}"
+            naics_placeholders.append(f"%(naics_{i})s")
+            params[param_name] = naics_code
+        where_conditions.append(f"naics_code IN ({', '.join(naics_placeholders)})")
 
     # Date filter
     due_before = filters.get("due_before")
@@ -162,7 +166,6 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
         df = df[blob.apply(lambda t: any(k in t for k in kws))]
 
     return df.reset_index(drop=True)
-
 
 def optimize_database():
     """Add indexes and optimize database for faster queries"""
@@ -2111,7 +2114,7 @@ Focus on what specific work the {company_type} would actually do. Be concise and
         ranked_simple.append({
             "notice_id": notice_id,
             "score": 75,  # Default good score for internal use
-            "reason": reason
+            "reason": reason 
         })
 
     if not ranked_simple:
