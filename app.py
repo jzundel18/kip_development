@@ -1138,8 +1138,16 @@ def render_internal_results():
 
                         # Find vendors
                         try:
+                            print(f"=== VENDOR SEARCH DEBUG ===")
+                            print(f"Solicitation: {_s(getattr(row, 'title', ''))[:100]}")
+                            print(f"GOOGLE_API_KEY set: {bool(GOOGLE_API_KEY)}")
+                            print(f"GOOGLE_CX set: {bool(GOOGLE_CX)}")
+
                             vendors_df, note = find_service_vendors_for_opportunity(
                                 sol_dict, GOOGLE_API_KEY, GOOGLE_CX, OPENAI_API_KEY, top_n=3)
+
+                            print(f"Results: {len(vendors_df) if vendors_df is not None else 0} vendors")
+                            print(f"Note: {note}")
 
                             if vendors_df is None or vendors_df.empty:
                                 loc_msg = ""
@@ -1158,6 +1166,9 @@ def render_internal_results():
                                 nid] = f"Error finding vendors: {str(e)[:100]}"
                             st.session_state.vendor_suggestions[nid] = pd.DataFrame(
                             )
+                            print(f"ERROR in vendor search: {e}")
+                            import traceback
+                            traceback.print_exc()
                         st.rerun()
 
             with right:
