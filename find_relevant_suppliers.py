@@ -401,51 +401,6 @@ def find_vendors_for_notice(
     return (df, debug if return_debug else None)
 
 # -----------------------------
-# Service Vendor Search
-# -----------------------------
-
-
-def find_service_vendors_for_opportunity(
-    solicitation: dict,
-    google_api_key: str,
-    google_cx: str,
-    openai_api_key: str,
-    top_n: int = 3,
-    streamlit_debug: Any = None
-) -> tuple:
-    """Find service vendors with Streamlit debugging"""
-    try:
-        vendors_df, _ = find_vendors_for_notice(
-            sol=solicitation,
-            google_api_key=google_api_key,
-            google_cx=google_cx,
-            openai_api_key=openai_api_key,
-            max_google=15,
-            top_n=top_n,
-            return_debug=False,
-            streamlit_debug=streamlit_debug
-        )
-
-        pop_city = (solicitation.get("pop_city") or "").strip()
-        pop_state = (solicitation.get("pop_state") or "").strip()
-
-        if pop_city and pop_state:
-            note = f"Searched {pop_city}, {pop_state}"
-        elif pop_state:
-            note = f"Searched {pop_state}"
-        else:
-            note = f"National search"
-
-        return vendors_df, note
-
-    except Exception as e:
-        if streamlit_debug:
-            streamlit_debug.error(f"❌ Error: {e}")
-            import traceback
-            streamlit_debug.code(traceback.format_exc())
-        return None, f"Error: {str(e)[:100]}"
-
-# -----------------------------
 # Compatibility
 # -----------------------------
 

@@ -1148,7 +1148,7 @@ def render_internal_results():
                             GOOGLE_CX, 
                             OPENAI_API_KEY, 
                             top_n=3,
-                            streamlit_debug=debug_container  # <-- THIS IS NEW
+                            streamlit_debug=debug_container
                         )
 
                         if vendors_df is None or vendors_df.empty:
@@ -1359,20 +1359,46 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 
 
-def find_service_vendors_for_opportunity(solicitation: dict, google_api_key: str, google_cx: str, openai_api_key: str, top_n: int = 3) -> tuple:
-    """Find service vendors for a solicitation using Google Custom Search API"""
+def find_service_vendors_for_opportunity(
+    solicitation: dict,
+    google_api_key: str,
+    google_cx: str,
+    openai_api_key: str,
+    top_n: int = 3,
+    streamlit_debug: Any = None
+) -> tuple:
+    """Find service vendors for a solicitation using Google Custom Search API with Streamlit debugging"""
+
+    def debug_log(msg: str):
+        """Log to streamlit if available"""
+        if streamlit_debug is not None:
+            streamlit_debug.write(msg)
+
     try:
         # Extract what type of service is needed
         title = solicitation.get("title", "")
         description = solicitation.get("description", "")
         naics = solicitation.get("naics_code", "")
 
+        debug_log("🔍 **Starting vendor search**")
+        debug_log(f"**Title:** {title[:100]}")
+
         # Extract location
         pop_city = (solicitation.get("pop_city") or "").strip()
         pop_state = (solicitation.get("pop_state") or "").strip()
 
+        if pop_city and pop_state:
+            debug_log(f"**Location:** {pop_city}, {pop_state}")
+        elif pop_state:
+            debug_log(f"**Location:** {pop_state}")
+        else:
+            debug_log(f"**Location:** National search")
+
         # Build search query for the type of service needed
         client = OpenAI(api_key=openai_api_key)
+
+        debug_log("")
+        debug_log("**Step 1: Analyzing service type needed...**")
 
         service_prompt = f"""Based on this government solicitation, what type of service company should I search for? 
         
@@ -1390,8 +1416,12 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         )
 
         service_type = service_response.choices[0].message.content.strip()
+        debug_log(f"✅ Service type identified: **{service_type}**")
 
         # Build location-aware search query
+        debug_log("")
+        debug_log("**Step 2: Building search queries...**")
+
         if pop_city and pop_state:
             location_query = f"{pop_city} {pop_state}"
             search_query = f"{service_type} {location_query}"
@@ -1404,7 +1434,12 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
             search_query = f"{service_type} contractors United States"
             search_note = "No specific location found - conducting national search"
 
+        debug_log(f"Primary search query: `{search_query}`")
+
         # Search using Google Custom Search API
+        debug_log("")
+        debug_log("**Step 3: Searching Google...**")
+
         google_params = {
             "key": google_api_key,
             "cx": google_cx,
@@ -1419,21 +1454,31 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
             "https://www.googleapis.com/customsearch/v1", params=google_params, timeout=15)
 
         if response.status_code != 200:
+            debug_log(f"❌ **Search API error:** {response.status_code}")
             return None, f"Search API error: {response.status_code}"
 
         data = response.json()
         search_results = data.get("items", [])
 
+        debug_log(f"✅ Google returned **{len(search_results)} results**")
+
         if not search_results:
+            debug_log("❌ **No search results found**")
             return None, "No search results found"
 
         # Enhanced filtering - less restrictive but still quality-focused
+        debug_log("")
+        debug_log("**Step 4: Filtering and scoring candidates...**")
+
         vendors = []
         seen_domains = set()
 
         # Domains to still avoid (obvious non-vendors)
         skip_domains = ['sam.gov', 'govtribe.com', 'facebook.com', 'linkedin.com',
                         'indeed.com', 'glassdoor.com', 'wikipedia.org']
+
+        accepted_count = 0
+        skipped_count = 0
 
         for result in search_results:
             title_text = result.get("title", "")
@@ -1442,19 +1487,23 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
 
             # Skip if no link
             if not link.startswith('http'):
+                skipped_count += 1
                 continue
 
             # Extract domain for deduplication
             try:
                 domain = urlparse(link).netloc.lower()
                 if domain in seen_domains:
+                    skipped_count += 1
                     continue
                 seen_domains.add(domain)
             except:
+                skipped_count += 1
                 continue
 
             # Skip obvious non-vendors (more permissive than before)
             if any(skip_domain in link.lower() for skip_domain in skip_domains):
+                skipped_count += 1
                 continue
 
             # Extract company info
@@ -1500,11 +1549,48 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
                 "snippet": snippet[:150]
             })
 
+            accepted_count += 1
+
             if len(vendors) >= top_n:
                 break
 
+        debug_log(
+            f"✅ Accepted **{accepted_count}** candidates (skipped {skipped_count})")
+
         if not vendors:
+            debug_log("")
+            debug_log("❌ **No relevant service providers found after filtering**")
+            debug_log("**Possible reasons:**")
+            debug_log("  • All results were aggregator sites (sam.gov, govtribe)")
+            debug_log("  • Results were job boards or social media")
+            debug_log("  • Search query too specific for available vendors")
             return None, "No relevant service providers found after filtering"
+
+        debug_log("")
+        debug_log(f"**Step 5: Final vendor selection (Top {top_n}):**")
+
+        # Convert to DataFrame
+        vendors_df = pd.DataFrame(vendors[:top_n], columns=[
+                                  "name", "website", "location", "reason"])
+
+        for i, row in vendors_df.iterrows():
+            debug_log(f"**{i+1}. {row['name']}**")
+            debug_log(f"   Website: {row['website'][:60]}")
+            if row['location']:
+                debug_log(f"   Location: {row['location']}")
+            debug_log(f"   Why: {row['reason']}")
+            debug_log("")
+
+        debug_log(f"✅ **Search complete!** Found {len(vendors_df)} vendors")
+
+        return vendors_df, search_note
+
+    except Exception as e:
+        if streamlit_debug:
+            streamlit_debug.error(f"❌ **Error during vendor search:** {e}")
+            import traceback
+            streamlit_debug.code(traceback.format_exc())
+        return None, f"Vendor search failed: {str(e)[:100]}" if not vendors:
 
         # Convert to DataFrame
         vendors_df = pd.DataFrame(vendors)
