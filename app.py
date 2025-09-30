@@ -60,7 +60,8 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
                 # Execute directly and fetch to DataFrame
                 result = conn.execute(sql, {"hashes": text_hashes})
                 rows = result.fetchall()
-                df = pd.DataFrame(rows, columns=['notice_id', 'embedding', 'text_hash'])
+                df = pd.DataFrame(
+                    rows, columns=['notice_id', 'embedding', 'text_hash'])
             else:
                 # SQLite: Chunk into smaller batches
                 chunk_size = 500
@@ -73,24 +74,27 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
                         param_name = f"hash_{j}"
                         placeholders.append(f":{param_name}")
                         params[param_name] = hash_val
-                    
+
                     placeholders_str = ", ".join(placeholders)
                     sql_chunk = f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders_str})"
-                    df_chunk = pd.read_sql_query(sql_chunk, conn, params=params)
+                    df_chunk = pd.read_sql_query(
+                        sql_chunk, conn, params=params)
                     dfs.append(df_chunk)
-                
-                df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=['notice_id', 'embedding', 'text_hash'])
+
+                df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(
+                    columns=['notice_id', 'embedding', 'text_hash'])
 
         result = {}
         for _, row in df.iterrows():
             try:
                 embedding_data = json.loads(row['embedding'])
-                result[row['text_hash']] = np.array(embedding_data, dtype=np.float32)
+                result[row['text_hash']] = np.array(
+                    embedding_data, dtype=np.float32)
             except Exception:
                 continue
 
         return result
-    
+
     except Exception as e:
         # Table doesn't exist or other error - return empty dict
         # This allows the system to compute embeddings fresh
