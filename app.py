@@ -1358,7 +1358,6 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # Enhanced Vendor Search Functions
 # =========================
 
-
 def find_service_vendors_for_opportunity(
     solicitation: dict,
     google_api_key: str,
@@ -1368,12 +1367,12 @@ def find_service_vendors_for_opportunity(
     streamlit_debug: Any = None
 ) -> tuple:
     """Find service vendors for a solicitation using Google Custom Search API with Streamlit debugging"""
-
+    
     def debug_log(msg: str):
         """Log to streamlit if available"""
         if streamlit_debug is not None:
             streamlit_debug.write(msg)
-
+    
     try:
         # Extract what type of service is needed
         title = solicitation.get("title", "")
@@ -1382,7 +1381,7 @@ def find_service_vendors_for_opportunity(
 
         debug_log("🔍 **Starting vendor search**")
         debug_log(f"**Title:** {title[:100]}")
-
+        
         # Extract location
         pop_city = (solicitation.get("pop_city") or "").strip()
         pop_state = (solicitation.get("pop_state") or "").strip()
@@ -1399,7 +1398,7 @@ def find_service_vendors_for_opportunity(
 
         debug_log("")
         debug_log("**Step 1: Analyzing service type needed...**")
-
+        
         service_prompt = f"""Based on this government solicitation, what type of service company should I search for? 
         
 Title: {title[:200]}
@@ -1421,7 +1420,7 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         # Build location-aware search query
         debug_log("")
         debug_log("**Step 2: Building search queries...**")
-
+        
         if pop_city and pop_state:
             location_query = f"{pop_city} {pop_state}"
             search_query = f"{service_type} {location_query}"
@@ -1439,15 +1438,15 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         # Search using Google Custom Search API
         debug_log("")
         debug_log("**Step 3: Searching Google...**")
-
+        
         google_params = {
             "key": google_api_key,
             "cx": google_cx,
             "q": search_query,
-            "num": min(10, 15),  # Get more results for better selection
+            "num": min(10, 15),
             "safe": "off",
             "lr": "lang_en",
-            "filter": "0",  # Disable duplicate filtering for more results
+            "filter": "0",
         }
 
         response = requests.get(
@@ -1466,31 +1465,29 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
             debug_log("❌ **No search results found**")
             return None, "No search results found"
 
-        # Enhanced filtering - less restrictive but still quality-focused
+        # Enhanced filtering
         debug_log("")
         debug_log("**Step 4: Filtering and scoring candidates...**")
-
+        
         vendors = []
         seen_domains = set()
 
-        # Domains to still avoid (obvious non-vendors)
+        # Domains to avoid
         skip_domains = ['sam.gov', 'govtribe.com', 'facebook.com', 'linkedin.com',
                         'indeed.com', 'glassdoor.com', 'wikipedia.org']
 
         accepted_count = 0
         skipped_count = 0
-
+        
         for result in search_results:
             title_text = result.get("title", "")
             snippet = result.get("snippet", "")
             link = result.get("link", "")
 
-            # Skip if no link
             if not link.startswith('http'):
                 skipped_count += 1
                 continue
 
-            # Extract domain for deduplication
             try:
                 domain = urlparse(link).netloc.lower()
                 if domain in seen_domains:
@@ -1501,18 +1498,14 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
                 skipped_count += 1
                 continue
 
-            # Skip obvious non-vendors (more permissive than before)
             if any(skip_domain in link.lower() for skip_domain in skip_domains):
                 skipped_count += 1
                 continue
 
-            # Extract company info
             company_name = _company_name_from_url(link)
             if title_text and len(title_text) < 100:
-                # Use title if it looks like a company name
                 company_name = title_text.split('|')[0].split('-')[0].strip()
 
-            # Extract location from snippet if possible
             location_text = ""
             location_match = re.search(
                 r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
@@ -1521,7 +1514,6 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
             elif pop_state:
                 location_text = f"Serving {pop_state}"
 
-            # Generate relevance reason using AI
             try:
                 reason_prompt = f"""Why would "{company_name}" be a good vendor for this work: {title[:100]}?
                 
@@ -1548,14 +1540,13 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
                 "reason": reason,
                 "snippet": snippet[:150]
             })
-
+            
             accepted_count += 1
 
             if len(vendors) >= top_n:
                 break
 
-        debug_log(
-            f"✅ Accepted **{accepted_count}** candidates (skipped {skipped_count})")
+        debug_log(f"✅ Accepted **{accepted_count}** candidates (skipped {skipped_count})")
 
         if not vendors:
             debug_log("")
@@ -1568,11 +1559,9 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
 
         debug_log("")
         debug_log(f"**Step 5: Final vendor selection (Top {top_n}):**")
-
-        # Convert to DataFrame
-        vendors_df = pd.DataFrame(vendors[:top_n], columns=[
-                                  "name", "website", "location", "reason"])
-
+        
+        vendors_df = pd.DataFrame(vendors[:top_n], columns=["name", "website", "location", "reason"])
+        
         for i, row in vendors_df.iterrows():
             debug_log(f"**{i+1}. {row['name']}**")
             debug_log(f"   Website: {row['website'][:60]}")
@@ -1582,7 +1571,7 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
             debug_log("")
 
         debug_log(f"✅ **Search complete!** Found {len(vendors_df)} vendors")
-
+        
         return vendors_df, search_note
 
     except Exception as e:
@@ -1590,16 +1579,7 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
             streamlit_debug.error(f"❌ **Error during vendor search:** {e}")
             import traceback
             streamlit_debug.code(traceback.format_exc())
-        return None, f"Vendor search failed: {str(e)[:100]}" if not vendors:
-
-        # Convert to DataFrame
-        vendors_df = pd.DataFrame(vendors)
-
-        return vendors_df, search_note
-
-    except Exception as e:
         return None, f"Vendor search failed: {str(e)[:100]}"
-
 
 def _has_locality(locality: dict) -> bool:
     """Check if locality has meaningful location data"""
