@@ -137,7 +137,7 @@ def _is_likely_aggregator(url: str, title: str, snippet: str) -> bool:
 
 
 def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-    """MUCH more permissive scoring - accept almost everything"""
+    """ACCEPT EVERYTHING - minimal filtering"""
     vendor_url = _clean_text(result.get("link"))
     vendor_name = _clean_text(result.get("title"))
     snippet = _clean_text(result.get("snippet"))
@@ -145,48 +145,16 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
     if not vendor_url:
         return 0.0, result
 
-    # Skip only obvious aggregators
-    if _is_likely_aggregator(vendor_url, vendor_name, snippet):
+    host = _netloc(vendor_url)
+
+    # ONLY filter these specific aggregator domains
+    if host in ["sam.gov", "beta.sam.gov", "govtribe.com", "fbo.gov"]:
         return 0.0, result
 
-    host = _netloc(vendor_url)
-    combined_text = (vendor_name + " " + snippet).lower()
+    # ACCEPT EVERYTHING ELSE - give it a high score
+    score = 10.0
 
-    # Start with high base score - we want to accept things!
-    score = 5.0
-
-    # Any domain with reasonable TLD gets a boost
-    if any(host.endswith(tld) for tld in POTENTIAL_VENDOR_TLDS):
-        score += 2.0
-
-    # Any business-related words get a boost
-    business_keywords = [
-        "company", "corp", "inc", "llc", "ltd", "services", "solutions",
-        "contractor", "manufacturer", "supplier", "distributor", "provider",
-        "engineering", "systems", "industries", "technology", "enterprises"
-    ]
-    for keyword in business_keywords:
-        if keyword in combined_text:
-            score += 1.0
-
-    # Boost for ANY relevance to solicitation
-    sol_keywords = re.findall(
-        r'\b\w{3,}\b', (title + " " + description).lower())
-    keyword_matches = sum(1 for kw in sol_keywords[:20] if kw in combined_text)
-    score += keyword_matches * 0.3
-
-    # Very small penalty for marketplaces (but still accept them)
-    marketplace_domains = ("amazon.", "ebay.", "alibaba.", "walmart.")
-    if any(m in host for m in marketplace_domains):
-        score *= 0.85  # Small penalty
-
-    # Penalty for social media
-    social_domains = ("facebook.com", "linkedin.com",
-                      "twitter.com", "instagram.com")
-    if any(s in host for s in social_domains):
-        score *= 0.3
-
-    return max(score, 0.0), {
+    return score, {
         "name": vendor_name[:120] if vendor_name else _company_name_from_url(vendor_url),
         "website": vendor_url,
         "location": "",
@@ -355,28 +323,37 @@ def find_vendors_for_notice(
 
     # Execute ALL queries (don't stop early)
     for i, query in enumerate(queries):
+        print(f"[DEBUG] Executing query {i+1}/{len(queries)}: {query}")
+
         try:
             search_results = _google_custom_search(
                 query, google_api_key, google_cx, location, max_results=max_google
             )
 
+            items = search_results.get("items", [])
+            print(f"[DEBUG] Got {len(items)} results from Google")
+
             if return_debug:
                 debug["raw"].append({
                     "query": query,
-                    "hits": len(search_results.get("items", [])),
+                    "hits": len(items),
                     "data": search_results
                 })
 
-            # Process ALL results with minimal filtering
-            for item in search_results.get("items", []):
+            # Process ALL results with MINIMAL filtering
+            for j, item in enumerate(items):
                 score, candidate = _score_candidate(title, description, item)
 
-                # Accept almost anything with a positive score
+                print(
+                    f"[DEBUG] Result {j+1}: {candidate.get('name', 'N/A')[:50]} - Score: {score}")
+
+                # Accept ANYTHING with a positive score
                 if score > 0:
                     host = candidate.get("host", "")
 
                     # Very lenient deduplication - only skip exact duplicates
                     if host and host in seen_domains:
+                        print(f"[DEBUG] Skipping duplicate domain: {host}")
                         continue
 
                     if host:
@@ -385,11 +362,19 @@ def find_vendors_for_notice(
                     candidate["score"] = score
                     candidate["query_used"] = query
                     candidates.append(candidate)
+                    print(
+                        f"[DEBUG] Added candidate: {candidate.get('name', 'N/A')[:50]}")
+                else:
+                    print(
+                        f"[DEBUG] Rejected (score={score}): {candidate.get('host', 'N/A')}")
 
         except Exception as e:
+            print(f"[DEBUG] Query failed: {e}")
             if return_debug:
                 debug["raw"].append({"query": query, "error": str(e)})
             continue
+
+    print(f"[DEBUG] Total candidates collected: {len(candidates)}")
 
     # If we have NO candidates at all, that's the real problem
     if not candidates:
