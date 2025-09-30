@@ -48,18 +48,36 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
         return {}
 
     with engine.connect() as conn:
-        # FIXED: Create individual placeholders for each hash
-        params = {}
-        placeholders = []
-        for i, hash_val in enumerate(text_hashes):
-            param_name = f"hash_{i}"
-            placeholders.append(f":{param_name}" if engine.url.get_dialect().name == "sqlite" else f"%({param_name})s")
-            params[param_name] = hash_val
+        # Use SQLAlchemy text() with proper parameter binding
+        from sqlalchemy import text
         
-        placeholders_str = ", ".join(placeholders)
-        sql = f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders_str})"
-        
-        df = pd.read_sql_query(sql, conn, params=params)
+        if engine.url.get_dialect().name == 'postgresql':
+            # PostgreSQL: Use ANY() with array parameter
+            sql = text("""
+                SELECT notice_id, embedding, text_hash 
+                FROM solicitation_embeddings 
+                WHERE text_hash = ANY(:hashes)
+            """)
+            df = pd.read_sql_query(sql, conn, params={"hashes": text_hashes})
+        else:
+            # SQLite: Chunk into smaller batches to avoid parameter limits
+            chunk_size = 500
+            dfs = []
+            for i in range(0, len(text_hashes), chunk_size):
+                chunk = text_hashes[i:i+chunk_size]
+                params = {}
+                placeholders = []
+                for j, hash_val in enumerate(chunk):
+                    param_name = f"hash_{j}"
+                    placeholders.append(f":{param_name}")
+                    params[param_name] = hash_val
+                
+                placeholders_str = ", ".join(placeholders)
+                sql_chunk = f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders_str})"
+                df_chunk = pd.read_sql_query(sql_chunk, conn, params=params)
+                dfs.append(df_chunk)
+            
+            df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
     result = {}
     for _, row in df.iterrows():
