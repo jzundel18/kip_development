@@ -30,7 +30,7 @@ from openai import OpenAI
 import requests
 
 # Local imports
-import find_relevant_suppliers as fs
+from find_relevant_suppliers import find_service_vendors_for_opportunity
 import generate_proposal as gp
 import get_relevant_solicitations as gs
 import secrets
