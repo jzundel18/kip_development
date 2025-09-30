@@ -60,8 +60,12 @@ def _company_name_from_url(url: str) -> str:
         return "Company"
 
 
-def _extract_service_type(title: str, description: str, openai_api_key: str) -> str:
+def _extract_service_type(title: str, description: str, openai_api_key: str, streamlit_debug: Any = None) -> str:
     """Extract what type of service/product is needed"""
+    if streamlit_debug:
+        streamlit_debug.write(
+            "🔍 Analyzing solicitation to determine service type...")
+
     if not openai_api_key or not OpenAI:
         text = f"{title} {description}".lower()
         if any(kw in text for kw in ["machining", "cnc", "fabrication", "manufacturing"]):
@@ -89,8 +93,14 @@ Give me simple, broad keywords. Be GENERAL."""
             max_tokens=50,
             timeout=15
         )
-        return response.choices[0].message.content.strip()
-    except Exception:
+        result = response.choices[0].message.content.strip()
+        if streamlit_debug:
+            streamlit_debug.write(f"✅ Service type identified: {result}")
+        return result
+    except Exception as e:
+        if streamlit_debug:
+            streamlit_debug.warning(
+                f"⚠️ Could not determine service type via AI: {e}")
         return "contractors suppliers services"
 
 
@@ -121,7 +131,7 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
     }
 
 
-def _build_search_queries(title: str, description: str, service_type: str, location: dict = None) -> List[str]:
+def _build_search_queries(title: str, description: str, service_type: str, location: dict = None, streamlit_debug: Any = None) -> List[str]:
     """Build MORE search queries with BROADER terms"""
     queries = []
 
@@ -174,6 +184,9 @@ def _build_search_queries(title: str, description: str, service_type: str, locat
 
     queries.append(f"{main_terms} providers")
     queries.append(f"contractors {main_terms}")
+
+    if streamlit_debug:
+        streamlit_debug.write(f"📋 Generated {len(queries[:8])} search queries")
 
     return queries[:8]
 
@@ -274,11 +287,12 @@ def find_vendors_for_notice(
     else:
         debug_log(f"Location: National search")
 
-    service_type = _extract_service_type(title, description, openai_api_key)
+    service_type = _extract_service_type(
+        title, description, openai_api_key, streamlit_debug)
     debug_log(f"Service type: {service_type}")
 
-    queries = _build_search_queries(title, description, service_type, location)
-    debug_log(f"📋 Generated {len(queries)} search queries")
+    queries = _build_search_queries(
+        title, description, service_type, location, streamlit_debug)
 
     debug = {"queries": queries, "location": location,
              "service_type": service_type, "raw": []}
@@ -409,7 +423,7 @@ def find_service_vendors_for_opportunity(
             max_google=15,
             top_n=top_n,
             return_debug=False,
-            streamlit_debug=streamlit_debug  # <-- ADD THIS LINE
+            streamlit_debug=streamlit_debug
         )
 
         pop_city = (solicitation.get("pop_city") or "").strip()
