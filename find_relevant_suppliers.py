@@ -1,19 +1,10 @@
-# Enhanced find_relevant_suppliers.py - MUCH MORE PERMISSIVE VERSION
+# Enhanced find_relevant_suppliers.py - COMPLETE VERSION WITH STREAMLIT DEBUG
 """
-Enhanced vendor discovery with MAXIMUM flexibility to find results.
-
-Key improvements:
-1. Much more permissive filtering - accepts almost everything
-2. More search queries with broader terms
-3. Less strict deduplication
-4. Lower scoring thresholds
-5. Better fallback mechanisms
+Enhanced vendor discovery with MAXIMUM flexibility and Streamlit debugging.
 """
 
 from __future__ import annotations
-import os
 import re
-import json
 import time
 from typing import Any, Dict, List, Tuple, Optional
 from urllib.parse import urlparse
@@ -30,29 +21,15 @@ except Exception:
 # Configuration - VERY PERMISSIVE
 # -----------------------------
 
-# Only exclude obvious aggregators - much shorter list
 AGGREGATOR_DOMAINS: set[str] = {
-    "sam.gov", "beta.sam.gov", "govtribe.com"
+    "sam.gov", "beta.sam.gov", "govtribe.com", "fbo.gov"
 }
-
-# Minimal exclusion keywords
-AGGREGATOR_KEYWORDS: tuple[str, ...] = (
-    "sam.gov", "govtribe"
-)
-
-# Accept almost any TLD
-POTENTIAL_VENDOR_TLDS: tuple[str, ...] = (
-    ".com", ".net", ".co", ".io", ".us", ".biz", ".org", ".tech", ".systems",
-    ".solutions", ".engineering", ".industries", ".services", ".group", ".ai",
-    ".info", ".pro", ".me", ".tv", ".cc", ".ws"  # Added more
-)
 
 USER_AGENT = "KIP_VendorFinder/1.0"
 
 # -----------------------------
 # Utility Functions
 # -----------------------------
-
 
 def _netloc(url: str) -> str:
     """Extract netloc from URL"""
@@ -61,13 +38,11 @@ def _netloc(url: str) -> str:
     except Exception:
         return ""
 
-
 def _clean_text(x: Optional[str]) -> str:
     """Clean and normalize text"""
     if not x:
         return ""
     return re.sub(r"\s+", " ", str(x)).strip()
-
 
 def _company_name_from_url(url: str) -> str:
     """Extract company name from URL"""
@@ -81,13 +56,11 @@ def _company_name_from_url(url: str) -> str:
     except:
         return "Company"
 
-
 def _extract_service_type(title: str, description: str, openai_api_key: str) -> str:
-    """Extract what type of service/product is needed using AI"""
+    """Extract what type of service/product is needed"""
     if not openai_api_key or not OpenAI:
-        # Broader fallback keywords
         text = f"{title} {description}".lower()
-        if any(kw in text for kw in ["machining", "cnc", "fabrication", "manufacturing", "machine shop"]):
+        if any(kw in text for kw in ["machining", "cnc", "fabrication", "manufacturing"]):
             return "manufacturing machining fabrication"
         elif any(kw in text for kw in ["maintenance", "repair", "installation", "service"]):
             return "maintenance repair service"
@@ -103,7 +76,7 @@ def _extract_service_type(title: str, description: str, openai_api_key: str) -> 
 Title: {title[:200]}
 Description: {description[:400]}
 
-Give me simple, broad keywords like "machining services", "HVAC contractor", "IT support". Be GENERAL, not specific."""
+Give me simple, broad keywords. Be GENERAL."""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -112,29 +85,9 @@ Give me simple, broad keywords like "machining services", "HVAC contractor", "IT
             max_tokens=50,
             timeout=15
         )
-
         return response.choices[0].message.content.strip()
     except Exception:
         return "contractors suppliers services"
-
-
-def _is_likely_aggregator(url: str, title: str, snippet: str) -> bool:
-    """VERY permissive - only filter obvious aggregators"""
-    host = _netloc(url)
-    if not host:
-        return True
-
-    # Only filter explicit aggregator domains
-    if any(domain in host for domain in AGGREGATOR_DOMAINS):
-        return True
-
-    # Only filter if it's CLEARLY an aggregator site
-    combined_text = (title + " " + snippet).lower()
-    if "government contracts" in combined_text and "opportunities" in combined_text:
-        return True
-
-    return False
-
 
 def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
     """ACCEPT EVERYTHING - minimal filtering"""
@@ -146,9 +99,9 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
         return 0.0, result
 
     host = _netloc(vendor_url)
-
+    
     # ONLY filter these specific aggregator domains
-    if host in ["sam.gov", "beta.sam.gov", "govtribe.com", "fbo.gov"]:
+    if host in AGGREGATOR_DOMAINS:
         return 0.0, result
 
     # ACCEPT EVERYTHING ELSE - give it a high score
@@ -162,12 +115,10 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
         "host": host,
     }
 
-
 def _build_search_queries(title: str, description: str, service_type: str, location: dict = None) -> List[str]:
     """Build MORE search queries with BROADER terms"""
     queries = []
 
-    # Location handling
     location_str = ""
     use_location = False
 
@@ -182,16 +133,15 @@ def _build_search_queries(title: str, description: str, service_type: str, locat
             location_str = state
             use_location = True
 
-    # Extract key terms more broadly
+    # Extract key terms
     key_terms = []
     for word in (title + " " + description).lower().split():
         if len(word) > 4 and word not in ["government", "federal", "agency"]:
             key_terms.append(word)
-
-    # Use first few key terms
+    
     main_terms = " ".join(key_terms[:3]) if key_terms else service_type
 
-    # Query 1: Service type + location
+    # Build queries
     if use_location:
         queries.append(f"{service_type} {location_str}")
         queries.append(f"{service_type} near {location_str}")
@@ -201,11 +151,10 @@ def _build_search_queries(title: str, description: str, service_type: str, locat
         queries.append(f"{service_type} USA")
         queries.append(f"{main_terms} suppliers")
 
-    # Query 2: Just the service type (very broad)
     queries.append(f"{service_type} contractors")
     queries.append(f"{service_type} companies")
 
-    # Query 3: Specific variations based on content
+    # Specific variations
     if "machining" in (title + description).lower():
         loc = f" {location_str}" if use_location else ""
         queries.append(f"machine shop{loc}")
@@ -213,18 +162,14 @@ def _build_search_queries(title: str, description: str, service_type: str, locat
     elif "maintenance" in (title + description).lower():
         loc = f" {location_str}" if use_location else ""
         queries.append(f"maintenance services{loc}")
-        queries.append(f"facility services{loc}")
     elif "software" in (title + description).lower():
         loc = f" {location_str}" if use_location else ""
         queries.append(f"software development{loc}")
-        queries.append(f"IT services{loc}")
 
-    # Always add a very broad fallback
     queries.append(f"{main_terms} providers")
     queries.append(f"contractors {main_terms}")
 
-    return queries[:8]  # Try up to 8 different queries!
-
+    return queries[:8]
 
 def _google_custom_search(query: str, api_key: str, cx: str, location: dict = None, max_results: int = 10) -> Dict[str, Any]:
     """Search using Google Custom Search JSON API"""
@@ -235,7 +180,7 @@ def _google_custom_search(query: str, api_key: str, cx: str, location: dict = No
         "num": min(10, max_results),
         "safe": "off",
         "lr": "lang_en",
-        "filter": "0",  # No duplicate filtering
+        "filter": "0",
     }
 
     try:
@@ -250,19 +195,17 @@ def _google_custom_search(query: str, api_key: str, cx: str, location: dict = No
     except requests.exceptions.RequestException:
         return {"items": []}
 
-
 def _generate_ai_reason(openai_api_key: str, solicitation_title: str, solicitation_desc: str,
                         vendor_name: str, vendor_url: str, vendor_snippet: str) -> str:
     """Generate AI reason for vendor recommendation"""
     if not openai_api_key or not OpenAI:
-        return f"This vendor appears to offer relevant services based on their profile."
+        return f"This vendor appears to offer relevant services."
 
     try:
         client = OpenAI(api_key=openai_api_key)
         prompt = f"""Why would this vendor be good for this work (1 sentence):
 
-Work needed: {solicitation_title[:100]}
-
+Work: {solicitation_title[:100]}
 Vendor: {vendor_name}
 About: {vendor_snippet[:150]}
 
@@ -275,15 +218,13 @@ Be positive and brief."""
             max_tokens=80,
             timeout=15
         )
-
         return response.choices[0].message.content.strip()
     except Exception:
-        return f"This vendor has relevant capabilities for the requested work."
+        return f"This vendor has relevant capabilities for the work."
 
 # -----------------------------
 # Main Search Function
 # -----------------------------
-
 
 def find_vendors_for_notice(
     sol: Dict[str, Any],
@@ -293,45 +234,57 @@ def find_vendors_for_notice(
     max_google: int = 10,
     top_n: int = 3,
     return_debug: bool = False,
+    streamlit_debug: Any = None,
 ) -> Tuple[pd.DataFrame, Optional[Dict[str, Any]]]:
     """
-    MAXIMUM FLEXIBILITY vendor search - tries hard to find SOMETHING
+    MAXIMUM FLEXIBILITY vendor search with Streamlit debugging
     """
+    def debug_log(msg: str):
+        """Log to streamlit if available"""
+        if streamlit_debug is not None:
+            streamlit_debug.write(msg)
+    
     title = _clean_text(str(sol.get("title", "")))
     description = _clean_text(str(sol.get("description", "")))
 
     if not title and not description:
+        debug_log("❌ No title or description provided")
         df = pd.DataFrame(columns=["name", "website", "location", "reason"])
         return (df, {"error": "empty_solicitation"} if return_debug else None)
 
-    # Extract location
     location = {
         "city": _clean_text(str(sol.get("pop_city", ""))),
         "state": _clean_text(str(sol.get("pop_state", "")))
     }
 
-    # Get service type
+    debug_log(f"🔍 **Searching for vendors:**")
+    debug_log(f"Title: {title[:100]}")
+    if location.get("city") or location.get("state"):
+        debug_log(f"Location: {location.get('city', '')} {location.get('state', '')}")
+    else:
+        debug_log(f"Location: National search")
+
     service_type = _extract_service_type(title, description, openai_api_key)
+    debug_log(f"Service type: {service_type}")
 
-    # Build MANY search queries
     queries = _build_search_queries(title, description, service_type, location)
+    debug_log(f"📋 Generated {len(queries)} search queries")
 
-    debug = {"queries": queries, "location": location,
-             "service_type": service_type, "raw": []}
+    debug = {"queries": queries, "location": location, "service_type": service_type, "raw": []}
     candidates = []
     seen_domains = set()
 
-    # Execute ALL queries (don't stop early)
     for i, query in enumerate(queries):
-        print(f"[DEBUG] Executing query {i+1}/{len(queries)}: {query}")
-
+        debug_log(f"")
+        debug_log(f"**Query {i+1}/{len(queries)}:** `{query}`")
+        
         try:
             search_results = _google_custom_search(
                 query, google_api_key, google_cx, location, max_results=max_google
             )
 
             items = search_results.get("items", [])
-            print(f"[DEBUG] Got {len(items)} results from Google")
+            debug_log(f"   → Google returned {len(items)} results")
 
             if return_debug:
                 debug["raw"].append({
@@ -340,66 +293,67 @@ def find_vendors_for_notice(
                     "data": search_results
                 })
 
-            # Process ALL results with MINIMAL filtering
+            if not items:
+                debug_log(f"   ⚠️ No results from Google")
+                continue
+
+            accepted_count = 0
             for j, item in enumerate(items):
                 score, candidate = _score_candidate(title, description, item)
 
-                print(
-                    f"[DEBUG] Result {j+1}: {candidate.get('name', 'N/A')[:50]} - Score: {score}")
-
-                # Accept ANYTHING with a positive score
                 if score > 0:
                     host = candidate.get("host", "")
 
-                    # Very lenient deduplication - only skip exact duplicates
                     if host and host in seen_domains:
-                        print(f"[DEBUG] Skipping duplicate domain: {host}")
                         continue
 
                     if host:
                         seen_domains.add(host)
-
+                    
                     candidate["score"] = score
                     candidate["query_used"] = query
                     candidates.append(candidate)
-                    print(
-                        f"[DEBUG] Added candidate: {candidate.get('name', 'N/A')[:50]}")
-                else:
-                    print(
-                        f"[DEBUG] Rejected (score={score}): {candidate.get('host', 'N/A')}")
+                    accepted_count += 1
+
+            debug_log(f"   ✅ Accepted {accepted_count} candidates")
 
         except Exception as e:
-            print(f"[DEBUG] Query failed: {e}")
+            debug_log(f"   ❌ Query failed: {str(e)[:100]}")
             if return_debug:
                 debug["raw"].append({"query": query, "error": str(e)})
             continue
 
-    print(f"[DEBUG] Total candidates collected: {len(candidates)}")
+    debug_log(f"")
+    debug_log(f"📊 **Total candidates: {len(candidates)}**")
 
-    # If we have NO candidates at all, that's the real problem
     if not candidates:
+        debug_log(f"")
+        debug_log(f"❌ **No candidates found**")
+        debug_log(f"Possible reasons:")
+        debug_log(f"  1. Google API returned no results")
+        debug_log(f"  2. All results were sam.gov/govtribe")
+        debug_log(f"  3. API credentials incorrect")
         df = pd.DataFrame(columns=["name", "website", "location", "reason"])
         return (df, debug if return_debug else None)
 
-    # Sort by score and take top N (more lenient)
+    debug_log(f"")
+    debug_log(f"🎯 **Selecting top {top_n} vendors...**")
+
     candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-    # Get extra candidates
     top_candidates = candidates[:min(top_n * 2, len(candidates))]
 
-    # Build result DataFrame
     rows = []
-    for candidate in top_candidates[:top_n]:
-        # Generate AI reason
+    for i, candidate in enumerate(top_candidates[:top_n], 1):
+        debug_log(f"{i}. {candidate.get('name', 'Unknown')[:50]} - {candidate.get('website', '')[:50]}")
+        
         reason = _generate_ai_reason(
             openai_api_key, title, description,
             candidate.get("name", ""), candidate.get("website", ""),
             candidate.get("snippet", "")
         )
 
-        # Extract location from snippet
         snippet = candidate.get("snippet", "")
-        location_match = re.search(
-            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
+        location_match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
         extracted_location = ""
         if location_match:
             extracted_location = f"{location_match.group(1)}, {location_match.group(2)}"
@@ -413,6 +367,9 @@ def find_vendors_for_notice(
             "reason": reason,
         })
 
+    debug_log(f"")
+    debug_log(f"✅ **Found {len(rows)} vendors**")
+
     df = pd.DataFrame(rows, columns=["name", "website", "location", "reason"])
     return (df, debug if return_debug else None)
 
@@ -420,10 +377,15 @@ def find_vendors_for_notice(
 # Service Vendor Search
 # -----------------------------
 
-
-def find_service_vendors_for_opportunity(solicitation: dict, google_api_key: str, google_cx: str,
-                                         openai_api_key: str, top_n: int = 3) -> tuple:
-    """Find service vendors with maximum flexibility"""
+def find_service_vendors_for_opportunity(
+    solicitation: dict, 
+    google_api_key: str, 
+    google_cx: str,
+    openai_api_key: str, 
+    top_n: int = 3, 
+    streamlit_debug: Any = None
+) -> tuple:
+    """Find service vendors with Streamlit debugging"""
     try:
         vendors_df, _ = find_vendors_for_notice(
             sol=solicitation,
@@ -432,29 +394,32 @@ def find_service_vendors_for_opportunity(solicitation: dict, google_api_key: str
             openai_api_key=openai_api_key,
             max_google=15,
             top_n=top_n,
-            return_debug=False
+            return_debug=False,
+            streamlit_debug=streamlit_debug
         )
 
-        # Generate status message
         pop_city = (solicitation.get("pop_city") or "").strip()
         pop_state = (solicitation.get("pop_state") or "").strip()
 
         if pop_city and pop_state:
-            note = f"Searched for providers in {pop_city}, {pop_state}"
+            note = f"Searched {pop_city}, {pop_state}"
         elif pop_state:
-            note = f"Searched for providers in {pop_state}"
+            note = f"Searched {pop_state}"
         else:
-            note = "Conducted national search for providers"
+            note = f"National search"
 
         return vendors_df, note
 
     except Exception as e:
-        return None, f"Vendor search error: {str(e)[:100]}"
+        if streamlit_debug:
+            streamlit_debug.error(f"❌ Error: {e}")
+            import traceback
+            streamlit_debug.code(traceback.format_exc())
+        return None, f"Error: {str(e)[:100]}"
 
 # -----------------------------
 # Compatibility
 # -----------------------------
-
 
 def get_suppliers(
     solicitations: List[Dict[str, Any]],
