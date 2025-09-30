@@ -31,6 +31,7 @@ USER_AGENT = "KIP_VendorFinder/1.0"
 # Utility Functions
 # -----------------------------
 
+
 def _netloc(url: str) -> str:
     """Extract netloc from URL"""
     try:
@@ -38,11 +39,13 @@ def _netloc(url: str) -> str:
     except Exception:
         return ""
 
+
 def _clean_text(x: Optional[str]) -> str:
     """Clean and normalize text"""
     if not x:
         return ""
     return re.sub(r"\s+", " ", str(x)).strip()
+
 
 def _company_name_from_url(url: str) -> str:
     """Extract company name from URL"""
@@ -55,6 +58,7 @@ def _company_name_from_url(url: str) -> str:
         return name.replace('-', ' ').replace('_', ' ').title()
     except:
         return "Company"
+
 
 def _extract_service_type(title: str, description: str, openai_api_key: str) -> str:
     """Extract what type of service/product is needed"""
@@ -89,6 +93,7 @@ Give me simple, broad keywords. Be GENERAL."""
     except Exception:
         return "contractors suppliers services"
 
+
 def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
     """ACCEPT EVERYTHING - minimal filtering"""
     vendor_url = _clean_text(result.get("link"))
@@ -99,7 +104,7 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
         return 0.0, result
 
     host = _netloc(vendor_url)
-    
+
     # ONLY filter these specific aggregator domains
     if host in AGGREGATOR_DOMAINS:
         return 0.0, result
@@ -114,6 +119,7 @@ def _score_candidate(title: str, description: str, result: Dict[str, Any]) -> Tu
         "snippet": snippet[:240],
         "host": host,
     }
+
 
 def _build_search_queries(title: str, description: str, service_type: str, location: dict = None) -> List[str]:
     """Build MORE search queries with BROADER terms"""
@@ -138,7 +144,7 @@ def _build_search_queries(title: str, description: str, service_type: str, locat
     for word in (title + " " + description).lower().split():
         if len(word) > 4 and word not in ["government", "federal", "agency"]:
             key_terms.append(word)
-    
+
     main_terms = " ".join(key_terms[:3]) if key_terms else service_type
 
     # Build queries
@@ -171,6 +177,7 @@ def _build_search_queries(title: str, description: str, service_type: str, locat
 
     return queries[:8]
 
+
 def _google_custom_search(query: str, api_key: str, cx: str, location: dict = None, max_results: int = 10) -> Dict[str, Any]:
     """Search using Google Custom Search JSON API"""
     params = {
@@ -194,6 +201,7 @@ def _google_custom_search(query: str, api_key: str, cx: str, location: dict = No
         return response.json()
     except requests.exceptions.RequestException:
         return {"items": []}
+
 
 def _generate_ai_reason(openai_api_key: str, solicitation_title: str, solicitation_desc: str,
                         vendor_name: str, vendor_url: str, vendor_snippet: str) -> str:
@@ -226,6 +234,7 @@ Be positive and brief."""
 # Main Search Function
 # -----------------------------
 
+
 def find_vendors_for_notice(
     sol: Dict[str, Any],
     google_api_key: str,
@@ -243,7 +252,7 @@ def find_vendors_for_notice(
         """Log to streamlit if available"""
         if streamlit_debug is not None:
             streamlit_debug.write(msg)
-    
+
     title = _clean_text(str(sol.get("title", "")))
     description = _clean_text(str(sol.get("description", "")))
 
@@ -260,7 +269,8 @@ def find_vendors_for_notice(
     debug_log(f"🔍 **Searching for vendors:**")
     debug_log(f"Title: {title[:100]}")
     if location.get("city") or location.get("state"):
-        debug_log(f"Location: {location.get('city', '')} {location.get('state', '')}")
+        debug_log(
+            f"Location: {location.get('city', '')} {location.get('state', '')}")
     else:
         debug_log(f"Location: National search")
 
@@ -270,14 +280,15 @@ def find_vendors_for_notice(
     queries = _build_search_queries(title, description, service_type, location)
     debug_log(f"📋 Generated {len(queries)} search queries")
 
-    debug = {"queries": queries, "location": location, "service_type": service_type, "raw": []}
+    debug = {"queries": queries, "location": location,
+             "service_type": service_type, "raw": []}
     candidates = []
     seen_domains = set()
 
     for i, query in enumerate(queries):
         debug_log(f"")
         debug_log(f"**Query {i+1}/{len(queries)}:** `{query}`")
-        
+
         try:
             search_results = _google_custom_search(
                 query, google_api_key, google_cx, location, max_results=max_google
@@ -309,7 +320,7 @@ def find_vendors_for_notice(
 
                     if host:
                         seen_domains.add(host)
-                    
+
                     candidate["score"] = score
                     candidate["query_used"] = query
                     candidates.append(candidate)
@@ -344,8 +355,9 @@ def find_vendors_for_notice(
 
     rows = []
     for i, candidate in enumerate(top_candidates[:top_n], 1):
-        debug_log(f"{i}. {candidate.get('name', 'Unknown')[:50]} - {candidate.get('website', '')[:50]}")
-        
+        debug_log(
+            f"{i}. {candidate.get('name', 'Unknown')[:50]} - {candidate.get('website', '')[:50]}")
+
         reason = _generate_ai_reason(
             openai_api_key, title, description,
             candidate.get("name", ""), candidate.get("website", ""),
@@ -353,7 +365,8 @@ def find_vendors_for_notice(
         )
 
         snippet = candidate.get("snippet", "")
-        location_match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
+        location_match = re.search(
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2})\b', snippet)
         extracted_location = ""
         if location_match:
             extracted_location = f"{location_match.group(1)}, {location_match.group(2)}"
@@ -377,12 +390,13 @@ def find_vendors_for_notice(
 # Service Vendor Search
 # -----------------------------
 
+
 def find_service_vendors_for_opportunity(
-    solicitation: dict, 
-    google_api_key: str, 
+    solicitation: dict,
+    google_api_key: str,
     google_cx: str,
-    openai_api_key: str, 
-    top_n: int = 3, 
+    openai_api_key: str,
+    top_n: int = 3,
     streamlit_debug: Any = None
 ) -> tuple:
     """Find service vendors with Streamlit debugging"""
@@ -395,7 +409,7 @@ def find_service_vendors_for_opportunity(
             max_google=15,
             top_n=top_n,
             return_debug=False,
-            streamlit_debug=streamlit_debug
+            streamlit_debug=streamlit_debug  # <-- ADD THIS LINE
         )
 
         pop_city = (solicitation.get("pop_city") or "").strip()
@@ -420,6 +434,7 @@ def find_service_vendors_for_opportunity(
 # -----------------------------
 # Compatibility
 # -----------------------------
+
 
 def get_suppliers(
     solicitations: List[Dict[str, Any]],
