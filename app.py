@@ -1101,76 +1101,78 @@ def render_internal_results():
                         "iu_mode") == "machine" else "Find 3 local service providers"
                     btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
 
-                    if st.button(btn_label, key=btn_key):
-                        try:
-                            sol_dict = {
-                                "notice_id": nid,
-                                "title": _s(getattr(row, "title", "")),
-                                "description": _s(getattr(row, "description", "")),
-                                "naics_code": _s(getattr(row, "naics_code", "")),
-                                "set_aside_code": _s(getattr(row, "set_aside_code", "")),
-                                "response_date": _s(getattr(row, "response_date", "")),
-                                "posted_date": _s(getattr(row, "posted_date", "")),
-                                "link": _s(getattr(row, "link", "")),
-                                "pop_city": _s(getattr(row, "pop_city", "")),
-                                "pop_state": _s(getattr(row, "pop_state", "")),
-                            }
-                        except Exception as e:
-                            st.error(f"Error creating solicitation data: {e}")
-                            continue
+                if st.button(btn_label, key=btn_key):
+                    try:
+                        sol_dict = {
+                            "notice_id": nid,
+                            "title": _s(getattr(row, "title", "")),
+                            "description": _s(getattr(row, "description", "")),
+                            "naics_code": _s(getattr(row, "naics_code", "")),
+                            "set_aside_code": _s(getattr(row, "set_aside_code", "")),
+                            "response_date": _s(getattr(row, "response_date", "")),
+                            "posted_date": _s(getattr(row, "posted_date", "")),
+                            "link": _s(getattr(row, "link", "")),
+                            "pop_city": _s(getattr(row, "pop_city", "")),
+                            "pop_state": _s(getattr(row, "pop_state", "")),
+                        }
+                    except Exception as e:
+                        st.error(f"Error creating solicitation data: {e}")
+                        continue
 
-                        # Extract locality
-                        locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
-                            getattr(row, "pop_state", ""))}
-                        if not _has_locality(locality):
-                            locality = _extract_locality(
-                                f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
+                    # Extract locality
+                    locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
+                        getattr(row, "pop_state", ""))}
+                    if not _has_locality(locality):
+                        locality = _extract_locality(
+                            f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
 
-                        # Set status message
-                        if _has_locality(locality):
-                            where = ", ".join(
-                                [x for x in [locality.get("city", ""), locality.get("state", "")] if x])
-                            st.session_state.vendor_notes[
-                                nid] = f"Place of performance: {where}"
-                            st.session_state.vendor_errors.pop(nid, None)
-                        else:
-                            st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
+                    # Set status message
+                    if _has_locality(locality):
+                        where = ", ".join(
+                            [x for x in [locality.get("city", ""), locality.get("state", "")] if x])
+                        st.session_state.vendor_notes[
+                            nid] = f"Place of performance: {where}"
+                        st.session_state.vendor_errors.pop(nid, None)
+                    else:
+                        st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
 
-                        # Find vendors
-                        try:
-                            print(f"=== VENDOR SEARCH DEBUG ===")
-                            print(f"Solicitation: {_s(getattr(row, 'title', ''))[:100]}")
-                            print(f"GOOGLE_API_KEY set: {bool(GOOGLE_API_KEY)}")
-                            print(f"GOOGLE_CX set: {bool(GOOGLE_CX)}")
+                    # CREATE DEBUG CONTAINER - THIS IS THE KEY CHANGE
+                    with st.expander("🔍 **Vendor Search Debug Log**", expanded=True):
+                        debug_container = st.container()
+                    
+                    # Find vendors - PASS THE DEBUG CONTAINER
+                    try:
+                        vendors_df, note = find_service_vendors_for_opportunity(
+                            sol_dict, 
+                            GOOGLE_API_KEY, 
+                            GOOGLE_CX, 
+                            OPENAI_API_KEY, 
+                            top_n=3,
+                            streamlit_debug=debug_container  # <-- THIS IS NEW
+                        )
 
-                            vendors_df, note = find_service_vendors_for_opportunity(
-                                sol_dict, GOOGLE_API_KEY, GOOGLE_CX, OPENAI_API_KEY, top_n=3)
-
-                            print(f"Results: {len(vendors_df) if vendors_df is not None else 0} vendors")
-                            print(f"Note: {note}")
-
-                            if vendors_df is None or vendors_df.empty:
-                                loc_msg = ""
-                                if _has_locality(locality):
-                                    where = ", ".join([x for x in [locality.get("city", ""), locality.get(
-                                        "state", "")] if x]) or locality.get("state", "")
-                                    loc_msg = f" for the specified locality ({where})"
-                                st.session_state.vendor_errors[
-                                    nid] = f"No service providers found{loc_msg}."
-                            else:
-                                st.session_state.vendor_errors.pop(nid, None)
-                                st.session_state.vendor_suggestions[nid] = vendors_df
-
-                        except Exception as e:
+                        if vendors_df is None or vendors_df.empty:
+                            loc_msg = ""
+                            if _has_locality(locality):
+                                where = ", ".join([x for x in [locality.get("city", ""), locality.get(
+                                    "state", "")] if x]) or locality.get("state", "")
+                                loc_msg = f" for the specified locality ({where})"
                             st.session_state.vendor_errors[
-                                nid] = f"Error finding vendors: {str(e)[:100]}"
-                            st.session_state.vendor_suggestions[nid] = pd.DataFrame(
-                            )
-                            print(f"ERROR in vendor search: {e}")
-                            import traceback
-                            traceback.print_exc()
-                        st.rerun()
+                                nid] = f"No service providers found{loc_msg}."
+                        else:
+                            st.session_state.vendor_errors.pop(nid, None)
+                            st.session_state.vendor_suggestions[nid] = vendors_df
 
+                    except Exception as e:
+                        debug_container.error(f"❌ Exception during vendor search: {e}")
+                        import traceback
+                        debug_container.code(traceback.format_exc())
+                        
+                        st.session_state.vendor_errors[
+                            nid] = f"Error finding vendors: {str(e)[:100]}"
+                        st.session_state.vendor_suggestions[nid] = pd.DataFrame()
+                    
+                    st.rerun()
             with right:
                 # Display status messages and vendor results
                 note_msg = st.session_state.vendor_notes.get(nid)
