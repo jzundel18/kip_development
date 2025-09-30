@@ -48,13 +48,18 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
         return {}
 
     with engine.connect() as conn:
-        placeholders = ",".join("?" if engine.url.get_dialect(
-        ).name == "sqlite" else "%s" for _ in text_hashes)
-        df = pd.read_sql_query(
-            f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders})",
-            conn,
-            params=text_hashes
-        )
+        # FIXED: Create individual placeholders for each hash
+        params = {}
+        placeholders = []
+        for i, hash_val in enumerate(text_hashes):
+            param_name = f"hash_{i}"
+            placeholders.append(f":{param_name}" if engine.url.get_dialect().name == "sqlite" else f"%({param_name})s")
+            params[param_name] = hash_val
+        
+        placeholders_str = ", ".join(placeholders)
+        sql = f"SELECT notice_id, embedding, text_hash FROM solicitation_embeddings WHERE text_hash IN ({placeholders_str})"
+        
+        df = pd.read_sql_query(sql, conn, params=params)
 
     result = {}
     for _, row in df.iterrows():
@@ -66,7 +71,6 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
             continue
 
     return result
-
 
 def store_embeddings_batch(embeddings_data: list[dict]):
     """Store multiple embeddings efficiently"""
