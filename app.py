@@ -48,17 +48,18 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
         return {}
 
     with engine.connect() as conn:
-        # Use SQLAlchemy text() with proper parameter binding
-        from sqlalchemy import text
-        
         if engine.url.get_dialect().name == 'postgresql':
-            # PostgreSQL: Use ANY() with array parameter
+            # PostgreSQL: Use raw SQL with proper array binding
+            from sqlalchemy import text
             sql = text("""
                 SELECT notice_id, embedding, text_hash 
                 FROM solicitation_embeddings 
                 WHERE text_hash = ANY(:hashes)
             """)
-            df = pd.read_sql_query(sql, conn, params={"hashes": text_hashes})
+            # Execute directly and fetch to DataFrame
+            result = conn.execute(sql, {"hashes": text_hashes})
+            rows = result.fetchall()
+            df = pd.DataFrame(rows, columns=['notice_id', 'embedding', 'text_hash'])
         else:
             # SQLite: Chunk into smaller batches to avoid parameter limits
             chunk_size = 500
@@ -77,7 +78,7 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
                 df_chunk = pd.read_sql_query(sql_chunk, conn, params=params)
                 dfs.append(df_chunk)
             
-            df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+            df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=['notice_id', 'embedding', 'text_hash'])
 
     result = {}
     for _, row in df.iterrows():
@@ -90,6 +91,7 @@ def get_cached_embeddings(text_hashes: list[str]) -> dict[str, np.ndarray]:
 
     return result
 
+    
 def store_embeddings_batch(embeddings_data: list[dict]):
     """Store multiple embeddings efficiently"""
     if not embeddings_data:
