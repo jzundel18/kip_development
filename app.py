@@ -2701,8 +2701,6 @@ try:
         """))
 except Exception as e:
     st.warning(f"Auth token table note: {e}")
-Add the documents table code RIGHT AFTER the auth tokens table block:
-python# Create auth tokens table
 try:
     with engine.begin() as conn:
         conn.execute(sa.text("""
