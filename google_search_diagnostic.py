@@ -1,30 +1,74 @@
 #!/usr/bin/env python3
 """
 Diagnostic script to test Google Custom Search API configuration.
-Run this to verify your Google API setup is working correctly.
+Reads credentials from .streamlit/secrets.toml (same as main app)
 
 Usage:
     python google_search_diagnostic.py
 """
 
 import os
+import sys
 import requests
 import json
+from pathlib import Path
+
+
+def load_secrets():
+    """Load secrets from .streamlit/secrets.toml file"""
+    secrets_path = Path(".streamlit/secrets.toml")
+
+    if not secrets_path.exists():
+        print(f"❌ ERROR: secrets.toml not found at {secrets_path.absolute()}")
+        print("\nSearched in:", secrets_path.absolute())
+        print("\nMake sure you're running this script from your project root directory")
+        return None, None
+
+    print(f"✅ Found secrets file: {secrets_path.absolute()}")
+
+    # Parse the TOML file manually (simple parsing for key = "value" format)
+    google_api_key = None
+    google_cx = None
+
+    try:
+        with open(secrets_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('GOOGLE_API_KEY'):
+                    # Extract value between quotes
+                    google_api_key = line.split(
+                        '=')[1].strip().strip('"').strip("'")
+                elif line.startswith('GOOGLE_CX'):
+                    google_cx = line.split(
+                        '=')[1].strip().strip('"').strip("'")
+    except Exception as e:
+        print(f"❌ ERROR reading secrets file: {e}")
+        return None, None
+
+    return google_api_key, google_cx
 
 
 def test_google_search():
     """Test Google Custom Search API"""
 
-    # Get credentials from environment
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-    GOOGLE_CX = os.getenv("GOOGLE_CX")
+    print("=" * 60)
+    print("Google Custom Search API Diagnostic Tool")
+    print("=" * 60)
+    print()
+
+    # Load credentials from secrets.toml
+    GOOGLE_API_KEY, GOOGLE_CX = load_secrets()
 
     if not GOOGLE_API_KEY:
-        print("❌ ERROR: GOOGLE_API_KEY environment variable not set")
+        print("❌ ERROR: GOOGLE_API_KEY not found in .streamlit/secrets.toml")
+        print("\nYour .streamlit/secrets.toml should contain:")
+        print('GOOGLE_API_KEY = "your_api_key_here"')
         return False
 
     if not GOOGLE_CX:
-        print("❌ ERROR: GOOGLE_CX environment variable not set")
+        print("❌ ERROR: GOOGLE_CX not found in .streamlit/secrets.toml")
+        print("\nYour .streamlit/secrets.toml should contain:")
+        print('GOOGLE_CX = "your_search_engine_id_here"')
         return False
 
     print(f"✅ Google API Key found: {GOOGLE_API_KEY[:20]}...")
@@ -55,13 +99,26 @@ def test_google_search():
         if response.status_code != 200:
             print(f"❌ ERROR: API returned status code {response.status_code}")
             print(f"Response: {response.text[:500]}")
+
+            # Check for common errors
+            if response.status_code == 403:
+                print("\n💡 This usually means:")
+                print("   - API key is invalid")
+                print("   - Custom Search API is not enabled")
+                print("   - Daily quota exceeded (100 searches/day on free tier)")
+
             return False
 
         data = response.json()
 
         # Check for errors
         if "error" in data:
-            print(f"❌ API Error: {data['error']}")
+            print(f"❌ API Error: {json.dumps(data['error'], indent=2)}")
+
+            error_msg = str(data.get('error', {}))
+            if 'quotaExceeded' in error_msg or 'rateLimitExceeded' in error_msg:
+                print("\n💡 You've hit your daily quota limit (100 searches/day)")
+
             return False
 
         # Check for results
@@ -76,6 +133,8 @@ def test_google_search():
             print()
             print("Full response:")
             print(json.dumps(data, indent=2))
+            print()
+            check_cse_configuration()
             return False
 
         print(f"✅ SUCCESS: Found {len(items)} results")
@@ -96,7 +155,8 @@ def test_google_search():
         print("=" * 60)
         print("✅ Google Custom Search API is working correctly!")
         print()
-        print("If vendor search still fails, the issue is likely in the filtering logic.")
+        print(
+            "If vendor search in the app still fails, the issue is in the filtering logic.")
         return True
 
     except requests.exceptions.RequestException as e:
@@ -133,17 +193,14 @@ def check_cse_configuration():
 
 
 if __name__ == "__main__":
-    print()
-    print("=" * 60)
-    print("Google Custom Search API Diagnostic Tool")
-    print("=" * 60)
-    print()
-
     success = test_google_search()
 
     if not success:
-        check_cse_configuration()
         print()
-        print("💡 TIP: The most common issue is that the Custom Search Engine")
-        print("   is not configured to 'Search the entire web'")
+        print("💡 TIPS:")
+        print("   1. Make sure you're running from the project root directory")
+        print("   2. Check that .streamlit/secrets.toml exists and has the correct keys")
+        print("   3. Verify your Custom Search Engine is configured to 'Search the entire web'")
+        print("   4. Check your daily quota (100 searches/day on free tier)")
         print()
+        sys.exit(1)

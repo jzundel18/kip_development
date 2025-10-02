@@ -198,6 +198,106 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
 
     return df.reset_index(drop=True)
 
+# Add these functions after your authentication functions in app.py
+
+
+def save_document(user_id: int, filename: str, file_content: bytes,
+                  file_type: str, description: str = "", tags: str = "",
+                  notice_id: str = None) -> Optional[int]:
+    """Save a document to the database"""
+    now = datetime.now(timezone.utc).isoformat()
+    file_size = len(file_content)
+
+    with engine.begin() as conn:
+        try:
+            sql = sa.text("""
+                INSERT INTO documents 
+                (user_id, filename, file_type, file_size, content, description, tags, notice_id, uploaded_at)
+                VALUES (:uid, :fname, :ftype, :fsize, :content, :desc, :tags, :nid, :ts)
+                RETURNING id
+            """)
+            doc_id = conn.execute(sql, {
+                "uid": user_id,
+                "fname": filename,
+                "ftype": file_type,
+                "fsize": file_size,
+                "content": file_content,
+                "desc": description,
+                "tags": tags,
+                "nid": notice_id,
+                "ts": now
+            }).scalar_one()
+            return int(doc_id)
+        except Exception as e:
+            st.error(f"Could not save document: {e}")
+            return None
+
+
+def get_user_documents(user_id: int) -> pd.DataFrame:
+    """Get all documents for a user (without content for list view)"""
+    with engine.connect() as conn:
+        sql = sa.text("""
+            SELECT id, filename, file_type, file_size, description, tags, 
+                   notice_id, uploaded_at
+            FROM documents
+            WHERE user_id = :uid
+            ORDER BY uploaded_at DESC
+        """)
+        return pd.read_sql_query(sql, conn, params={"uid": user_id})
+
+
+def get_document_content(doc_id: int, user_id: int) -> Optional[tuple]:
+    """Get document content (filename, file_type, content)"""
+    with engine.connect() as conn:
+        sql = sa.text("""
+            SELECT filename, file_type, content
+            FROM documents
+            WHERE id = :did AND user_id = :uid
+        """)
+        row = conn.execute(
+            sql, {"did": doc_id, "uid": user_id}).mappings().first()
+        if row:
+            return (row["filename"], row["file_type"], bytes(row["content"]))
+        return None
+
+
+def delete_document(doc_id: int, user_id: int) -> bool:
+    """Delete a document"""
+    with engine.begin() as conn:
+        sql = sa.text(
+            "DELETE FROM documents WHERE id = :did AND user_id = :uid")
+        result = conn.execute(sql, {"did": doc_id, "uid": user_id})
+        return result.rowcount > 0
+
+
+def update_document_metadata(doc_id: int, user_id: int, description: str = None,
+                             tags: str = None, notice_id: str = None) -> bool:
+    """Update document metadata"""
+    updates = []
+    params = {"did": doc_id, "uid": user_id}
+
+    if description is not None:
+        updates.append("description = :desc")
+        params["desc"] = description
+    if tags is not None:
+        updates.append("tags = :tags")
+        params["tags"] = tags
+    if notice_id is not None:
+        updates.append("notice_id = :nid")
+        params["nid"] = notice_id
+
+    if not updates:
+        return False
+
+    with engine.begin() as conn:
+        sql = sa.text(f"""
+            UPDATE documents
+            SET {", ".join(updates)}
+            WHERE id = :did AND user_id = :uid
+        """)
+        result = conn.execute(sql, params)
+        return result.rowcount > 0
+
 def optimize_database():
     """Add indexes and optimize database for faster queries"""
     try:
@@ -592,6 +692,54 @@ try:
         """))
 except Exception as e:
     st.warning(f"Auth token table note: {e}")
+
+# Create documents table
+try:
+    with engine.begin() as conn:
+        # For PostgreSQL
+        if engine.url.get_dialect().name == 'postgresql':
+            conn.execute(sa.text("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    content BYTEA NOT NULL,
+                    description TEXT,
+                    tags TEXT,
+                    notice_id TEXT,
+                    uploaded_at TEXT NOT NULL
+                )
+            """))
+        else:
+            # For SQLite
+            conn.execute(sa.text("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    content BLOB NOT NULL,
+                    description TEXT,
+                    tags TEXT,
+                    notice_id TEXT,
+                    uploaded_at TEXT NOT NULL
+                )
+            """))
+
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_documents_user ON documents (user_id)
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_documents_notice ON documents (notice_id)
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_documents_uploaded ON documents (uploaded_at)
+        """))
+except Exception as e:
+    st.warning(f"Document table creation note: {e}")
 
 # Create unique indexes
 try:
@@ -1832,12 +1980,13 @@ with colR2:
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "1) Solicitation Match",
     "2) Supplier Suggestions",
     "3) Proposal Draft",
     "4) Partner Matches",
-    "5) Internal Use"
+    "5) Internal Use",
+    "6) Documents"
 ])
 
 with tab1:
@@ -2358,3 +2507,303 @@ with tab5:
     st.markdown("---")
     st.caption(
         "DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
+
+
+with tab6:
+    st.header("📁 Document Management")
+    
+    if st.session_state.user is None:
+        st.info("Please log in to manage documents.")
+        st.stop()
+    
+    user_id = st.session_state.user["id"]
+    
+    # Upload section
+    st.subheader("Upload Document")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        uploaded_file = st.file_uploader(
+            "Choose a file",
+            type=["pdf", "docx", "doc", "txt", "csv", "xlsx", "xls", "png", "jpg", "jpeg"],
+            key="doc_uploader"
+        )
+    
+    with col2:
+        link_to_solicitation = st.checkbox("Link to solicitation", key="link_sol")
+    
+    description = st.text_input("Description (optional)", key="doc_desc")
+    tags = st.text_input("Tags (comma-separated, optional)", key="doc_tags", 
+                         placeholder="e.g., proposal, template, reference")
+    
+    notice_id_link = None
+    if link_to_solicitation:
+        notice_id_link = st.text_input("Notice ID", key="doc_notice_id")
+    
+    if uploaded_file is not None:
+        file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+        st.caption(f"File size: {file_size_mb:.2f} MB")
+        
+        if file_size_mb > 10:
+            st.warning("⚠️ File is larger than 10 MB. Consider compressing it.")
+        
+        if st.button("💾 Save Document", type="primary"):
+            file_content = uploaded_file.getvalue()
+            file_type = uploaded_file.name.split(".")[-1].lower()
+            
+            doc_id = save_document(
+                user_id=user_id,
+                filename=uploaded_file.name,
+                file_content=file_content,
+                file_type=file_type,
+                description=description,
+                tags=tags,
+                notice_id=notice_id_link
+            )
+            
+            if doc_id:
+                st.success(f"✅ Document '{uploaded_file.name}' saved successfully!")
+                st.rerun()
+            else:
+                st.error("Failed to save document. Please try again.")
+    
+    st.markdown("---")
+    
+    # Document list section
+    st.subheader("My Documents")
+    
+    docs_df = get_user_documents(user_id)
+    
+    if docs_df.empty:
+        st.info("No documents uploaded yet. Upload your first document above!")
+    else:
+        # Add search/filter
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            search_term = st.text_input("🔍 Search documents", key="doc_search")
+        with col2:
+            file_type_filter = st.multiselect(
+                "Filter by type",
+                options=docs_df["file_type"].unique().tolist(),
+                key="doc_type_filter"
+            )
+        with col3:
+            sort_by = st.selectbox("Sort by", ["Newest", "Oldest", "Name"], key="doc_sort")
+        
+        # Apply filters
+        filtered_df = docs_df.copy()
+        
+        if search_term:
+            search_mask = (
+                filtered_df["filename"].str.contains(search_term, case=False, na=False) |
+                filtered_df["description"].fillna("").str.contains(search_term, case=False, na=False) |
+                filtered_df["tags"].fillna("").str.contains(search_term, case=False, na=False)
+            )
+            filtered_df = filtered_df[search_mask]
+        
+        if file_type_filter:
+            filtered_df = filtered_df[filtered_df["file_type"].isin(file_type_filter)]
+        
+        # Apply sorting
+        if sort_by == "Newest":
+            filtered_df = filtered_df.sort_values("uploaded_at", ascending=False)
+        elif sort_by == "Oldest":
+            filtered_df = filtered_df.sort_values("uploaded_at", ascending=True)
+        else:  # Name
+            filtered_df = filtered_df.sort_values("filename")
+        
+        st.caption(f"Showing {len(filtered_df)} of {len(docs_df)} documents")
+        
+        # Display documents
+        for idx, row in filtered_df.iterrows():
+            with st.expander(f"📄 {row['filename']}", expanded=False):
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.write(f"**Type:** {row['file_type'].upper()}")
+                    st.write(f"**Size:** {row['file_size'] / 1024:.1f} KB")
+                    st.write(f"**Uploaded:** {row['uploaded_at'][:10]}")
+                    
+                    if row['description']:
+                        st.write(f"**Description:** {row['description']}")
+                    
+                    if row['tags']:
+                        tags_list = [t.strip() for t in row['tags'].split(",")]
+                        st.write("**Tags:** " + ", ".join([f"`{t}`" for t in tags_list]))
+                    
+                    if row['notice_id']:
+                        notice_url = make_sam_public_url(row['notice_id'])
+                        st.write(f"**Linked to:** [{row['notice_id']}]({notice_url})")
+                
+                with col2:
+                    # Download button
+                    doc_content = get_document_content(row['id'], user_id)
+                    if doc_content:
+                        filename, file_type, content = doc_content
+                        st.download_button(
+                            label="📥 Download",
+                            data=content,
+                            file_name=filename,
+                            mime=f"application/{file_type}",
+                            key=f"download_{row['id']}"
+                        )
+                    
+                    # Delete button
+                    if st.button("🗑️ Delete", key=f"delete_{row['id']}", type="secondary"):
+                        if delete_document(row['id'], user_id):
+                            st.success("Document deleted!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to delete document.")
+                
+                # Edit metadata
+                with st.form(key=f"edit_form_{row['id']}"):
+                    st.write("**Edit Metadata**")
+                    new_desc = st.text_input("Description", value=row['description'] or "", key=f"new_desc_{row['id']}")
+                    new_tags = st.text_input("Tags", value=row['tags'] or "", key=f"new_tags_{row['id']}")
+                    new_notice = st.text_input("Notice ID", value=row['notice_id'] or "", key=f"new_notice_{row['id']}")
+                    
+                    if st.form_submit_button("💾 Update"):
+                        if update_document_metadata(row['id'], user_id, new_desc, new_tags, new_notice or None):
+                            st.success("Metadata updated!")
+                            st.rerun()
+5. Update requirements.txt (if needed):
+The existing dependencies should be sufficient, but verify you have:
+streamlit
+pandas
+SQLAlchemy
+psycopg2-binary
+Key Features:
+
+Upload Documents: Support for common file types (PDF, DOCX, images, spreadsheets, etc.)
+Storage: Documents stored as binary data in PostgreSQL/SQLite
+Metadata: Description, tags, and optional link to solicitations
+Search & Filter: Search by filename/description/tags, filter by type
+Download: Download documents anytime
+Edit Metadata: Update description, tags, and linked solicitation
+Delete: Remove documents you no longer need
+File Size Warning: Warns for files > 10MB
+User Isolation: Users can only see their own documents
+
+Usage:
+
+Navigate to the "Documents" tab
+Upload files using the file uploader
+Optionally add description, tags, and link to a solicitation
+Search and filter your documents
+Download or delete as needed
+
+The documents are stored in the database and persist across sessions. Each user has their own document library that's completely isolated from other users.RetryJwhere explicitly do i put number 3EditFor #3 (Create the documents table), add it in the database migration section of app.py. Here's exactly where:
+Look for this section in app.py (around lines 280-350), where you see other table creation code:
+python# Create solicitation_embeddings table
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE TABLE IF NOT EXISTS solicitation_embeddings (
+                notice_id TEXT PRIMARY KEY,
+                embedding TEXT NOT NULL,
+                text_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_embeddings_hash 
+            ON solicitation_embeddings (text_hash)
+        """))
+except Exception as e:
+    st.warning(f"Embedding table creation note: {e}")
+
+# Create auth tokens table
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens (user_id)
+        """))
+except Exception as e:
+    st.warning(f"Auth token table note: {e}")
+Add the documents table code RIGHT AFTER the auth tokens table block:
+python# Create auth tokens table
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens (user_id)
+        """))
+except Exception as e:
+    st.warning(f"Auth token table note: {e}")
+
+# ============= ADD THIS BLOCK HERE =============
+# Create documents table
+try:
+    with engine.begin() as conn:
+        # For PostgreSQL
+        if engine.url.get_dialect().name == 'postgresql':
+            conn.execute(sa.text("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    content BYTEA NOT NULL,
+                    description TEXT,
+                    tags TEXT,
+                    notice_id TEXT,
+                    uploaded_at TEXT NOT NULL
+                )
+            """))
+        else:
+            # For SQLite
+            conn.execute(sa.text("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    content BLOB NOT NULL,
+                    description TEXT,
+                    tags TEXT,
+                    notice_id TEXT,
+                    uploaded_at TEXT NOT NULL
+                )
+            """))
+        
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_documents_user ON documents (user_id)
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_documents_notice ON documents (notice_id)
+        """))
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_documents_uploaded ON documents (uploaded_at)
+        """))
+except Exception as e:
+    st.warning(f"Document table creation note: {e}")
+# ============= END OF NEW BLOCK =============
+
+# Create unique indexes
+try:
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email);"))
+        conn.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_company_profile_user ON company_profile (user_id);"))
+except Exception as e:
+    st.warning(f"User/profile table migration note: {e}")

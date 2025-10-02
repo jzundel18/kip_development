@@ -69,3 +69,18 @@ class SolicitationEmbedding(SQLModel, table=True):
     embedding: str = Field()  # JSON-encoded numpy array
     text_hash: str = Field(index=True)  # Hash of title+description
     created_at: str = Field(default=None)
+
+class Document(SQLModel, table=True):
+    __tablename__ = "documents"
+    __table_args__ = {"extend_existing": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, nullable=False)
+    filename: str = Field(nullable=False)
+    file_type: str = Field(nullable=False)  # pdf, docx, txt, etc.
+    file_size: int = Field(nullable=False)  # in bytes
+    content: bytes = Field(nullable=False)  # binary file content
+    description: Optional[str] = None
+    tags: Optional[str] = None  # comma-separated tags
+    uploaded_at: str = Field(default=None, index=True)
+
+    notice_id: Optional[str] = Field(default=None, index=True)
