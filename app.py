@@ -2668,35 +2668,6 @@ with tab6:
                         if update_document_metadata(row['id'], user_id, new_desc, new_tags, new_notice or None):
                             st.success("Metadata updated!")
                             st.rerun()
-5. Update requirements.txt (if needed):
-The existing dependencies should be sufficient, but verify you have:
-streamlit
-pandas
-SQLAlchemy
-psycopg2-binary
-Key Features:
-
-Upload Documents: Support for common file types (PDF, DOCX, images, spreadsheets, etc.)
-Storage: Documents stored as binary data in PostgreSQL/SQLite
-Metadata: Description, tags, and optional link to solicitations
-Search & Filter: Search by filename/description/tags, filter by type
-Download: Download documents anytime
-Edit Metadata: Update description, tags, and linked solicitation
-Delete: Remove documents you no longer need
-File Size Warning: Warns for files > 10MB
-User Isolation: Users can only see their own documents
-
-Usage:
-
-Navigate to the "Documents" tab
-Upload files using the file uploader
-Optionally add description, tags, and link to a solicitation
-Search and filter your documents
-Download or delete as needed
-
-The documents are stored in the database and persist across sessions. Each user has their own document library that's completely isolated from other users.RetryJwhere explicitly do i put number 3EditFor #3 (Create the documents table), add it in the database migration section of app.py. Here's exactly where:
-Look for this section in app.py (around lines 280-350), where you see other table creation code:
-python# Create solicitation_embeddings table
 try:
     with engine.begin() as conn:
         conn.execute(sa.text("""
