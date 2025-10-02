@@ -2165,7 +2165,259 @@ with tab2:
     st.header("This feature is in development...")
 
 with tab3:
-    st.header("This feature is in development...")
+    st.header("📝 Proposal Draft Generator")
+    st.caption("Generate structured DoD proposal outlines based on solicitation requirements")
+    
+    # Check if we have solicitations to work with
+    if st.session_state.sol_df is None or st.session_state.sol_df.empty:
+        st.info("👈 First, go to Tab 1 to find and filter solicitations")
+        st.stop()
+    
+    # Solicitation selection
+    st.subheader("1. Select Solicitation")
+    
+    # Create dropdown with solicitation titles
+    sol_options = {}
+    for _, row in st.session_state.sol_df.iterrows():
+        notice_id = str(row.get("notice_id", ""))
+        title = row.get("title", "Untitled")[:80]
+        sol_number = row.get("solicitation_number", "")
+        display_text = f"{title} ({sol_number})" if sol_number else title
+        sol_options[display_text] = notice_id
+    
+    selected_display = st.selectbox(
+        "Choose a solicitation",
+        options=list(sol_options.keys()),
+        key="proposal_sol_select"
+    )
+    
+    selected_notice_id = sol_options[selected_display]
+    selected_sol = st.session_state.sol_df[
+        st.session_state.sol_df["notice_id"].astype(str) == selected_notice_id
+    ].iloc[0]
+    
+    # Display solicitation details
+    with st.expander("📋 Solicitation Details", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Title:** {selected_sol.get('title', 'N/A')}")
+            st.write(f"**Solicitation #:** {selected_sol.get('solicitation_number', 'N/A')}")
+            st.write(f"**Notice Type:** {selected_sol.get('notice_type', 'N/A')}")
+            st.write(f"**NAICS:** {selected_sol.get('naics_code', 'N/A')}")
+        with col2:
+            st.write(f"**Posted:** {selected_sol.get('posted_date', 'N/A')}")
+            st.write(f"**Response Due:** {selected_sol.get('response_date', 'N/A')}")
+            st.write(f"**Set-Aside:** {selected_sol.get('set_aside_code', 'N/A')}")
+            link = make_sam_public_url(selected_notice_id, selected_sol.get('link', ''))
+            st.markdown(f"**[View on SAM.gov]({link})**")
+    
+    # Proposal configuration
+    st.subheader("2. Proposal Configuration")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        proposal_type = st.selectbox(
+            "Proposal Type",
+            ["Technical & Cost Proposal", "Technical Proposal Only", "Cost Proposal Only", "Statement of Qualifications"],
+            key="proposal_type"
+        )
+    with col2:
+        page_limit = st.number_input(
+            "Target Page Count",
+            min_value=1,
+            max_value=100,
+            value=15,
+            help="Approximate number of pages for the proposal",
+            key="proposal_pages"
+        )
+    
+    # Company information (from profile)
+    use_profile = st.checkbox("Use saved company profile", value=True, key="proposal_use_profile")
+    
+    if use_profile and st.session_state.profile:
+        prof = st.session_state.profile
+        company_name = prof.get("company_name", "")
+        company_desc = prof.get("description", "")
+        company_city = prof.get("city", "")
+        company_state = prof.get("state", "")
+        
+        st.info(f"Using profile: **{company_name}**")
+    else:
+        st.warning("⚠️ No company profile found. Go to Account Settings to create one.")
+        company_name = st.text_input("Company Name", key="proposal_company_name")
+        company_desc = st.text_area("Company Description", height=100, key="proposal_company_desc")
+        col1, col2 = st.columns(2)
+        with col1:
+            company_city = st.text_input("City", key="proposal_company_city")
+        with col2:
+            company_state = st.text_input("State", key="proposal_company_state")
+    
+    # Additional inputs
+    with st.expander("⚙️ Additional Details (Optional)"):
+        key_personnel = st.text_area(
+            "Key Personnel (one per line)",
+            placeholder="Jane Smith - Program Manager\nJohn Doe - Technical Lead",
+            key="proposal_key_personnel",
+            height=100
+        )
+        
+        past_performance = st.text_area(
+            "Relevant Past Performance",
+            placeholder="List 2-3 relevant past projects...",
+            key="proposal_past_performance",
+            height=100
+        )
+        
+        facilities = st.text_input(
+            "Facilities/Capabilities",
+            placeholder="e.g., ISO 9001 certified facility, 50,000 sq ft manufacturing space",
+            key="proposal_facilities"
+        )
+    
+    # Generate button
+    st.subheader("3. Generate Proposal Outline")
+    
+    if st.button("🚀 Generate Proposal Outline", type="primary", use_container_width=True):
+        if not company_name or not company_desc:
+            st.error("Company name and description are required")
+            st.stop()
+        
+        with st.spinner("Generating comprehensive proposal outline... This may take 30-60 seconds..."):
+            try:
+                # Prepare solicitation context
+                sol_context = {
+                    "title": str(selected_sol.get("title", "")),
+                    "description": str(selected_sol.get("description", ""))[:2000],
+                    "solicitation_number": str(selected_sol.get("solicitation_number", "")),
+                    "naics_code": str(selected_sol.get("naics_code", "")),
+                    "set_aside_code": str(selected_sol.get("set_aside_code", "")),
+                    "response_date": str(selected_sol.get("response_date", "")),
+                    "notice_type": str(selected_sol.get("notice_type", ""))
+                }
+                
+                # Prepare company context
+                company_context = {
+                    "name": company_name,
+                    "description": company_desc[:800],
+                    "location": f"{company_city}, {company_state}".strip(", "),
+                    "key_personnel": [p.strip() for p in key_personnel.split("\n") if p.strip()],
+                    "past_performance": past_performance.strip(),
+                    "facilities": facilities.strip()
+                }
+                
+                # Generate proposal outline using OpenAI
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                
+                system_prompt = f"""You are an expert DoD proposal writer. Generate a comprehensive {proposal_type} outline 
+with specific, actionable content for each section. The proposal should be approximately {page_limit} pages.
+
+Create a detailed outline that includes:
+1. Executive Summary with key win themes
+2. Technical Approach with specific methodologies
+3. Management Approach with organizational structure
+4. Past Performance with relevant examples
+5. Personnel qualifications
+6. Facilities and capabilities
+7. Cost/pricing strategy (if applicable)
+
+Make the outline specific to this opportunity - not generic. Include actual content suggestions, not just section headers."""
+
+                user_prompt = f"""Create a detailed proposal outline for this solicitation:
+
+**SOLICITATION:**
+Title: {sol_context['title']}
+Number: {sol_context['solicitation_number']}
+Type: {sol_context['notice_type']}
+NAICS: {sol_context['naics_code']}
+Set-Aside: {sol_context['set_aside_code']}
+
+Requirements: {sol_context['description'][:1500]}
+
+**COMPANY:**
+Name: {company_context['name']}
+Capabilities: {company_context['description'][:600]}
+Location: {company_context['location']}
+{"Key Personnel: " + ", ".join(company_context['key_personnel'][:3]) if company_context['key_personnel'] else ""}
+{"Facilities: " + company_context['facilities'] if company_context['facilities'] else ""}
+
+**REQUIREMENTS:**
+- Proposal Type: {proposal_type}
+- Target Length: {page_limit} pages
+- Focus on DoD/Federal contracting best practices
+- Include win themes and discriminators
+- Provide specific content guidance for each section
+
+Generate a comprehensive outline with detailed guidance for each section."""
+
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=4000
+                )
+                
+                proposal_outline = response.choices[0].message.content
+                
+                # Store in session state
+                st.session_state.proposal_outline = proposal_outline
+                st.session_state.proposal_metadata = {
+                    "solicitation": sol_context,
+                    "company": company_context,
+                    "type": proposal_type,
+                    "pages": page_limit,
+                    "generated_at": datetime.now().isoformat()
+                }
+                
+                st.success("✅ Proposal outline generated successfully!")
+                
+            except Exception as e:
+                st.error(f"Error generating proposal: {e}")
+                st.exception(e)
+    
+    # Display generated outline
+    if "proposal_outline" in st.session_state and st.session_state.proposal_outline:
+        st.markdown("---")
+        st.subheader("📄 Generated Proposal Outline")
+        
+        # Action buttons
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Download as markdown
+            st.download_button(
+                label="📥 Download Markdown",
+                data=st.session_state.proposal_outline,
+                file_name=f"proposal_outline_{selected_sol.get('solicitation_number', 'draft')}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+        
+        with col2:
+            # Download as text
+            st.download_button(
+                label="📥 Download Text",
+                data=st.session_state.proposal_outline,
+                file_name=f"proposal_outline_{selected_sol.get('solicitation_number', 'draft')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        
+        with col3:
+            # Copy to clipboard button (display only)
+            if st.button("📋 Copy to Clipboard", use_container_width=True):
+                st.info("Select the text below and use Ctrl+C (Cmd+C on Mac) to copy")
+        
+        # Display the outline
+        st.markdown(st.session_state.proposal_outline)
+        
+        # Metadata
+        if "proposal_metadata" in st.session_state:
+            with st.expander("ℹ️ Proposal Metadata"):
+                meta = st.session_state.proposal_metadata
+                st.json(meta)
 
 with tab4:
     st.header("Partner Matches (from AI-ranked results)")
