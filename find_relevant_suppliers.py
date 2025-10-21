@@ -212,8 +212,30 @@ def _google_custom_search(query: str, api_key: str, cx: str, location: dict = No
         )
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.RequestException:
-        return {"items": []}
+    except requests.exceptions.RequestException as e:
+        # Don't hide errors - return error information so it can be debugged
+        error_msg = str(e)
+        status_code = getattr(e.response, 'status_code', None) if hasattr(e, 'response') and e.response is not None else None
+
+        # Try to get the actual error response from Google API
+        error_detail = ""
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_json = e.response.json()
+                if 'error' in error_json:
+                    error_detail = error_json['error'].get('message', '')
+            except:
+                error_detail = e.response.text[:200] if hasattr(e.response, 'text') else ""
+
+        # Return error information instead of silently returning empty results
+        return {
+            "items": [],
+            "error": {
+                "message": error_msg,
+                "status_code": status_code,
+                "detail": error_detail
+            }
+        }
 
 
 def _generate_ai_reason(openai_api_key: str, solicitation_title: str, solicitation_desc: str,
@@ -307,6 +329,28 @@ def find_vendors_for_notice(
             search_results = _google_custom_search(
                 query, google_api_key, google_cx, location, max_results=max_google
             )
+
+            # Check if there was an API error
+            if "error" in search_results:
+                error_info = search_results["error"]
+                debug_log(f"   ❌ Google API Error: {error_info.get('message', 'Unknown error')}")
+                if error_info.get('status_code'):
+                    debug_log(f"   Status Code: {error_info['status_code']}")
+                if error_info.get('detail'):
+                    debug_log(f"   Detail: {error_info['detail']}")
+
+                if return_debug:
+                    debug["raw"].append({
+                        "query": query,
+                        "error": error_info
+                    })
+
+                # If this is the first query and we got an error, it's likely a configuration issue
+                if i == 0:
+                    debug_log(f"")
+                    debug_log(f"⚠️ **API Configuration Issue Detected**")
+                    debug_log(f"Check your GOOGLE_API_KEY and GOOGLE_CX in .streamlit/secrets.toml")
+                continue
 
             items = search_results.get("items", [])
             debug_log(f"   → Google returned {len(items)} results")
