@@ -1565,53 +1565,74 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         service_type = service_response.choices[0].message.content.strip()
         debug_log(f"✅ Service type identified: **{service_type}**")
 
-        # Build location-aware search query
+        # Build location-aware search query with fallbacks
         debug_log("")
         debug_log("**Step 2: Building search queries...**")
 
+        base_query = service_type.strip()
+
+        # Try multiple query variations
+        search_queries = []
+
         if pop_city and pop_state:
-            location_query = f"{pop_city} {pop_state}"
-            search_query = f"{service_type} {location_query}"
+            search_queries.append(f"{base_query} {pop_city} {pop_state}")
+            search_queries.append(f"{base_query} {pop_state}")
             search_note = f"Searching for providers in {pop_city}, {pop_state}"
         elif pop_state:
-            location_query = pop_state
-            search_query = f"{service_type} {pop_state}"
+            search_queries.append(f"{base_query} {pop_state}")
+            search_queries.append(f"{base_query} contractors {pop_state}")
             search_note = f"Searching for providers in {pop_state}"
         else:
-            search_query = f"{service_type} contractors United States"
+            search_queries.append(f"{base_query} contractors")
+            search_queries.append(f"{base_query} companies")
             search_note = "No specific location found - conducting national search"
 
-        debug_log(f"Primary search query: `{search_query}`")
+        # Always add a generic fallback
+        search_queries.append(f"contractors {base_query}")
 
-        # Search using Google Custom Search API
-        debug_log("")
-        debug_log("**Step 3: Searching Google...**")
+        debug_log(f"Will try {len(search_queries)} search variations")
 
-        google_params = {
-            "key": google_api_key,
-            "cx": google_cx,
-            "q": search_query,
-            "num": min(10, 15),
-            "safe": "off",
-            "lr": "lang_en",
-            "filter": "0",
-        }
+        # Try each query until we get results
+        search_results = []
+        successful_query = None
 
-        response = requests.get(
-            "https://www.googleapis.com/customsearch/v1", params=google_params, timeout=15)
+        for search_query in search_queries:
+            debug_log(f"Trying query: `{search_query}`")
 
-        if response.status_code != 200:
-            debug_log(f"❌ **Search API error:** {response.status_code}")
-            return None, f"Search API error: {response.status_code}"
+            google_params = {
+                "key": google_api_key,
+                "cx": google_cx,
+                "q": search_query,
+                "num": 10,
+                "safe": "off",
+                "lr": "lang_en",
+                "filter": "0",
+            }
 
-        data = response.json()
-        search_results = data.get("items", [])
+            response = requests.get(
+                "https://www.googleapis.com/customsearch/v1", params=google_params, timeout=15)
 
-        debug_log(f"✅ Google returned **{len(search_results)} results**")
+            if response.status_code != 200:
+                debug_log(f"   ⚠️ API error: {response.status_code}")
+                continue
+
+            data = response.json()
+            items = data.get("items", [])
+
+            debug_log(f"   → Returned {len(items)} results")
+
+            if items:
+                search_results = items
+                successful_query = search_query
+                break
 
         if not search_results:
-            debug_log("❌ **No search results found**")
+            debug_log("❌ **No search results found from any query variation**")
             return None, "No search results found"
+
+        debug_log("")
+        debug_log(f"✅ Using results from: `{successful_query}`")
+        debug_log(f"✅ Google returned **{len(search_results)} results**")
 
         # Enhanced filtering
         debug_log("")
@@ -1646,7 +1667,8 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
                 skipped_count += 1
                 continue
 
-            if any(skip_domain in link.lower() for skip_domain in skip_domains):
+            # Check domain (not full URL) for skip domains
+            if any(skip_domain in domain for skip_domain in skip_domains):
                 skipped_count += 1
                 continue
 
