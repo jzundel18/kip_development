@@ -1248,6 +1248,8 @@ def render_internal_results():
                         "iu_mode") == "machine" else "Find 3 local service providers"
                     btn_key = f"iu_find_vendors_{nid}_{idx}_{key_salt}"
 
+                # Around line 1590, replace the vendor finding logic with:
+
                 if st.button(btn_label, key=btn_key):
                     try:
                         sol_dict = {
@@ -1266,58 +1268,40 @@ def render_internal_results():
                         st.error(f"Error creating solicitation data: {e}")
                         continue
 
-                    # Extract locality
-                    locality = {"city": _s(getattr(row, "pop_city", "")), "state": _s(
-                        getattr(row, "pop_state", ""))}
-                    if not _has_locality(locality):
-                        locality = _extract_locality(
-                            f"{getattr(row, 'title', '')}\n{getattr(row, 'description', '')}") or {}
-
-                    # Set status message
-                    if _has_locality(locality):
-                        where = ", ".join(
-                            [x for x in [locality.get("city", ""), locality.get("state", "")] if x])
-                        st.session_state.vendor_notes[
-                            nid] = f"Place of performance: {where}"
+                    locality = {"city": _s(getattr(row, "pop_city", "")), 
+                                "state": _s(getattr(row, "pop_state", ""))}
+                    
+                    pop_state = locality.get("state", "").strip()
+                    sol_text = f"{sol_dict['title']}\n{sol_dict['description']}"
+                    
+                    # STEP 1: Check internal database first
+                    internal_vendors = search_company_database(sol_text, pop_state, OPENAI_API_KEY)
+                    
+                    if not internal_vendors.empty:
+                        st.session_state.vendor_notes[nid] = "Found matches in internal company database"
+                        st.session_state.vendor_suggestions[nid] = internal_vendors
                         st.session_state.vendor_errors.pop(nid, None)
                     else:
-                        st.session_state.vendor_notes[nid] = "No place of performance specified. Conducting national search."
-
-                    # CREATE DEBUG CONTAINER - THIS IS THE KEY CHANGE
-                    with st.expander("🔍 **Vendor Search Debug Log**", expanded=True):
-                        debug_container = st.container()
-                    
-                    # Find vendors - PASS THE DEBUG CONTAINER
-                    try:
-                        vendors_df, note = find_service_vendors_for_opportunity(
-                            sol_dict, 
-                            GOOGLE_API_KEY, 
-                            GOOGLE_CX, 
-                            OPENAI_API_KEY, 
-                            top_n=3,
-                            streamlit_debug=debug_container
-                        )
-
-                        if vendors_df is None or vendors_df.empty:
-                            loc_msg = ""
-                            if _has_locality(locality):
-                                where = ", ".join([x for x in [locality.get("city", ""), locality.get(
-                                    "state", "")] if x]) or locality.get("state", "")
-                                loc_msg = f" for the specified locality ({where})"
-                            st.session_state.vendor_errors[
-                                nid] = f"No service providers found{loc_msg}."
-                        else:
-                            st.session_state.vendor_errors.pop(nid, None)
-                            st.session_state.vendor_suggestions[nid] = vendors_df
-
-                    except Exception as e:
-                        debug_container.error(f"❌ Exception during vendor search: {e}")
-                        import traceback
-                        debug_container.code(traceback.format_exc())
+                        # STEP 2: Fall back to Google search
+                        st.session_state.vendor_notes[nid] = "No internal matches found - searching external vendors"
                         
-                        st.session_state.vendor_errors[
-                            nid] = f"Error finding vendors: {str(e)[:100]}"
-                        st.session_state.vendor_suggestions[nid] = pd.DataFrame()
+                        try:
+                            vendors_df, note = find_service_vendors_for_opportunity(
+                                sol_dict, 
+                                GOOGLE_API_KEY, 
+                                GOOGLE_CX, 
+                                OPENAI_API_KEY, 
+                                top_n=3
+                            )
+                            
+                            if vendors_df is None or vendors_df.empty:
+                                st.session_state.vendor_errors[nid] = "No vendors found in database or external search"
+                            else:
+                                st.session_state.vendor_suggestions[nid] = vendors_df
+                                st.session_state.vendor_errors.pop(nid, None)
+                                
+                        except Exception as e:
+                            st.session_state.vendor_errors[nid] = f"Error finding vendors: {str(e)[:100]}"
                     
                     st.rerun()
             with right:
@@ -1504,6 +1488,75 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 # Enhanced Vendor Search Functions
 # =========================
+
+
+def search_company_database(solicitation_desc: str, pop_state: str, api_key: str) -> pd.DataFrame:
+    """Search internal company database for matches"""
+    try:
+        with engine.connect() as conn:
+            # Get all companies
+            df = pd.read_sql_query(
+                "SELECT name, description, city, state FROM company_list",
+                conn
+            )
+
+        if df.empty:
+            return pd.DataFrame(columns=["name", "website", "location", "reason"])
+
+        # Check for national scope
+        is_national = not pop_state or pop_state.strip() == ""
+
+        # Filter by state if not national
+        if not is_national:
+            df = df[df["state"].str.upper() == pop_state.upper()]
+
+        if df.empty:
+            return pd.DataFrame(columns=["name", "website", "location", "reason"])
+
+        # Score companies by description match using embeddings
+        client = OpenAI(api_key=api_key)
+
+        # Get solicitation embedding
+        sol_resp = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=[solicitation_desc[:500]]
+        )
+        sol_vector = np.array(sol_resp.data[0].embedding, dtype=np.float32)
+        sol_vector = sol_vector / (np.linalg.norm(sol_vector) + 1e-9)
+
+        # Get company embeddings
+        company_descs = df["description"].fillna("").tolist()
+        comp_resp = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=company_descs
+        )
+        comp_vectors = np.array(
+            [d.embedding for d in comp_resp.data], dtype=np.float32)
+        comp_vectors = comp_vectors / \
+            (np.linalg.norm(comp_vectors, axis=1, keepdims=True) + 1e-9)
+
+        # Calculate similarities
+        similarities = comp_vectors @ sol_vector
+
+        # Add scores and filter
+        df["score"] = similarities
+        df = df[df["score"] > 0.3].sort_values(
+            "score", ascending=False).head(3)
+
+        # Format results
+        results = []
+        for _, row in df.iterrows():
+            results.append({
+                "name": row["name"],
+                "website": "",  # No website in database
+                "location": f"{row['city']}, {row['state']}" if row['city'] else row['state'],
+                "reason": "Internal database match - relevant capabilities for this work"
+            })
+
+        return pd.DataFrame(results)
+
+    except Exception as e:
+        return pd.DataFrame(columns=["name", "website", "location", "reason"])
 
 
 def find_service_vendors_for_opportunity(
