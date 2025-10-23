@@ -3,11 +3,17 @@ from typing import List, Dict, Any
 import os
 import re
 import json
+import bcrypt
 import uuid
 import hashlib
 import warnings
-from typing import Optional, List, Dict, Any
-from datetime import date, datetime, timezone
+import csv
+import gc
+from functools import partial
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
+from datetime import date, datetime, timezone, timedelta
+from dataclasses import dataclass
 from urllib.parse import urlparse
 from typing import Dict
 from enhanced_matching import EnhancedMatcher
@@ -15,12 +21,20 @@ from enhanced_matching import EnhancedMatcher
 import pandas as pd
 import numpy as np
 import sqlalchemy as sa
-from sqlalchemy import inspect
+from sqlalchemy import text, inspect
+from sqlmodel import SQLModel, Field, create_engine
 from sqlalchemy.exc import SAWarning
 import streamlit as st
+from streamlit_cookies_manager import EncryptedCookieManager
+from openai import OpenAI
 import requests
 
-from scoring import ai_matrix_score_solicitations, ai_score_and_rank_solicitations_by_fit
+# Local imports
+import generate_proposal as gp
+import get_relevant_solicitations as gs
+import secrets
+
+from scoring import AIMatrixScorer, ai_matrix_score_solicitations, ai_score_and_rank_solicitations_by_fit
 # =========================
 # Performance Optimization Functions
 # =========================
@@ -1931,25 +1945,21 @@ def render_sidebar_header():
 
 if st.session_state.view == "account":
     st.title("Company Settings")
-
+    
     if st.button("← Back to App", key="btn_back_to_app"):
         st.session_state.view = "main"
         st.rerun()
-
+    
     prof = st.session_state.profile or {}
-    company_name = st.text_input(
-        "Company name", value=prof.get("company_name", ""))
-    description = st.text_area(
-        "Company description", value=prof.get("description", ""), height=140)
-    state = st.text_input("State (2-letter code)",
-                          value=prof.get("state", "") or "")
-
+    company_name = st.text_input("Company name", value=prof.get("company_name", ""))
+    description = st.text_area("Company description", value=prof.get("description", ""), height=140)
+    state = st.text_input("State (2-letter code)", value=prof.get("state", "") or "")
+    
     if st.button("💾 Save Profile", key="btn_save_profile_settings", type="primary"):
         if not company_name.strip() or not description.strip():
             st.error("Company name and description are required.")
         else:
-            upsert_profile(st.session_state.user["id"], company_name.strip(
-            ), description.strip(), state.strip())
+            upsert_profile(st.session_state.user["id"], company_name.strip(), description.strip(), state.strip())
             st.session_state.profile = get_profile(st.session_state.user["id"])
             st.success("Profile saved!")
             st.rerun()
