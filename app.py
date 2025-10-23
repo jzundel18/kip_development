@@ -2412,19 +2412,19 @@ with tab3:
     use_profile = st.checkbox("Use saved company profile", value=True, key="proposal_use_profile")
     
     if use_profile and st.session_state.profile:
-    prof = st.session_state.profile
-    company_name = prof.get("company_name", "")
-    company_desc = prof.get("description", "")
-    company_state = prof.get("state", "")
+        prof = st.session_state.profile
+        company_name = prof.get("company_name", "")
+        company_desc = prof.get("description", "")
+        company_state = prof.get("state", "")
 
-    st.info(f"Using profile: **{company_name}**")
-else:
-    st.warning(
-        "⚠️ No company profile found. Go to Account Settings to create one.")
-    company_name = st.text_input("Company Name", key="proposal_company_name")
-    company_desc = st.text_area(
-        "Company Description", height=100, key="proposal_company_desc")
-    company_state = st.text_input("State", key="proposal_company_state")
+        st.info(f"Using profile: **{company_name}**")
+    else:
+        st.warning(
+            "⚠️ No company profile found. Go to Account Settings to create one.")
+        company_name = st.text_input("Company Name", key="proposal_company_name")
+        company_desc = st.text_area(
+            "Company Description", height=100, key="proposal_company_desc")
+        company_state = st.text_input("State", key="proposal_company_state")
     
     # Additional inputs
     with st.expander("⚙️ Additional Details (Optional)"):
