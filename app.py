@@ -443,31 +443,41 @@ def get_secret(name, default=None):
     return os.getenv(name, default)
 
 
-# Load secrets
-OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
-GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
-GOOGLE_CX = get_secret("GOOGLE_CX")
-SAM_KEYS = get_secret("SAM_KEYS", "")
+# Load secrets - will validate later after Streamlit initializes
+def load_secrets():
+    """Load and validate secrets after Streamlit initialization"""
+    openai_key = get_secret("OPENAI_API_KEY")
+    google_key = get_secret("GOOGLE_API_KEY")
+    google_cx = get_secret("GOOGLE_CX")
+    sam_keys_raw = get_secret("SAM_KEYS", "")
+    
+    # Parse SAM_KEYS
+    sam_keys = []
+    if isinstance(sam_keys_raw, str):
+        sam_keys = [k.strip() for k in sam_keys_raw.split(",") if k.strip()]
+    elif isinstance(sam_keys_raw, (list, tuple)):
+        sam_keys = sam_keys_raw
+    
+    # Validation
+    missing = []
+    if not openai_key:
+        missing.append("OPENAI_API_KEY")
+    if not google_key:
+        missing.append("GOOGLE_API_KEY")
+    if not google_cx:
+        missing.append("GOOGLE_CX")
+    if not sam_keys:
+        missing.append("SAM_KEYS")
+    
+    if missing:
+        st.error(f"Missing required secrets: {', '.join(missing)}")
+        st.info("Add these secrets in: **Settings → Secrets** in your Streamlit deployment")
+        st.stop()
+    
+    return openai_key, google_key, google_cx, sam_keys
 
-if isinstance(SAM_KEYS, str):
-    SAM_KEYS = [k.strip() for k in SAM_KEYS.split(",") if k.strip()]
-elif not isinstance(SAM_KEYS, (list, tuple)):
-    SAM_KEYS = []
-
-# Validation
-missing = []
-if not OPENAI_API_KEY:
-    missing.append("OPENAI_API_KEY")
-if not GOOGLE_API_KEY:
-    missing.append("GOOGLE_API_KEY")
-if not GOOGLE_CX:
-    missing.append("GOOGLE_CX")
-if not SAM_KEYS:
-    missing.append("SAM_KEYS")
-
-if missing:
-    st.error(f"Missing required secrets: {', '.join(missing)}")
-    st.stop()
+# Call after Streamlit page config
+OPENAI_API_KEY, GOOGLE_API_KEY, GOOGLE_CX, SAM_KEYS = load_secrets()
 
 # =========================
 # Database Configuration
