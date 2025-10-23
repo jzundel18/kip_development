@@ -3,17 +3,11 @@ from typing import List, Dict, Any
 import os
 import re
 import json
-import bcrypt
 import uuid
 import hashlib
 import warnings
-import csv
-import gc
-from functools import partial
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
-from datetime import date, datetime, timezone, timedelta
-from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
+from datetime import date, datetime, timezone
 from urllib.parse import urlparse
 from typing import Dict
 from enhanced_matching import EnhancedMatcher
@@ -21,20 +15,12 @@ from enhanced_matching import EnhancedMatcher
 import pandas as pd
 import numpy as np
 import sqlalchemy as sa
-from sqlalchemy import text, inspect
-from sqlmodel import SQLModel, Field, create_engine
+from sqlalchemy import inspect
 from sqlalchemy.exc import SAWarning
 import streamlit as st
-from streamlit_cookies_manager import EncryptedCookieManager
-from openai import OpenAI
 import requests
 
-# Local imports
-import generate_proposal as gp
-import get_relevant_solicitations as gs
-import secrets
-
-from scoring import AIMatrixScorer, ai_matrix_score_solicitations, ai_score_and_rank_solicitations_by_fit
+from scoring import ai_matrix_score_solicitations, ai_score_and_rank_solicitations_by_fit
 # =========================
 # Performance Optimization Functions
 # =========================
@@ -497,15 +483,82 @@ SAM_KEYS = "key1,key2"
 
     return openai_key, google_key, google_cx, sam_keys
 
+
 # =========================
 # Database Configuration
 # =========================
-DB_URL = st.secrets.get("SUPABASE_DB_URL") or "sqlite:///app.db"
+# =========================
+# Database Configuration - SUPABASE ONLY
+# =========================
+DB_URL = st.secrets.get("SUPABASE_DB_URL")
 
-# Add these lines to your session state initialization section (around line 75-85)
-# Find where you have the other session state initializations and add these:
+if not DB_URL:
+    st.error("❌ SUPABASE_DB_URL not configured")
+    st.info("Add SUPABASE_DB_URL to your Streamlit Cloud secrets")
+    st.stop()
 
-# ADD THESE NEW LINES:
+if not DB_URL.startswith("postgresql"):
+    st.error("❌ Only PostgreSQL (Supabase) databases are supported")
+    st.info("This app requires a PostgreSQL connection string")
+    st.stop()
+
+
+@st.cache_resource
+def get_optimized_engine(db_url: str):
+    """Create optimized database engine with connection pooling for Supabase"""
+    return create_engine(
+        db_url,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=5,
+        pool_recycle=3600,
+        connect_args={
+            "sslmode": "require",
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+            "application_name": "kip_streamlit"
+        },
+    )
+
+
+engine = get_optimized_engine(DB_URL)
+
+# Test Supabase connection
+try:
+    with engine.connect() as conn:
+        conn.execute(sa.text("SELECT 1")).first()
+        ver = conn.execute(sa.text("SELECT version()")).first()
+    st.sidebar.success("✅ Connected to Supabase")
+    if ver and isinstance(ver, tuple):
+        # Show just "PostgreSQL 15.x" instead of full version string
+        version_short = ver[0].split(',')[0] if ver[0] else "PostgreSQL"
+        st.sidebar.caption(version_short)
+except Exception as e:
+    st.sidebar.error("❌ Supabase connection failed")
+    st.sidebar.caption("Check your SUPABASE_DB_URL secret")
+    st.sidebar.exception(e)
+    st.stop()
+
+
+# Initialize session state
+if "view" not in st.session_state:
+    st.session_state.view = "main"
+if "vendor_notes" not in st.session_state:
+    st.session_state.vendor_notes = {}
+if "sol_df" not in st.session_state:
+    st.session_state.sol_df = None
+if "sup_df" not in st.session_state:
+    st.session_state.sup_df = None
+if "topn_df" not in st.session_state:
+    st.session_state.topn_df = None
+if "partner_matches" not in st.session_state:
+    st.session_state.partner_matches = None
+if "partner_matches_stamp" not in st.session_state:
+    st.session_state.partner_matches_stamp = None
+if "topn_stamp" not in st.session_state:
+    st.session_state.topn_stamp = None
 if "iu_open_nid" not in st.session_state:
     st.session_state.iu_open_nid = None
 if "iu_key_salt" not in st.session_state:
@@ -518,91 +571,6 @@ if "vendor_suggestions" not in st.session_state:
     st.session_state.vendor_suggestions = {}
 if "vendor_errors" not in st.session_state:
     st.session_state.vendor_errors = {}
-
-
-@st.cache_resource
-def get_optimized_engine(db_url: str):
-    """Create optimized database engine with connection pooling"""
-    if db_url.startswith("postgresql"):
-        return create_engine(
-            db_url,
-            pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=5,
-            pool_recycle=3600,
-            connect_args={
-                "sslmode": "require",
-                "keepalives": 1,
-                "keepalives_idle": 30,
-                "keepalives_interval": 10,
-                "keepalives_count": 5,
-                "application_name": "kip_streamlit"
-            },
-        )
-    else:
-        return create_engine(db_url, pool_pre_ping=True)
-
-
-engine = get_optimized_engine(DB_URL)
-
-# Test connection
-try:
-    with engine.connect() as conn:
-        # Simple connection test that works for both SQLite and PostgreSQL
-        conn.execute(sa.text("SELECT 1")).first()
-
-        # Try to get version info (works for PostgreSQL, harmless if it fails)
-        try:
-            if DB_URL.startswith("postgresql"):
-                ver = conn.execute(sa.text("SELECT version()")).first()
-                st.sidebar.success("✅ Connected to PostgreSQL")
-                if ver and isinstance(ver, tuple):
-                    # Truncate long version strings
-                    st.sidebar.caption(ver[0][:100])
-            else:
-                st.sidebar.success("✅ Connected to SQLite (local mode)")
-        except:
-            st.sidebar.success("✅ Connected to database")
-
-except Exception as e:
-    st.sidebar.error("❌ Database connection failed")
-    st.sidebar.caption(
-        f"Using: {DB_URL.split('@')[-1] if '@' in DB_URL else DB_URL}")
-    st.sidebar.exception(e)
-    st.stop()
-
-# =========================
-# Cookie Manager & Session
-# =========================
-cookies = EncryptedCookieManager(
-    prefix="kip_",
-    password=get_secret("COOKIE_PASSWORD", "dev-cookie-secret")
-)
-if not cookies.ready():
-    st.stop()
-
-# Initialize session state
-if "user" not in st.session_state:
-    st.session_state.user = None
-if "profile" not in st.session_state:
-    st.session_state.profile = None
-if "view" not in st.session_state:
-    st.session_state.view = "main" if st.session_state.user else "auth"
-if "vendor_notes" not in st.session_state:
-    st.session_state.vendor_notes = {}
-if "sol_df" not in st.session_state:
-    st.session_state.sol_df = None
-if "sup_df" not in st.session_state:
-    st.session_state.sup_df = None
-# Add these to your session state initialization
-if "topn_df" not in st.session_state:
-    st.session_state.topn_df = None
-if "partner_matches" not in st.session_state:
-    st.session_state.partner_matches = None
-if "partner_matches_stamp" not in st.session_state:
-    st.session_state.partner_matches_stamp = None
-if "topn_stamp" not in st.session_state:
-    st.session_state.topn_stamp = None
 
 # =========================
 # Utility Functions
@@ -879,91 +847,6 @@ except Exception as e:
 # =========================
 # Authentication Functions
 # =========================
-
-
-def _hash_password(pw: str) -> str:
-    salt = bcrypt.gensalt(rounds=12)
-    return bcrypt.hashpw(pw.encode("utf-8"), salt).decode("utf-8")
-
-
-def _check_password(pw: str, pw_hash: str) -> bool:
-    try:
-        return bcrypt.checkpw(pw.encode("utf-8"), pw_hash.encode("utf-8"))
-    except Exception:
-        return False
-
-
-def _hash_token(raw: str) -> str:
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _issue_remember_me_token(user_id: int, days: int = None) -> str:
-    days = days or int(get_secret("COOKIE_DAYS", 30))
-    raw = secrets.token_urlsafe(32)
-    tok_hash = _hash_token(raw)
-    now = datetime.now(timezone.utc)
-    exp = now + timedelta(days=days)
-    with engine.begin() as conn:
-        conn.execute(sa.text("""
-            INSERT INTO auth_tokens (user_id, token_hash, expires_at, created_at)
-            VALUES (:uid, :th, :exp, :now)
-        """), {"uid": user_id, "th": tok_hash, "exp": exp.isoformat(), "now": now.isoformat()})
-    return raw
-
-
-def _validate_remember_me_token(raw: str) -> Optional[int]:
-    if not raw:
-        return None
-    tok_hash = _hash_token(raw)
-    with engine.connect() as conn:
-        row = conn.execute(sa.text("""
-            SELECT user_id, expires_at FROM auth_tokens WHERE token_hash = :th
-            ORDER BY created_at DESC LIMIT 1
-        """), {"th": tok_hash}).mappings().first()
-    if not row:
-        return None
-    try:
-        exp = datetime.fromisoformat(row["expires_at"])
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp < datetime.now(timezone.utc):
-            return None
-    except Exception:
-        return None
-    return int(row["user_id"])
-
-
-def _revoke_all_tokens_for_user(user_id: int) -> None:
-    with engine.begin() as conn:
-        conn.execute(sa.text("DELETE FROM auth_tokens WHERE user_id = :uid"), {
-                     "uid": user_id})
-
-
-def get_user_by_email(email: str):
-    with engine.connect() as conn:
-        sql = sa.text(
-            "SELECT id, email, password_hash FROM users WHERE email = :e")
-        row = conn.execute(
-            sql, {"e": email.strip().lower()}).mappings().first()
-        return dict(row) if row else None
-
-
-def create_user(email: str, password: str) -> Optional[int]:
-    email = email.strip().lower()
-    pw_hash = _hash_password(password)
-    with engine.begin() as conn:
-        try:
-            sql = sa.text("""
-                INSERT INTO users (email, password_hash, created_at)
-                VALUES (:email, :ph, :ts) RETURNING id
-            """)
-            new_id = conn.execute(sql, {"email": email, "ph": pw_hash, "ts": datetime.now(
-                timezone.utc).isoformat()}).scalar_one()
-            return int(new_id)
-        except Exception as e:
-            st.error(f"Could not create user: {e}")
-            return None
-
 
 def get_profile(user_id: int) -> Optional[dict]:
     with engine.connect() as conn:
@@ -2036,106 +1919,22 @@ Provide 2-3 sentences describing a promising research approach or technology sol
 def render_sidebar_header():
     with st.sidebar:
         st.markdown("---")
-        if st.session_state.user:
-            prof = st.session_state.profile or {}
-            company_name = (prof.get("company_name")
-                            or "").strip() or "Your Company"
-            st.markdown(f"### {company_name}")
-            st.caption(f"Signed in as {st.session_state.user['email']}")
-            if st.button("⚙️ Account Settings", key="sb_go_settings", use_container_width=True):
-                st.session_state.view = "account"
-                st.rerun()
-        else:
-            st.info("Not signed in")
-            if st.button("Log in / Sign up", key="sb_go_login", use_container_width=True):
-                st.session_state.view = "auth"
-                st.rerun()
+        prof = st.session_state.profile or {}
+        company_name = (prof.get("company_name") or "").strip() or "Your Company"
+        st.markdown(f"### {company_name}")
+        
+        if st.button("⚙️ Company Settings", key="sb_go_settings", use_container_width=True):
+            st.session_state.view = "account"
+            st.rerun()
         st.markdown("---")
 
 
-def render_auth_screen():
-    st.title("Welcome to KIP")
-    st.caption("Sign in or create an account to continue.")
+if st.session_state.view == "account":
+    st.title("Company Settings")
 
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Log in")
-        le = st.text_input("Email", key="login_email_full")
-        lp = st.text_input("Password", type="password",
-                           key="login_password_full")
-        remember_me = st.checkbox("Remember me for 30 days", value=True)
-        if st.button("Log in", key="btn_login_full", use_container_width=True):
-            u = get_user_by_email(le or "")
-            if not u:
-                st.error("No account found with that email.")
-            elif not _check_password(lp or "", u["password_hash"]):
-                st.error("Invalid password.")
-            else:
-                st.session_state.user = {"id": u["id"], "email": u["email"]}
-                st.session_state.profile = get_profile(u["id"])
-                st.session_state.view = "main"
-                st.success("Logged in.")
-
-                if remember_me:
-                    raw_token = _issue_remember_me_token(
-                        u["id"], days=int(get_secret("COOKIE_DAYS", 30)))
-                    cookie_name = get_secret("COOKIE_NAME", "kip_auth")
-                    cookies[cookie_name] = raw_token
-                    cookies.save()
-                st.rerun()
-
-    with c2:
-        st.subheader("Sign up")
-        se = st.text_input("Email", key="signup_email_full")
-        sp = st.text_input("Password", type="password",
-                           key="signup_password_full")
-        sp2 = st.text_input("Confirm password",
-                            type="password", key="signup_password2_full")
-        if st.button("Create account", key="btn_signup_full", type="primary", use_container_width=True):
-            if not se or not sp:
-                st.error("Email and password are required.")
-            elif sp != sp2:
-                st.error("Passwords do not match.")
-            elif get_user_by_email(se):
-                st.error("An account with that email already exists.")
-            else:
-                uid = create_user(se, sp)
-                uid = create_user(se, sp)
-            if uid:
-                upsert_profile(uid, company_name="", description="", state="")
-                st.success("Account created. Please log in on the left.")
-            else:
-                st.error("Could not create account. Check server logs.")
-
-
-def render_account_settings():
-    st.title("Account Settings")
-
-    if st.button("Sign out", key="btn_signout_settings"):
-        if st.session_state.user:
-            _revoke_all_tokens_for_user(st.session_state.user["id"])
-        cookie_name = get_secret("COOKIE_NAME", "kip_auth")
-        try:
-            del cookies[cookie_name]
-        except KeyError:
-            pass
-        cookies.save()
-        st.session_state.user = None
-        st.session_state.profile = None
-        st.session_state.view = "auth"
+    if st.button("← Back to App", key="btn_back_to_app"):
+        st.session_state.view = "main"
         st.rerun()
-
-    if st.session_state.user is None:
-        st.info("Please log in first.")
-        if st.button("Go to Login / Sign up"):
-            st.session_state.view = "auth"
-            st.rerun()
-        st.stop()
-
-    st.write(f"Signed in as **{st.session_state.user['email']}**")
-    st.markdown("---")
-    st.subheader("Company Profile")
 
     prof = st.session_state.profile or {}
     company_name = st.text_input(
@@ -2145,32 +1944,16 @@ def render_account_settings():
     state = st.text_input("State (2-letter code)",
                           value=prof.get("state", "") or "")
 
-    cols = st.columns([1, 1, 3])
-    with cols[0]:
-        if st.button("Save profile", key="btn_save_profile_settings"):
-            if not company_name.strip() or not description.strip():
-                st.error("Company name and description are required.")
-            else:
-                upsert_profile(st.session_state.user["id"], company_name.strip(),
-                               description.strip(), state.strip())
-                st.session_state.profile = get_profile(
-                    st.session_state.user["id"])
-                st.success("Profile saved.")
-    with cols[1]:
-        if st.button("Back to app", key="btn_back_to_app"):
-            st.session_state.view = "main"
+    if st.button("💾 Save Profile", key="btn_save_profile_settings", type="primary"):
+        if not company_name.strip() or not description.strip():
+            st.error("Company name and description are required.")
+        else:
+            upsert_profile(st.session_state.user["id"], company_name.strip(
+            ), description.strip(), state.strip())
+            st.session_state.profile = get_profile(st.session_state.user["id"])
+            st.success("Profile saved!")
             st.rerun()
-
-# =========================
-# View Router
-# =========================
-if st.session_state.view == "auth":
-    render_auth_screen()
     st.stop()
-elif st.session_state.view == "account":
-    render_account_settings()
-    st.stop()
-
 # =========================
 # Main App
 # =========================
