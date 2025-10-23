@@ -53,13 +53,18 @@ class CompanyProfile(SQLModel, table=True):
 
 
 class Company(SQLModel, table=True):
-    __tablename__ = "company"
+    __tablename__ = "company_list"
     __table_args__ = {"extend_existing": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     description: Optional[str] = None
-    city: Optional[str] = None
     state: Optional[str] = Field(default=None, index=True)
+    states_perform_work: Optional[str] = None
+    NAICS: Optional[str] = Field(default=None, index=True)
+    other_NAICS: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    contact: Optional[str] = None
 
 
 class SolicitationEmbedding(SQLModel, table=True):

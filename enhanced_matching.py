@@ -64,8 +64,8 @@ class CompanyProfile:
     # Core Information
     company_name: str
     description: str
-    city: str = ""
     state: str = ""
+    states_perform_work: str = ""
 
     # Business Details
     primary_services: List[str] = None
@@ -73,6 +73,15 @@ class CompanyProfile:
     certifications: List[str] = None
     size_category: str = ""  # "small", "large", etc.
     set_aside_eligibilities: List[str] = None
+
+    # NAICS codes
+    NAICS: str = ""
+    other_NAICS: str = ""
+
+    # Contact information
+    email: str = ""
+    phone: str = ""
+    contact: str = ""
 
     # Capabilities
     core_competencies: List[str] = None
@@ -93,7 +102,6 @@ class CompanyProfile:
             self.core_competencies = []
         if self.past_performance_sectors is None:
             self.past_performance_sectors = []
-
 
 class EnhancedMatcher:
     """Enhanced three-stage matching system"""
@@ -413,15 +421,23 @@ class EnhancedMatcher:
             parts.append(f"Industries: {', '.join(profile.industries_served)}")
 
         if profile.certifications:
-            parts.append(
-                f"Certifications: {', '.join(profile.certifications)}")
+            parts.append(f"Certifications: {', '.join(profile.certifications)}")
 
         if profile.core_competencies:
             parts.append(
                 f"Core Competencies: {', '.join(profile.core_competencies)}")
 
-        if profile.city and profile.state:
-            parts.append(f"Location: {profile.city}, {profile.state}")
+        if profile.NAICS:
+            parts.append(f"NAICS: {profile.NAICS}")
+
+        if profile.other_NAICS:
+            parts.append(f"Other NAICS: {profile.other_NAICS}")
+
+        if profile.state:
+            parts.append(f"Location: {profile.state}")
+
+        if profile.states_perform_work:
+            parts.append(f"Work Locations: {profile.states_perform_work}")
 
         return " | ".join(parts)
 

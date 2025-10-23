@@ -768,22 +768,33 @@ REQUIRED_COLS = {
     "pop_zip": "TEXT", "pop_raw": "TEXT",
 }
 
+# Migrate company_list table
 try:
     insp = inspect(engine)
-    existing_cols = {c["name"] for c in insp.get_columns("solicitationraw")}
-    missing_cols = [c for c in REQUIRED_COLS if c not in existing_cols]
-
-    if missing_cols:
-        with engine.begin() as conn:
-            for col in missing_cols:
-                conn.execute(
-                    sa.text(f'ALTER TABLE solicitationraw ADD COLUMN "{col}" {REQUIRED_COLS[col]}'))
-
-    with engine.begin() as conn:
-        conn.execute(sa.text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_solicitationraw_notice_id ON solicitationraw (notice_id)"))
+    if "company_list" in [t.lower() for t in insp.get_table_names()]:
+        existing_cols = {c["name"] for c in insp.get_columns("company_list")}
+        REQUIRED_COMPANY_COLS = {
+            "name": "TEXT",
+            "description": "TEXT",
+            "state": "TEXT",
+            "states_perform_work": "TEXT",
+            "NAICS": "TEXT",
+            "other_NAICS": "TEXT",
+            "email": "TEXT",
+            "phone": "TEXT",
+            "contact": "TEXT",
+        }
+        missing_cols = [
+            c for c in REQUIRED_COMPANY_COLS if c not in existing_cols]
+        if missing_cols:
+            with engine.begin() as conn:
+                for col in missing_cols:
+                    conn.execute(
+                        sa.text(f'ALTER TABLE company_list ADD COLUMN "{col}" {REQUIRED_COMPANY_COLS[col]}'))
+                st.info(
+                    f"Added {len(missing_cols)} columns to company_list table")
 except Exception as e:
-    st.warning(f"Migration note: {e}")
+    st.warning(f"Company_list table migration note: {e}")
 
 # Company table migration (add after your existing migrations)
 try:
@@ -1040,16 +1051,16 @@ def companies_df() -> pd.DataFrame:
     with engine.connect() as conn:
         try:
             return pd.read_sql_query(
-                "SELECT id, name, description, city, state FROM company ORDER BY name",
+                "SELECT name, description, state, states_perform_work, NAICS, other_NAICS, email, phone, contact FROM company_list ORDER BY name",
                 conn
             )
         except Exception:
-            return pd.DataFrame(columns=["id", "name", "description", "city", "state"])
+            return pd.DataFrame(columns=["name", "description", "state", "states_perform_work", "NAICS", "other_NAICS", "email", "phone", "contact"])
 
 
 def bulk_insert_companies(df: pd.DataFrame) -> int:
     """Insert multiple companies into the database"""
-    needed = ["name", "description", "city", "state"]
+    needed = ["name", "description", "state", "states_perform_work", "NAICS", "other_NAICS", "email", "phone", "contact"]
     for c in needed:
         if c not in df.columns:
             df[c] = ""
@@ -1058,11 +1069,10 @@ def bulk_insert_companies(df: pd.DataFrame) -> int:
         rows = df[needed].fillna("").to_dict(orient="records")
         for row in rows:
             conn.execute(sa.text("""
-                INSERT INTO company (name, description, city, state)
-                VALUES (:name, :description, :city, :state)
+                INSERT INTO company_list (name, description, state, states_perform_work, NAICS, other_NAICS, email, phone, contact)
+                VALUES (:name, :description, :state, :states_perform_work, :NAICS, :other_NAICS, :email, :phone, :contact)
             """), {k: (row.get(k) or "") for k in needed})
     return len(df)
-
 
 # =========================
 # AI & Embedding Functions
@@ -1496,7 +1506,7 @@ def search_company_database(solicitation_desc: str, pop_state: str, api_key: str
         with engine.connect() as conn:
             # Get all companies
             df = pd.read_sql_query(
-                "SELECT name, description, city, state FROM company_list",
+                "SELECT name, description, state, states_perform_work, NAICS, other_NAICS, email, phone, contact FROM company_list",
                 conn
             )
 
@@ -1508,7 +1518,11 @@ def search_company_database(solicitation_desc: str, pop_state: str, api_key: str
 
         # Filter by state if not national
         if not is_national:
-            df = df[df["state"].str.upper() == pop_state.upper()]
+            # Check both primary state and states_perform_work
+            df = df[
+                (df["state"].str.upper() == pop_state.upper()) |
+                (df["states_perform_work"].fillna("").str.upper().str.contains(pop_state.upper()))
+            ]
 
         if df.empty:
             return pd.DataFrame(columns=["name", "website", "location", "reason"])
@@ -1546,10 +1560,20 @@ def search_company_database(solicitation_desc: str, pop_state: str, api_key: str
         # Format results
         results = []
         for _, row in df.iterrows():
+            location_parts = []
+            if row.get('state'):
+                location_parts.append(row['state'])
+            if row.get('states_perform_work'):
+                states_work = row['states_perform_work']
+                if states_work and states_work != row.get('state'):
+                    location_parts.append(f"Also serves: {states_work}")
+            
+            location = " | ".join(location_parts) if location_parts else "Location not specified"
+            
             results.append({
                 "name": row["name"],
-                "website": "",  # No website in database
-                "location": f"{row['city']}, {row['state']}" if row['city'] else row['state'],
+                "website": row.get("email", ""),  # Using email as contact info
+                "location": location,
                 "reason": "Internal database match - relevant capabilities for this work"
             })
 
