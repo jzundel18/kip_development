@@ -1883,29 +1883,6 @@ Provide 2-3 sentences describing a promising research approach or technology sol
 # UI Components
 # =========================
 
-
-if st.session_state.view == "account":
-    st.title("Company Settings")
-    
-    if st.button("← Back to App", key="btn_back_to_app"):
-        st.session_state.view = "main"
-        st.rerun()
-    
-    prof = st.session_state.profile or {}
-    company_name = st.text_input("Company name", value=prof.get("company_name", ""))
-    description = st.text_area("Company description", value=prof.get("description", ""), height=140)
-    state = st.text_input("State (2-letter code)", value=prof.get("state", "") or "")
-    
-    if st.button("💾 Save Profile", key="btn_save_profile_settings", type="primary"):
-        if not company_name.strip() or not description.strip():
-            st.error("Company name and description are required.")
-        else:
-            upsert_profile(st.session_state.user["id"], company_name.strip(), description.strip(), state.strip())
-            st.session_state.profile = get_profile(st.session_state.user["id"])
-            st.success("Profile saved!")
-            st.rerun()
-    st.stop()
-
 # Minimal session state for app functionality only
 if "sol_df" not in st.session_state:
     st.session_state.sol_df = None
@@ -2527,7 +2504,7 @@ with tab4:
 def compute_internal_results(preset_desc: str, negative_hint: str = "", research_only: bool = False) -> dict | None:
     """Returns {"top_df": DataFrame, "reason_by_id": dict} or None on failure."""
     # Get all solicitations
-    df_all = query_filtered_df_optimized({"keywords_or": [], "naics": [], "set_asides": [
+    df_all = query_filtered_df_optimized({"keywords_or": [], "NAICS": [], "set_asides": [
     ], "due_before": None, "notice_types": []})
     if df_all.empty:
         st.warning("No solicitations in the database to evaluate.")
