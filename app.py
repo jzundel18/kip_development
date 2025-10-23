@@ -1032,8 +1032,7 @@ def ai_partner_justification(company_row: dict, solicitation_text: str, gap_text
         "partner_company": {
             "name": company_row.get("name", ""),
             "capabilities": company_row.get("description", ""),
-            "location": f'{company_row.get("state","")},
-        },
+            "location": f'{company_row.get("state", "")}',        },
         "our_capability_gaps": gap_text,
         "solicitation": solicitation_text[:6000],
         "instructions": instructions,
