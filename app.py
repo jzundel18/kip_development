@@ -449,14 +449,14 @@ def load_secrets():
     google_key = get_secret("GOOGLE_API_KEY")
     google_cx = get_secret("GOOGLE_CX")
     sam_keys_raw = get_secret("SAM_KEYS", "")
-    
+
     # Parse SAM_KEYS
     sam_keys = []
     if isinstance(sam_keys_raw, str):
         sam_keys = [k.strip() for k in sam_keys_raw.split(",") if k.strip()]
     elif isinstance(sam_keys_raw, (list, tuple)):
         sam_keys = sam_keys_raw
-    
+
     # Check if we're in production (has secrets) or local dev (no secrets)
     missing = []
     if not openai_key:
@@ -467,18 +467,19 @@ def load_secrets():
         missing.append("GOOGLE_CX")
     if not sam_keys:
         missing.append("SAM_KEYS")
-    
+
     # Only error if we're clearly trying to run in production
     # (Check if we're on Streamlit Cloud by looking for any configured secrets)
     try:
         has_any_secrets = len(st.secrets) > 0
     except:
         has_any_secrets = False
-    
+
     if missing and has_any_secrets:
         # We're on Streamlit Cloud but missing some secrets
         st.error(f"❌ Missing required secrets: {', '.join(missing)}")
-        st.info("📝 Add these in: **⚙️ Settings → Secrets** in your Streamlit Cloud dashboard")
+        st.info(
+            "📝 Add these in: **⚙️ Settings → Secrets** in your Streamlit Cloud dashboard")
         st.code("""
 # Example secrets format:
 OPENAI_API_KEY = "sk-proj-..."
@@ -490,9 +491,10 @@ SAM_KEYS = "key1,key2"
     elif missing and not has_any_secrets:
         # Running locally with no secrets - show helpful message
         st.warning("⚠️ Running in local mode without secrets")
-        st.info("This app requires secrets to function. Deploy to Streamlit Cloud and add secrets there.")
+        st.info(
+            "This app requires secrets to function. Deploy to Streamlit Cloud and add secrets there.")
         st.stop()
-    
+
     return openai_key, google_key, google_cx, sam_keys
 
 # =========================
@@ -546,12 +548,26 @@ engine = get_optimized_engine(DB_URL)
 # Test connection
 try:
     with engine.connect() as conn:
-        ver = conn.execute(sa.text("select version()")).first()
-    st.sidebar.success("✅ Connected to database")
-    if ver and isinstance(ver, tuple):
-        st.sidebar.caption(ver[0])
+        # Simple connection test that works for both SQLite and PostgreSQL
+        conn.execute(sa.text("SELECT 1")).first()
+
+        # Try to get version info (works for PostgreSQL, harmless if it fails)
+        try:
+            if DB_URL.startswith("postgresql"):
+                ver = conn.execute(sa.text("SELECT version()")).first()
+                st.sidebar.success("✅ Connected to PostgreSQL")
+                if ver and isinstance(ver, tuple):
+                    # Truncate long version strings
+                    st.sidebar.caption(ver[0][:100])
+            else:
+                st.sidebar.success("✅ Connected to SQLite (local mode)")
+        except:
+            st.sidebar.success("✅ Connected to database")
+
 except Exception as e:
     st.sidebar.error("❌ Database connection failed")
+    st.sidebar.caption(
+        f"Using: {DB_URL.split('@')[-1] if '@' in DB_URL else DB_URL}")
     st.sidebar.exception(e)
     st.stop()
 
