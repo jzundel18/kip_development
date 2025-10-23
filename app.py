@@ -665,6 +665,16 @@ if "db_optimized" not in st.session_state:
 # Database Schema & Migration
 # =========================
 
+# Add NAICS indexes for company_list
+try:
+    with engine.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE INDEX IF NOT EXISTS idx_company_naics 
+            ON company_list (NAICS)
+        """))
+except Exception as e:
+    st.warning(f"NAICS index creation note: {e}")
+
 # Create solicitation_embeddings table
 try:
     with engine.begin() as conn:
@@ -1289,12 +1299,16 @@ def render_internal_results():
                     sol_text = f"{sol_dict['title']}\n{sol_dict['description']}"
                     
                     # STEP 1: Check internal database first
-                    internal_vendors = search_company_database(sol_text, pop_state, OPENAI_API_KEY)
-                    
+                    sol_naics = sol_dict.get('naics_code', '')
+                    internal_vendors = search_company_database(
+                        sol_text, 
+                        pop_state, 
+                        OPENAI_API_KEY,
+                        solicitation_naics=sol_naics
+                        )
+
                     if not internal_vendors.empty:
-                        st.session_state.vendor_notes[nid] = "Found matches in internal company database"
-                        st.session_state.vendor_suggestions[nid] = internal_vendors
-                        st.session_state.vendor_errors.pop(nid, None)
+                        st.session_state.vendor_notes[nid] = f"Found {len(internal_vendors)} matches (NAICS-filtered)"
                     else:
                         # STEP 2: Fall back to Google search
                         st.session_state.vendor_notes[nid] = "No internal matches found - searching external vendors"
@@ -1336,16 +1350,34 @@ def render_internal_results():
                         website = (v.get("website") or "").strip()
                         location = (v.get("location") or "").strip()
                         reason_txt = (v.get("reason") or "").strip()
+                        
+                        # Get contact info
+                        email = (v.get("email") or "").strip()
+                        phone = (v.get("phone") or "").strip()
+                        contact = (v.get("contact") or "").strip()
 
-                        display_name = raw_name or _company_name_from_url(
-                            website) or "Unnamed Vendor"
+                        display_name = raw_name or _company_name_from_url(website) or "Unnamed Vendor"
+                        
                         if website:
-                            st.markdown(
-                                f"- **[{display_name}]({website})**")
+                            st.markdown(f"- **[{display_name}]({website})**")
                         else:
                             st.markdown(f"- **{display_name}**")
+                        
                         if location:
-                            st.caption(location)
+                            st.caption(f"📍 {location}")
+                        
+                        # Display contact information
+                        contact_info = []
+                        if contact:
+                            contact_info.append(f"Contact: {contact}")
+                        if phone:
+                            contact_info.append(f"📞 {phone}")
+                        if email:
+                            contact_info.append(f"✉️ {email}")
+                        
+                        if contact_info:
+                            st.caption(" | ".join(contact_info))
+                        
                         if reason_txt:
                             st.write(reason_txt)
                 else:
@@ -1504,37 +1536,86 @@ def _hide_notice_and_description(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 
 
-def search_company_database(solicitation_desc: str, pop_state: str, api_key: str) -> pd.DataFrame:
-    """Search internal company database for matches"""
+def naics_prefilter_companies(df_companies: pd.DataFrame, solicitation_naics: str) -> pd.DataFrame:
+    """
+    Pre-filter companies by NAICS code match before doing expensive semantic search.
+    Matches on both primary NAICS and other_NAICS fields.
+    """
+    if not solicitation_naics or not solicitation_naics.strip():
+        return df_companies
+
+    # Clean NAICS code (remove non-digits)
+    sol_naics = re.sub(r'[^\d]', '', str(solicitation_naics)).strip()
+    if not sol_naics:
+        return df_companies
+
+    # Get first 2 digits for flexible matching
+    sol_naics_2 = sol_naics[:2] if len(sol_naics) >= 2 else sol_naics
+
+    def matches_naics(row):
+        """Check if company NAICS matches solicitation NAICS"""
+        # Check primary NAICS
+        primary = re.sub(r'[^\d]', '', str(row.get('NAICS', ''))).strip()
+        if primary:
+            if primary == sol_naics or primary.startswith(sol_naics_2):
+                return True
+
+        # Check other_NAICS (comma-separated list)
+        other = str(row.get('other_NAICS', ''))
+        if other and other != 'nan':
+            for naics_code in other.split(','):
+                naics_clean = re.sub(r'[^\d]', '', naics_code.strip())
+                if naics_clean:
+                    if naics_clean == sol_naics or naics_clean.startswith(sol_naics_2):
+                        return True
+
+        return False
+
+    # Apply filter
+    filtered = df_companies[df_companies.apply(matches_naics, axis=1)]
+
+    return filtered if not filtered.empty else df_companies
+
+
+def search_company_database(solicitation_desc: str, pop_state: str, api_key: str, solicitation_naics: str = "") -> pd.DataFrame:
+    """
+    ENHANCED: Search internal company database with NAICS pre-filtering and full contact info
+    """
     try:
         with engine.connect() as conn:
-            # Get all companies
+            # Get all companies with ALL fields including contact info
             df = pd.read_sql_query(
                 "SELECT name, description, state, states_perform_work, NAICS, other_NAICS, email, phone, contact FROM company_list",
                 conn
             )
 
         if df.empty:
-            return pd.DataFrame(columns=["name", "website", "location", "reason"])
+            return pd.DataFrame(columns=["name", "website", "location", "reason", "email", "phone", "contact"])
 
-        # Check for national scope
+        # STEP 1: NAICS PRE-FILTER (if NAICS provided)
+        if solicitation_naics:
+            df_naics_filtered = naics_prefilter_companies(
+                df, solicitation_naics)
+            if not df_naics_filtered.empty:
+                df = df_naics_filtered
+
+        # STEP 2: Check for national scope
         is_national = not pop_state or pop_state.strip() == ""
 
-        # Filter by state if not national
+        # STEP 3: Filter by state if not national
         if not is_national:
-            # Check both primary state and states_perform_work
             df = df[
                 (df["state"].str.upper() == pop_state.upper()) |
-                (df["states_perform_work"].fillna("").str.upper().str.contains(pop_state.upper()))
+                (df["states_perform_work"].fillna(
+                    "").str.upper().str.contains(pop_state.upper()))
             ]
 
         if df.empty:
-            return pd.DataFrame(columns=["name", "website", "location", "reason"])
+            return pd.DataFrame(columns=["name", "website", "location", "reason", "email", "phone", "contact"])
 
-        # Score companies by description match using embeddings
+        # STEP 4: Score companies by description match using embeddings
         client = OpenAI(api_key=api_key)
 
-        # Get solicitation embedding
         sol_resp = client.embeddings.create(
             model="text-embedding-3-small",
             input=[solicitation_desc[:500]]
@@ -1542,7 +1623,6 @@ def search_company_database(solicitation_desc: str, pop_state: str, api_key: str
         sol_vector = np.array(sol_resp.data[0].embedding, dtype=np.float32)
         sol_vector = sol_vector / (np.linalg.norm(sol_vector) + 1e-9)
 
-        # Get company embeddings
         company_descs = df["description"].fillna("").tolist()
         comp_resp = client.embeddings.create(
             model="text-embedding-3-small",
@@ -1553,15 +1633,12 @@ def search_company_database(solicitation_desc: str, pop_state: str, api_key: str
         comp_vectors = comp_vectors / \
             (np.linalg.norm(comp_vectors, axis=1, keepdims=True) + 1e-9)
 
-        # Calculate similarities
         similarities = comp_vectors @ sol_vector
-
-        # Add scores and filter
         df["score"] = similarities
         df = df[df["score"] > 0.3].sort_values(
             "score", ascending=False).head(3)
 
-        # Format results
+        # STEP 5: Format results WITH CONTACT INFO
         results = []
         for _, row in df.iterrows():
             location_parts = []
@@ -1571,21 +1648,31 @@ def search_company_database(solicitation_desc: str, pop_state: str, api_key: str
                 states_work = row['states_perform_work']
                 if states_work and states_work != row.get('state'):
                     location_parts.append(f"Also serves: {states_work}")
-            
-            location = " | ".join(location_parts) if location_parts else "Location not specified"
-            
+
+            location = " | ".join(
+                location_parts) if location_parts else "Location not specified"
+
+            # Build NAICS display
+            naics_display = ""
+            if row.get('NAICS'):
+                naics_display = f"NAICS: {row['NAICS']}"
+                if row.get('other_NAICS') and str(row['other_NAICS']) != 'nan':
+                    naics_display += f" (Also: {row['other_NAICS']})"
+
             results.append({
                 "name": row["name"],
-                "website": row.get("email", ""),  # Using email as contact info
+                "website": row.get("email", ""),
                 "location": location,
-                "reason": "Internal database match - relevant capabilities for this work"
+                "reason": f"Internal database match. {naics_display}",
+                "email": row.get("email", ""),
+                "phone": row.get("phone", ""),
+                "contact": row.get("contact", "")
             })
 
         return pd.DataFrame(results)
 
     except Exception as e:
-        return pd.DataFrame(columns=["name", "website", "location", "reason"])
-
+        return pd.DataFrame(columns=["name", "website", "location", "reason", "email", "phone", "contact"])
 
 def find_service_vendors_for_opportunity(
     solicitation: dict,
@@ -1973,10 +2060,10 @@ def render_auth_screen():
                 st.error("An account with that email already exists.")
             else:
                 uid = create_user(se, sp)
-                if uid:
-                    upsert_profile(uid, company_name="",
-                                   description="", state="")
-                    st.success("Account created. Please log in on the left.")
+                uid = create_user(se, sp)
+            if uid:
+                upsert_profile(uid, company_name="", description="", state="")
+                st.success("Account created. Please log in on the left.")
                 else:
                     st.error("Could not create account. Check server logs.")
 
@@ -2014,7 +2101,8 @@ def render_account_settings():
         "Company name", value=prof.get("company_name", ""))
     description = st.text_area(
         "Company description", value=prof.get("description", ""), height=140)
-    state = st.text_input("State", value=prof.get("state", "") or "")
+    state = st.text_input("State (2-letter code)",
+                          value=prof.get("state", "") or "")
 
     cols = st.columns([1, 1, 3])
     with cols[0]:
@@ -2022,8 +2110,8 @@ def render_account_settings():
             if not company_name.strip() or not description.strip():
                 st.error("Company name and description are required.")
             else:
-                upsert_profile(st.session_state.user["id"], company_name.strip(
-                ), description.strip(), state.strip())
+                upsert_profile(st.session_state.user["id"], company_name.strip(),
+                               description.strip(), state.strip())
                 st.session_state.profile = get_profile(
                     st.session_state.user["id"])
                 st.success("Profile saved.")
@@ -2031,7 +2119,6 @@ def render_account_settings():
         if st.button("Back to app", key="btn_back_to_app"):
             st.session_state.view = "main"
             st.rerun()
-
 
 # =========================
 # View Router
@@ -2326,19 +2413,19 @@ with tab3:
     use_profile = st.checkbox("Use saved company profile", value=True, key="proposal_use_profile")
     
     if use_profile and st.session_state.profile:
-        prof = st.session_state.profile
-        company_name = prof.get("company_name", "")
-        company_desc = prof.get("description", "")
-        company_state = prof.get("state", "")
-        
-        st.info(f"Using profile: **{company_name}**")
-    else:
-        st.warning("⚠️ No company profile found. Go to Account Settings to create one.")
-        company_name = st.text_input("Company Name", key="proposal_company_name")
-        company_desc = st.text_area("Company Description", height=100, key="proposal_company_desc")
-        col1 = st.columns(1)
-        with col1:
-            company_state = st.text_input("State", key="proposal_company_state")
+    prof = st.session_state.profile
+    company_name = prof.get("company_name", "")
+    company_desc = prof.get("description", "")
+    company_state = prof.get("state", "")
+
+    st.info(f"Using profile: **{company_name}**")
+else:
+    st.warning(
+        "⚠️ No company profile found. Go to Account Settings to create one.")
+    company_name = st.text_input("Company Name", key="proposal_company_name")
+    company_desc = st.text_area(
+        "Company Description", height=100, key="proposal_company_desc")
+    company_state = st.text_input("State", key="proposal_company_state")
     
     # Additional inputs
     with st.expander("⚙️ Additional Details (Optional)"):
@@ -2384,10 +2471,11 @@ with tab3:
                 }
                 
                 # Prepare company context
+                # Prepare company context
                 company_context = {
                     "name": company_name,
                     "description": company_desc[:800],
-                    "location": f"{company_state}",
+                    "location": company_state,
                     "key_personnel": [p.strip() for p in key_personnel.split("\n") if p.strip()],
                     "past_performance": past_performance.strip(),
                     "facilities": facilities.strip()
