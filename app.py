@@ -555,37 +555,6 @@ except Exception as e:
     st.sidebar.exception(e)
     st.stop()
 
-
-# Initialize session state
-if "view" not in st.session_state:
-    st.session_state.view = "main"
-if "vendor_notes" not in st.session_state:
-    st.session_state.vendor_notes = {}
-if "sol_df" not in st.session_state:
-    st.session_state.sol_df = None
-if "sup_df" not in st.session_state:
-    st.session_state.sup_df = None
-if "topn_df" not in st.session_state:
-    st.session_state.topn_df = None
-if "partner_matches" not in st.session_state:
-    st.session_state.partner_matches = None
-if "partner_matches_stamp" not in st.session_state:
-    st.session_state.partner_matches_stamp = None
-if "topn_stamp" not in st.session_state:
-    st.session_state.topn_stamp = None
-if "iu_open_nid" not in st.session_state:
-    st.session_state.iu_open_nid = None
-if "iu_key_salt" not in st.session_state:
-    st.session_state.iu_key_salt = ""
-if "iu_mode" not in st.session_state:
-    st.session_state.iu_mode = ""
-if "iu_results" not in st.session_state:
-    st.session_state.iu_results = None
-if "vendor_suggestions" not in st.session_state:
-    st.session_state.vendor_suggestions = {}
-if "vendor_errors" not in st.session_state:
-    st.session_state.vendor_errors = {}
-
 # =========================
 # Utility Functions
 # =========================
@@ -885,21 +854,6 @@ def upsert_profile(user_id: int, company_name: str, description: str, state: str
                 INSERT INTO company_profile (user_id, company_name, description, state, created_at, updated_at)
                 VALUES (:uid, :cn, :d, :s, :ts, :ts)
             """), {"uid": user_id, "cn": company_name, "d": description, "s": state, "ts": now})
-
-
-# Auto-login from remember-me cookie
-if st.session_state.user is None:
-    raw_cookie = cookies.get(get_secret("COOKIE_NAME", "kip_auth"))
-    uid = _validate_remember_me_token(raw_cookie) if raw_cookie else None
-    if uid:
-        with engine.connect() as conn:
-            row = conn.execute(sa.text("SELECT id, email FROM users WHERE id = :uid"), {
-                               "uid": uid}).mappings().first()
-        if row:
-            st.session_state.user = {"id": row["id"], "email": row["email"]}
-            st.session_state.profile = get_profile(row["id"])
-            st.session_state.view = "main"
-
 
 # =========================
 # Partner Matching Functions
@@ -1930,19 +1884,6 @@ Provide 2-3 sentences describing a promising research approach or technology sol
 # =========================
 
 
-def render_sidebar_header():
-    with st.sidebar:
-        st.markdown("---")
-        prof = st.session_state.profile or {}
-        company_name = (prof.get("company_name") or "").strip() or "Your Company"
-        st.markdown(f"### {company_name}")
-        
-        if st.button("⚙️ Company Settings", key="sb_go_settings", use_container_width=True):
-            st.session_state.view = "account"
-            st.rerun()
-        st.markdown("---")
-
-
 if st.session_state.view == "account":
     st.title("Company Settings")
     
@@ -1964,6 +1905,26 @@ if st.session_state.view == "account":
             st.success("Profile saved!")
             st.rerun()
     st.stop()
+
+# Minimal session state for app functionality only
+if "sol_df" not in st.session_state:
+    st.session_state.sol_df = None
+if "topn_df" not in st.session_state:
+    st.session_state.topn_df = None
+if "vendor_suggestions" not in st.session_state:
+    st.session_state.vendor_suggestions = {}
+if "vendor_errors" not in st.session_state:
+    st.session_state.vendor_errors = {}
+if "vendor_notes" not in st.session_state:
+    st.session_state.vendor_notes = {}
+if "iu_results" not in st.session_state:
+    st.session_state.iu_results = None
+if "iu_key_salt" not in st.session_state:
+    st.session_state.iu_key_salt = ""
+if "iu_mode" not in st.session_state:
+    st.session_state.iu_mode = ""
+if "db_optimized" not in st.session_state:
+    st.session_state.db_optimized = False
 # =========================
 # Main App
 # =========================
@@ -1975,8 +1936,6 @@ with st.sidebar:
     st.caption("Google Custom Search configured for vendor discovery")
     st.caption("Feed refresh runs automatically (no manual refresh needed).")
     st.markdown("---")
-
-render_sidebar_header()
 
 colR1, colR2 = st.columns([2, 1])
 with colR1:
@@ -1993,13 +1952,12 @@ with colR2:
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1) Solicitation Match",
     "2) Supplier Suggestions",
     "3) Proposal Draft",
     "4) Partner Matches",
-    "5) Internal Use",
-    "6) Documents"
+    "5) Internal Use"
 ])
 
 with tab1:
@@ -2037,7 +1995,7 @@ with tab1:
     }
 
     st.subheader("Company profile for matching")
-    saved_desc = (st.session_state.get("profile") or {}).get("description", "")
+    saved_desc = ""
     use_saved = st.checkbox("Use saved company profile",
                             value=bool(saved_desc))
 
@@ -2769,167 +2727,7 @@ with tab5:
     st.markdown("---")
     st.caption(
         "DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
-
-
-with tab6:
-    st.header("📁 Document Management")
     
-    if st.session_state.user is None:
-        st.info("Please log in to manage documents.")
-        st.stop()
-    
-    user_id = st.session_state.user["id"]
-    
-    # Upload section
-    st.subheader("Upload Document")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        uploaded_file = st.file_uploader(
-            "Choose a file",
-            type=["pdf", "docx", "doc", "txt", "csv", "xlsx", "xls", "png", "jpg", "jpeg"],
-            key="doc_uploader"
-        )
-    
-    with col2:
-        link_to_solicitation = st.checkbox("Link to solicitation", key="link_sol")
-    
-    description = st.text_input("Description (optional)", key="doc_desc")
-    tags = st.text_input("Tags (comma-separated, optional)", key="doc_tags", 
-                         placeholder="e.g., proposal, template, reference")
-    
-    notice_id_link = None
-    if link_to_solicitation:
-        notice_id_link = st.text_input("Notice ID", key="doc_notice_id")
-    
-    if uploaded_file is not None:
-        file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
-        st.caption(f"File size: {file_size_mb:.2f} MB")
-        
-        if file_size_mb > 10:
-            st.warning("⚠️ File is larger than 10 MB. Consider compressing it.")
-        
-        if st.button("💾 Save Document", type="primary"):
-            file_content = uploaded_file.getvalue()
-            file_type = uploaded_file.name.split(".")[-1].lower()
-            
-            doc_id = save_document(
-                user_id=user_id,
-                filename=uploaded_file.name,
-                file_content=file_content,
-                file_type=file_type,
-                description=description,
-                tags=tags,
-                notice_id=notice_id_link
-            )
-            
-            if doc_id:
-                st.success(f"✅ Document '{uploaded_file.name}' saved successfully!")
-                st.rerun()
-            else:
-                st.error("Failed to save document. Please try again.")
-    
-    st.markdown("---")
-    
-    # Document list section
-    st.subheader("My Documents")
-    
-    docs_df = get_user_documents(user_id)
-    
-    if docs_df.empty:
-        st.info("No documents uploaded yet. Upload your first document above!")
-    else:
-        # Add search/filter
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            search_term = st.text_input("🔍 Search documents", key="doc_search")
-        with col2:
-            file_type_filter = st.multiselect(
-                "Filter by type",
-                options=docs_df["file_type"].unique().tolist(),
-                key="doc_type_filter"
-            )
-        with col3:
-            sort_by = st.selectbox("Sort by", ["Newest", "Oldest", "Name"], key="doc_sort")
-        
-        # Apply filters
-        filtered_df = docs_df.copy()
-        
-        if search_term:
-            search_mask = (
-                filtered_df["filename"].str.contains(search_term, case=False, na=False) |
-                filtered_df["description"].fillna("").str.contains(search_term, case=False, na=False) |
-                filtered_df["tags"].fillna("").str.contains(search_term, case=False, na=False)
-            )
-            filtered_df = filtered_df[search_mask]
-        
-        if file_type_filter:
-            filtered_df = filtered_df[filtered_df["file_type"].isin(file_type_filter)]
-        
-        # Apply sorting
-        if sort_by == "Newest":
-            filtered_df = filtered_df.sort_values("uploaded_at", ascending=False)
-        elif sort_by == "Oldest":
-            filtered_df = filtered_df.sort_values("uploaded_at", ascending=True)
-        else:  # Name
-            filtered_df = filtered_df.sort_values("filename")
-        
-        st.caption(f"Showing {len(filtered_df)} of {len(docs_df)} documents")
-        
-        # Display documents
-        for idx, row in filtered_df.iterrows():
-            with st.expander(f"📄 {row['filename']}", expanded=False):
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.write(f"**Type:** {row['file_type'].upper()}")
-                    st.write(f"**Size:** {row['file_size'] / 1024:.1f} KB")
-                    st.write(f"**Uploaded:** {row['uploaded_at'][:10]}")
-                    
-                    if row['description']:
-                        st.write(f"**Description:** {row['description']}")
-                    
-                    if row['tags']:
-                        tags_list = [t.strip() for t in row['tags'].split(",")]
-                        st.write("**Tags:** " + ", ".join([f"`{t}`" for t in tags_list]))
-                    
-                    if row['notice_id']:
-                        notice_url = make_sam_public_url(row['notice_id'])
-                        st.write(f"**Linked to:** [{row['notice_id']}]({notice_url})")
-                
-                with col2:
-                    # Download button
-                    doc_content = get_document_content(row['id'], user_id)
-                    if doc_content:
-                        filename, file_type, content = doc_content
-                        st.download_button(
-                            label="📥 Download",
-                            data=content,
-                            file_name=filename,
-                            mime=f"application/{file_type}",
-                            key=f"download_{row['id']}"
-                        )
-                    
-                    # Delete button
-                    if st.button("🗑️ Delete", key=f"delete_{row['id']}", type="secondary"):
-                        if delete_document(row['id'], user_id):
-                            st.success("Document deleted!")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete document.")
-                
-                # Edit metadata
-                with st.form(key=f"edit_form_{row['id']}"):
-                    st.write("**Edit Metadata**")
-                    new_desc = st.text_input("Description", value=row['description'] or "", key=f"new_desc_{row['id']}")
-                    new_tags = st.text_input("Tags", value=row['tags'] or "", key=f"new_tags_{row['id']}")
-                    new_notice = st.text_input("Notice ID", value=row['notice_id'] or "", key=f"new_notice_{row['id']}")
-                    
-                    if st.form_submit_button("💾 Update"):
-                        if update_document_metadata(row['id'], user_id, new_desc, new_tags, new_notice or None):
-                            st.success("Metadata updated!")
-                            st.rerun()
 try:
     with engine.begin() as conn:
         conn.execute(sa.text("""
