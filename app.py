@@ -435,8 +435,15 @@ st.set_page_config(page_title="KIP", layout="wide")
 
 
 def get_secret(name, default=None):
-    if name in st.secrets:
-        return st.secrets[name]
+    try:
+        if name in st.secrets:
+            val = st.secrets[name]
+            # Debug: print what we got
+            if name in ["SAM_KEYS", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CX"]:
+                st.sidebar.write(f"DEBUG {name}: {type(val)} = {str(val)[:20]}...")
+            return val
+    except Exception as e:
+        st.sidebar.error(f"Error reading {name}: {e}")
     return os.getenv(name, default)
 
 
@@ -444,22 +451,27 @@ def get_secret(name, default=None):
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
 GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
 GOOGLE_CX = get_secret("GOOGLE_CX")
-SAM_KEYS = get_secret("SAM_KEYS", [])
+SAM_KEYS = get_secret("SAM_KEYS", "")
 
 if isinstance(SAM_KEYS, str):
     SAM_KEYS = [k.strip() for k in SAM_KEYS.split(",") if k.strip()]
 elif not isinstance(SAM_KEYS, (list, tuple)):
     SAM_KEYS = []
 
-missing = [k for k, v in {
-    "OPENAI_API_KEY": OPENAI_API_KEY,
-    "GOOGLE_API_KEY": GOOGLE_API_KEY,  # Updated
-    "GOOGLE_CX": GOOGLE_CX,  # New
-    "SAM_KEYS": SAM_KEYS,
-}.items() if not v]
+# Better validation
+missing = []
+if not OPENAI_API_KEY:
+    missing.append("OPENAI_API_KEY")
+if not GOOGLE_API_KEY:
+    missing.append("GOOGLE_API_KEY")
+if not GOOGLE_CX:
+    missing.append("GOOGLE_CX")
+if not SAM_KEYS:  # This will be False if empty list or None
+    missing.append("SAM_KEYS")
 
 if missing:
     st.error(f"Missing required secrets: {', '.join(missing)}")
+    st.info("Check your Streamlit Cloud secrets configuration")
     st.stop()
 
 # =========================
