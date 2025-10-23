@@ -443,9 +443,8 @@ def get_secret(name, default=None):
     return os.getenv(name, default)
 
 
-# Load secrets - will validate later after Streamlit initializes
 def load_secrets():
-    """Load and validate secrets after Streamlit initialization"""
+    """Load and validate secrets - only required in production"""
     openai_key = get_secret("OPENAI_API_KEY")
     google_key = get_secret("GOOGLE_API_KEY")
     google_cx = get_secret("GOOGLE_CX")
@@ -458,7 +457,7 @@ def load_secrets():
     elif isinstance(sam_keys_raw, (list, tuple)):
         sam_keys = sam_keys_raw
     
-    # Validation
+    # Check if we're in production (has secrets) or local dev (no secrets)
     missing = []
     if not openai_key:
         missing.append("OPENAI_API_KEY")
@@ -469,15 +468,32 @@ def load_secrets():
     if not sam_keys:
         missing.append("SAM_KEYS")
     
-    if missing:
-        st.error(f"Missing required secrets: {', '.join(missing)}")
-        st.info("Add these secrets in: **Settings → Secrets** in your Streamlit deployment")
+    # Only error if we're clearly trying to run in production
+    # (Check if we're on Streamlit Cloud by looking for any configured secrets)
+    try:
+        has_any_secrets = len(st.secrets) > 0
+    except:
+        has_any_secrets = False
+    
+    if missing and has_any_secrets:
+        # We're on Streamlit Cloud but missing some secrets
+        st.error(f"❌ Missing required secrets: {', '.join(missing)}")
+        st.info("📝 Add these in: **⚙️ Settings → Secrets** in your Streamlit Cloud dashboard")
+        st.code("""
+# Example secrets format:
+OPENAI_API_KEY = "sk-proj-..."
+GOOGLE_API_KEY = "AIza..."
+GOOGLE_CX = "your-cx-id"
+SAM_KEYS = "key1,key2"
+        """, language="toml")
+        st.stop()
+    elif missing and not has_any_secrets:
+        # Running locally with no secrets - show helpful message
+        st.warning("⚠️ Running in local mode without secrets")
+        st.info("This app requires secrets to function. Deploy to Streamlit Cloud and add secrets there.")
         st.stop()
     
     return openai_key, google_key, google_cx, sam_keys
-
-# Call after Streamlit page config
-OPENAI_API_KEY, GOOGLE_API_KEY, GOOGLE_CX, SAM_KEYS = load_secrets()
 
 # =========================
 # Database Configuration
