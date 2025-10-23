@@ -175,7 +175,7 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
     limit_safe = min(int(limit), 5000)
     sql = f"""
         SELECT notice_id, solicitation_number, title, notice_type, posted_date, response_date, archive_date,
-               naics_code, set_aside_code, description, link, pop_city, pop_state, pop_zip, pop_country, pop_raw
+               naics_code, set_aside_code, description, link, pop_state, pop_zip, pop_country, pop_raw
         FROM solicitationraw 
         WHERE {where_clause}
         ORDER BY posted_date DESC NULLS LAST
@@ -437,13 +437,9 @@ st.set_page_config(page_title="KIP", layout="wide")
 def get_secret(name, default=None):
     try:
         if name in st.secrets:
-            val = st.secrets[name]
-            # Debug: print what we got
-            if name in ["SAM_KEYS", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CX"]:
-                st.sidebar.write(f"DEBUG {name}: {type(val)} = {str(val)[:20]}...")
-            return val
-    except Exception as e:
-        st.sidebar.error(f"Error reading {name}: {e}")
+            return st.secrets[name]
+    except Exception:
+        pass
     return os.getenv(name, default)
 
 
@@ -458,7 +454,7 @@ if isinstance(SAM_KEYS, str):
 elif not isinstance(SAM_KEYS, (list, tuple)):
     SAM_KEYS = []
 
-# Better validation
+# Validation
 missing = []
 if not OPENAI_API_KEY:
     missing.append("OPENAI_API_KEY")
@@ -466,12 +462,11 @@ if not GOOGLE_API_KEY:
     missing.append("GOOGLE_API_KEY")
 if not GOOGLE_CX:
     missing.append("GOOGLE_CX")
-if not SAM_KEYS:  # This will be False if empty list or None
+if not SAM_KEYS:
     missing.append("SAM_KEYS")
 
 if missing:
     st.error(f"Missing required secrets: {', '.join(missing)}")
-    st.info("Check your Streamlit Cloud secrets configuration")
     st.stop()
 
 # =========================
@@ -776,7 +771,7 @@ REQUIRED_COLS = {
     "title": "TEXT", "notice_type": "TEXT", "posted_date": "TEXT",
     "response_date": "TEXT", "archive_date": "TEXT", "naics_code": "TEXT",
     "set_aside_code": "TEXT", "description": "TEXT", "link": "TEXT",
-    "pop_city": "TEXT", "pop_state": "TEXT", "pop_country": "TEXT",
+    "pop_state": "TEXT", "pop_country": "TEXT",
     "pop_zip": "TEXT", "pop_raw": "TEXT",
 }
 
@@ -816,7 +811,6 @@ try:
         REQUIRED_COMPANY_COLS = {
             "name": "TEXT",
             "description": "TEXT",
-            "city": "TEXT",
             "state": "TEXT",
         }
         missing_cols = [
@@ -922,26 +916,26 @@ def create_user(email: str, password: str) -> Optional[int]:
 def get_profile(user_id: int) -> Optional[dict]:
     with engine.connect() as conn:
         sql = sa.text("""
-            SELECT id, user_id, company_name, description, city, state, created_at, updated_at
+            SELECT id, user_id, company_name, description, state, created_at, updated_at
             FROM company_profile WHERE user_id = :uid
         """)
         row = conn.execute(sql, {"uid": user_id}).mappings().first()
         return dict(row) if row else None
 
 
-def upsert_profile(user_id: int, company_name: str, description: str, city: str, state: str) -> None:
+def upsert_profile(user_id: int, company_name: str, description: str, state: str) -> None:
     with engine.begin() as conn:
         now = datetime.now(timezone.utc).isoformat()
         upd = conn.execute(sa.text("""
             UPDATE company_profile
-            SET company_name = :cn, description = :d, city = :c, state = :s, updated_at = :ts
+            SET company_name = :cn, description = :d, state = :s, updated_at = :ts
             WHERE user_id = :uid
-        """), {"cn": company_name, "d": description, "c": city, "s": state, "uid": user_id, "ts": now})
+        """), {"cn": company_name, "d": description, "s": state, "uid": user_id, "ts": now})
         if upd.rowcount == 0:
             conn.execute(sa.text("""
-                INSERT INTO company_profile (user_id, company_name, description, city, state, created_at, updated_at)
-                VALUES (:uid, :cn, :d, :c, :s, :ts, :ts)
-            """), {"uid": user_id, "cn": company_name, "d": description, "c": city, "s": state, "ts": now})
+                INSERT INTO company_profile (user_id, company_name, description, state, created_at, updated_at)
+                VALUES (:uid, :cn, :d, :s, :ts, :ts)
+            """), {"uid": user_id, "cn": company_name, "d": description, "s": state, "ts": now})
 
 
 # Auto-login from remember-me cookie
@@ -1028,7 +1022,7 @@ def ai_partner_justification(company_row: dict, solicitation_text: str, gap_text
         "partner_company": {
             "name": company_row.get("name", ""),
             "capabilities": company_row.get("description", ""),
-            "location": f'{company_row.get("city","")}, {company_row.get("state","")}'.strip(", "),
+            "location": f'{company_row.get("state","")},
         },
         "our_capability_gaps": gap_text,
         "solicitation": solicitation_text[:6000],
@@ -1283,15 +1277,13 @@ def render_internal_results():
                             "response_date": _s(getattr(row, "response_date", "")),
                             "posted_date": _s(getattr(row, "posted_date", "")),
                             "link": _s(getattr(row, "link", "")),
-                            "pop_city": _s(getattr(row, "pop_city", "")),
                             "pop_state": _s(getattr(row, "pop_state", "")),
                         }
                     except Exception as e:
                         st.error(f"Error creating solicitation data: {e}")
                         continue
 
-                    locality = {"city": _s(getattr(row, "pop_city", "")), 
-                                "state": _s(getattr(row, "pop_state", ""))}
+                    locality = {"state": _s(getattr(row, "pop_state", ""))}
                     
                     pop_state = locality.get("state", "").strip()
                     sol_text = f"{sol_dict['title']}\n{sol_dict['description']}"
@@ -1480,7 +1472,7 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
     limit_safe = min(int(limit), 5000)
     sql = f"""
         SELECT notice_id, solicitation_number, title, notice_type, posted_date, response_date, archive_date,
-               naics_code, set_aside_code, description, link, pop_city, pop_state, pop_zip, pop_country, pop_raw
+               naics_code, set_aside_code, description, link, pop_state, pop_zip, pop_country, pop_raw
         FROM solicitationraw 
         WHERE {where_clause}
         ORDER BY posted_date DESC NULLS LAST
@@ -1620,12 +1612,9 @@ def find_service_vendors_for_opportunity(
         debug_log(f"**Title:** {title[:100]}")
 
         # Extract location
-        pop_city = (solicitation.get("pop_city") or "").strip()
         pop_state = (solicitation.get("pop_state") or "").strip()
 
-        if pop_city and pop_state:
-            debug_log(f"**Location:** {pop_city}, {pop_state}")
-        elif pop_state:
+        if pop_state:
             debug_log(f"**Location:** {pop_state}")
         else:
             debug_log(f"**Location:** National search")
@@ -1663,11 +1652,7 @@ Respond with 2-4 search keywords for the type of service provider needed (e.g., 
         # Try multiple query variations
         search_queries = []
 
-        if pop_city and pop_state:
-            search_queries.append(f"{base_query} {pop_city} {pop_state}")
-            search_queries.append(f"{base_query} {pop_state}")
-            search_note = f"Searching for providers in {pop_city}, {pop_state}"
-        elif pop_state:
+        if pop_state:
             search_queries.append(f"{base_query} {pop_state}")
             search_queries.append(f"{base_query} contractors {pop_state}")
             search_note = f"Searching for providers in {pop_state}"
@@ -1844,18 +1829,17 @@ Give a 1 sentence reason focusing on their relevant capabilities."""
 
 def _has_locality(locality: dict) -> bool:
     """Check if locality has meaningful location data"""
-    city = (locality.get("city") or "").strip()
     state = (locality.get("state") or "").strip()
-    return bool(city or state)
+    return bool(state)
 
 
 def _extract_locality(text: str) -> dict:
-    """Extract city/state from text using simple regex patterns"""
+    """Extract state from text using simple regex patterns"""
 
-    # Common patterns for city, state
+    # Common patterns for state
     patterns = [
-        r'(\w+(?:\s+\w+)*),\s*([A-Z]{2})',  # "City Name, ST"
-        r'(\w+(?:\s+\w+)*)\s+([A-Z]{2})\s',  # "City Name ST "
+        r'(\w+(?:\s+\w+)*),\s*([A-Z]{2})',  # "Name, ST"
+        r'(\w+(?:\s+\w+)*)\s+([A-Z]{2})\s',  # "Name ST "
         # Proper case cities
         r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s*([A-Z]{2})',
     ]
@@ -1864,15 +1848,13 @@ def _extract_locality(text: str) -> dict:
         match = re.search(pattern, text)
         if match:
             return {
-                "city": match.group(1).strip(),
-                "state": match.group(2).strip()
+                "state": match.group(1).strip()
             }
 
     # Just look for state codes
     state_match = re.search(r'\b([A-Z]{2})\b', text)
     if state_match:
         return {
-            "city": "",
             "state": state_match.group(1)
         }
 
@@ -1993,7 +1975,7 @@ def render_auth_screen():
                 uid = create_user(se, sp)
                 if uid:
                     upsert_profile(uid, company_name="",
-                                   description="", city="", state="")
+                                   description="", state="")
                     st.success("Account created. Please log in on the left.")
                 else:
                     st.error("Could not create account. Check server logs.")
@@ -2032,7 +2014,6 @@ def render_account_settings():
         "Company name", value=prof.get("company_name", ""))
     description = st.text_area(
         "Company description", value=prof.get("description", ""), height=140)
-    city = st.text_input("City", value=prof.get("city", "") or "")
     state = st.text_input("State", value=prof.get("state", "") or "")
 
     cols = st.columns([1, 1, 3])
@@ -2042,7 +2023,7 @@ def render_account_settings():
                 st.error("Company name and description are required.")
             else:
                 upsert_profile(st.session_state.user["id"], company_name.strip(
-                ), description.strip(), city.strip(), state.strip())
+                ), description.strip(), state.strip())
                 st.session_state.profile = get_profile(
                     st.session_state.user["id"])
                 st.success("Profile saved.")
@@ -2175,7 +2156,6 @@ with tab1:
                     company_profile_dict = {
                         'company_name': prof.get('company_name', ''),
                         'description': company_desc.strip(),
-                        'city': prof.get('city', ''),
                         'state': prof.get('state', '')
                     }
 
@@ -2349,7 +2329,6 @@ with tab3:
         prof = st.session_state.profile
         company_name = prof.get("company_name", "")
         company_desc = prof.get("description", "")
-        company_city = prof.get("city", "")
         company_state = prof.get("state", "")
         
         st.info(f"Using profile: **{company_name}**")
@@ -2357,10 +2336,8 @@ with tab3:
         st.warning("⚠️ No company profile found. Go to Account Settings to create one.")
         company_name = st.text_input("Company Name", key="proposal_company_name")
         company_desc = st.text_area("Company Description", height=100, key="proposal_company_desc")
-        col1, col2 = st.columns(2)
+        col1 = st.columns(1)
         with col1:
-            company_city = st.text_input("City", key="proposal_company_city")
-        with col2:
             company_state = st.text_input("State", key="proposal_company_state")
     
     # Additional inputs
@@ -2410,7 +2387,7 @@ with tab3:
                 company_context = {
                     "name": company_name,
                     "description": company_desc[:800],
-                    "location": f"{company_city}, {company_state}".strip(", "),
+                    "location": f"{company_state}",
                     "key_personnel": [p.strip() for p in key_personnel.split("\n") if p.strip()],
                     "past_performance": past_performance.strip(),
                     "facilities": facilities.strip()
@@ -2637,7 +2614,7 @@ with tab4:
                         if m.get("partner"):
                             p = m["partner"]
                             loc = ", ".join(
-                                [x for x in [p.get("city", ""), p.get("state", "")] if x])
+                                [x for x in [p.get("state", "")] if x])
                             st.markdown("**Recommended Partner:**")
                             st.write(f"{p.get('name','')}" +
                                      (f" — {loc}" if loc else ""))
