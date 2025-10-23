@@ -2063,8 +2063,8 @@ def render_auth_screen():
             if uid:
                 upsert_profile(uid, company_name="", description="", state="")
                 st.success("Account created. Please log in on the left.")
-                else:
-                    st.error("Could not create account. Check server logs.")
+            else:
+                st.error("Could not create account. Check server logs.")
 
 
 def render_account_settings():
