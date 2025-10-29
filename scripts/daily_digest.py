@@ -5,7 +5,7 @@ Stage 1: Fast embedding-based pre-filter (cheap)
 Stage 2: Detailed matrix scoring on top candidates only (expensive but limited)
 
 Required env vars:
-  SUPABASE_DB_URL, OPENAI_API_KEY, OUTLOOK_EMAIL, OUTLOOK_PASSWORD
+  SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD
 Optional:
   APP_BASE_URL, DIGEST_MAX_RESULTS, DIGEST_MIN_SCORE
   DIGEST_PREFILTER_CANDIDATES (controls stage 1 output)
@@ -30,9 +30,9 @@ from scoring import AIMatrixScorer, ai_matrix_score_solicitations
 # ---------- Config ----------
 DB_URL = os.getenv("SUPABASE_DB_URL", "sqlite:///app.db")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OUTLOOK_EMAIL = os.getenv("OUTLOOK_EMAIL")
-OUTLOOK_PASSWORD = os.getenv("OUTLOOK_PASSWORD")
-FROM_EMAIL = os.getenv("FROM_EMAIL") or OUTLOOK_EMAIL
+GMAIL_EMAIL = os.getenv("GMAIL_EMAIL", "kipmatchemail@gmail.com")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "kenaidefense!")
+FROM_EMAIL = os.getenv("FROM_EMAIL") or GMAIL_EMAIL
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
 
 MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
@@ -41,8 +41,8 @@ MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
 # Controls how many candidates pass stage 1 filtering
 PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "25"))
 
-if not (DB_URL and OPENAI_API_KEY and OUTLOOK_EMAIL and OUTLOOK_PASSWORD):
-    print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, OUTLOOK_EMAIL, OUTLOOK_PASSWORD.", file=sys.stderr)
+if not (DB_URL and OPENAI_API_KEY and GMAIL_EMAIL and GMAIL_PASSWORD):
+    print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD.", file=sys.stderr)
     sys.exit(1)
 
 logging.basicConfig(
@@ -232,7 +232,7 @@ def _sam_public_url(notice_id: str, link: str | None) -> str:
 
 
 def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""):
-    """Send email via Outlook SMTP"""
+    """Send email via Gmail SMTP"""
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
@@ -245,15 +245,15 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
     msg.attach(MIMEText(html_body, 'html'))
 
     try:
-        # Connect to Outlook's SMTP server
-        with smtplib.SMTP('smtp-mail.outlook.com', 587) as server:
+        # Connect to Gmail's SMTP server
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()  # Secure the connection
-            server.login(OUTLOOK_EMAIL, OUTLOOK_PASSWORD)
+            server.login(GMAIL_EMAIL, GMAIL_PASSWORD)
             server.send_message(msg)
 
-        logging.info("Sent to %s via Outlook SMTP", to_email)
+        logging.info("Sent to %s via Gmail SMTP", to_email)
     except Exception as e:
-        logging.error("Outlook SMTP error to %s: %s", to_email, e)
+        logging.error("Gmail SMTP error to %s: %s", to_email, e)
 
 
 def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> dict[str, str]:

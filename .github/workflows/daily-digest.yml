@@ -27,13 +27,14 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
-          pip install "openai>=1.35.7" "pandas>=2.2.2" "SQLAlchemy>=2.0.30" "psycopg2-binary>=2.9.9" "sendgrid>=6.11.0"
+          pip install "openai>=1.35.7" "pandas>=2.2.2" "SQLAlchemy>=2.0.30" "psycopg2-binary>=2.9.9"
 
       - name: Run daily digest
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           # Optional tuning
