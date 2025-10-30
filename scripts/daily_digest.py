@@ -27,23 +27,38 @@ from email.mime.multipart import MIMEMultipart
 
 from scoring import AIMatrixScorer, ai_matrix_score_solicitations
 
-# ---------- Config ----------
-DB_URL = os.getenv("SUPABASE_DB_URL", "sqlite:///app.db")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GMAIL_EMAIL = os.getenv("GMAIL_EMAIL", "kipmatchemail@gmail.com")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "kenaidefense!")
-FROM_EMAIL = os.getenv("FROM_EMAIL") or GMAIL_EMAIL
-APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
+# Module-level config (will be set when module loads)
+DB_URL = None
+OPENAI_API_KEY = None
+GMAIL_EMAIL = None
+GMAIL_PASSWORD = None
+FROM_EMAIL = None
+APP_BASE_URL = None
+MAX_RESULTS = 5
+MIN_SCORE = 60.0
+PREFILTER_CANDIDATES = 25
 
-MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
-MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
 
-# Controls how many candidates pass stage 1 filtering
-PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "25"))
+def _load_config():
+    """Load configuration from environment variables"""
+    global DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD, FROM_EMAIL, APP_BASE_URL
+    global MAX_RESULTS, MIN_SCORE, PREFILTER_CANDIDATES
 
-if not (DB_URL and OPENAI_API_KEY and GMAIL_EMAIL and GMAIL_PASSWORD):
-    print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD.", file=sys.stderr)
-    sys.exit(1)
+    DB_URL = os.getenv("SUPABASE_DB_URL")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    GMAIL_EMAIL = os.getenv("GMAIL_EMAIL", "kipmatchemail@gmail.com")
+    GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "kenaidefense!")
+    FROM_EMAIL = os.getenv("FROM_EMAIL") or GMAIL_EMAIL
+    APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
+
+    MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
+    MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
+    PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "25"))
+
+    if not (DB_URL and OPENAI_API_KEY and GMAIL_EMAIL and GMAIL_PASSWORD):
+        print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD.", file=sys.stderr)
+        sys.exit(1)
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,8 +66,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-engine = sa.create_engine(DB_URL, pool_pre_ping=True)
-oai = OpenAI(api_key=OPENAI_API_KEY)
+# These will be initialized after config is loaded
+engine = None
+oai = None
 
 # ---------- Helper Functions ----------
 
@@ -380,8 +396,18 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
 
 
 def main():
+    global engine, oai
+
+    # Load config first
+    _load_config()
+
+    # Now initialize database and OpenAI clients with loaded config
+    engine = sa.create_engine(DB_URL, pool_pre_ping=True)
+    oai = OpenAI(api_key=OPENAI_API_KEY)
+
     yesterday_date, today_date = _yesterday_utc_window()
     logging.info("Processing notices posted on: %s", yesterday_date)
+
     logging.info(
         "Two-stage filtering: Stage 1 → %d candidates, Stage 2 → detailed scoring", PREFILTER_CANDIDATES)
 
