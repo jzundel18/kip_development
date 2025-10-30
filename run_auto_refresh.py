@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Simple wrapper to run auto_refresh.py with .env file support"""
 
-from scripts.auto_refresh import main
 import sys
 from pathlib import Path
 
-# Load .env file if it exists
+# Load .env file FIRST before any other imports
 try:
     from dotenv import load_dotenv
     env_file = Path(__file__).parent / '.env'
@@ -18,6 +17,9 @@ except ImportError:
 
 # Add scripts to path
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
+
+# Import main AFTER environment is loaded
+from scripts.auto_refresh import main
 
 # Run the script
 main()
