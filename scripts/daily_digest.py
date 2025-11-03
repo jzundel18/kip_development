@@ -456,11 +456,6 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
                   {title}
                 </a>
               </div>
-              <div style="margin-left: 16px;">
-                <span style="display: inline-block; background-color: {score_color}; color: #ffffff; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; white-space: nowrap;">
-                  {score:.0f}%
-                </span>
-              </div>
             </div>
 
             {metadata_html}
