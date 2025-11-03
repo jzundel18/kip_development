@@ -56,7 +56,8 @@ def _load_config():
     PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "25"))
 
     if not (DB_URL and OPENAI_API_KEY and GMAIL_EMAIL and GMAIL_PASSWORD):
-        print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD.", file=sys.stderr)
+        print("Missing required env vars. Need SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD.",
+              file=sys.stderr)
         sys.exit(1)
 
 
@@ -69,6 +70,7 @@ logging.basicConfig(
 # These will be initialized after config is loaded
 engine = None
 oai = None
+
 
 # ---------- Helper Functions ----------
 
@@ -146,14 +148,14 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         company_vector = np.array(
             company_response.data[0].embedding, dtype=np.float32)
         company_vector = company_vector / \
-            (np.linalg.norm(company_vector) + 1e-9)
+                         (np.linalg.norm(company_vector) + 1e-9)
 
         # Get notice embeddings in batches
         notice_vectors = []
         batch_size = 500
 
         for i in range(0, len(notice_texts), batch_size):
-            batch = notice_texts[i:i+batch_size]
+            batch = notice_texts[i:i + batch_size]
             batch_response = oai.embeddings.create(
                 model="text-embedding-3-small",
                 input=batch
@@ -164,7 +166,7 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         # Calculate similarities
         notice_matrix = np.array(notice_vectors, dtype=np.float32)
         notice_matrix = notice_matrix / \
-            (np.linalg.norm(notice_matrix, axis=1, keepdims=True) + 1e-9)
+                        (np.linalg.norm(notice_matrix, axis=1, keepdims=True) + 1e-9)
         similarities = notice_matrix @ company_vector
 
         # Sort by similarity and take top k
@@ -283,7 +285,7 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
         # Process in small batches to avoid token limits
         batch_size = 3
         for i in range(0, len(notices), batch_size):
-            batch = notices.iloc[i:i+batch_size]
+            batch = notices.iloc[i:i + batch_size]
 
             # Prepare batch data
             batch_items = []
@@ -325,7 +327,7 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
                         explanations[notice_id] = reason
             except json.JSONDecodeError:
                 logging.warning(
-                    f"Failed to parse match explanations for batch {i//batch_size + 1}")
+                    f"Failed to parse match explanations for batch {i // batch_size + 1}")
                 continue
 
     except Exception as e:
@@ -336,61 +338,171 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
 
 def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame) -> tuple[str, str]:
     """Render email with matrix scores, reasons, and AI match explanations"""
+
+    # Email base styles
+    email_wrapper = """
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 680px; margin: 0 auto; background-color: #ffffff;">
+    """
+
+    # Header
+    header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
+    header = f"""
+      <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
+          Knowledge Integration Platform
+        </h1>
+        <p style="color: #dbeafe; margin: 8px 0 0 0; font-size: 14px; font-weight: 400;">
+          Your Daily Federal Opportunity Digest
+        </p>
+      </div>
+    """
+
+    # Footer
+    footer = f"""
+      <div style="background-color: #f8fafc; padding: 24px; border-top: 1px solid #e2e8f0; margin-top: 32px; border-radius: 0 0 8px 8px;">
+        <div style="text-align: center; margin-bottom: 16px;">
+          <a href="{header_link}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 500; font-size: 14px;">
+            Open KIP Dashboard
+          </a>
+        </div>
+        <p style="color: #64748b; font-size: 12px; line-height: 1.6; margin: 12px 0 0 0; text-align: center;">
+          Match explanations are AI-generated based on your company profile.<br>
+          Technical assessments use our detailed scoring matrix for accuracy.
+        </p>
+        <p style="color: #94a3b8; font-size: 11px; margin: 16px 0 0 0; text-align: center;">
+          © 2025 Knowledge Integration Platform. All rights reserved.
+        </p>
+      </div>
+    """
+
     if picks.empty:
-        subject = "KIP Daily: no close matches today"
+        subject = "KIP Daily Digest: No Close Matches Today"
         html = f"""
-        <p>Hi,</p>
-        <p>No close matches (score ≥ {MIN_SCORE}) were found for your company description yesterday.</p>
-        <p>You'll receive up to {MAX_RESULTS} new matches when there are good fits.</p>
+        {email_wrapper}
+          {header}
+          <div style="padding: 32px 24px;">
+            <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">
+              Hello,
+            </p>
+            <div style="background-color: #f1f5f9; border-left: 4px solid #64748b; padding: 16px 20px; border-radius: 4px; margin: 24px 0;">
+              <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0;">
+                No close matches (score ≥ {MIN_SCORE}) were found for your company profile yesterday.
+              </p>
+            </div>
+            <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 16px 0 0 0;">
+              You'll receive up to {MAX_RESULTS} new opportunities when there are strong matches for your company.
+            </p>
+          </div>
+          {footer}
+        </div>
         """
         return subject, html
 
     # Generate AI explanations for why each notice matched
-    logging.info(
-        f"Generating match explanations for {len(picks)} final candidates")
+    logging.info(f"Generating match explanations for {len(picks)} final candidates")
     match_explanations = _generate_match_explanations(picks, company_desc)
 
+    # Score badge color based on score value
+    def get_score_color(score):
+        if score >= 85:
+            return "#10b981"  # Green
+        elif score >= 70:
+            return "#3b82f6"  # Blue
+        else:
+            return "#f59e0b"  # Amber
+
     rows_html = []
-    for _, r in picks.iterrows():
+    for idx, r in picks.iterrows():
         nid = str(r.get("notice_id", ""))
         title = (r.get("title", "") or "Untitled").strip()
         score = float(r.get("score", 0.0))
         reason = r.get("overall_reason", "AI assessment of match quality")
         url = _sam_public_url(nid, r.get("link", ""))
 
+        # Get additional details
+        posted_date = r.get("posted_date", "")
+        response_date = r.get("response_date", "")
+        pop_city = r.get("pop_city", "")
+        pop_state = r.get("pop_state", "")
+        naics = r.get("naics_code", "")
+
+        # Format location
+        location = ""
+        if pop_city or pop_state:
+            location = f"{pop_city}, {pop_state}".strip(", ")
+
         # Get AI match explanation
         match_explanation = match_explanations.get(
             nid, "This opportunity aligns with your company's capabilities.")
 
+        score_color = get_score_color(score)
+
+        # Build metadata line
+        metadata_parts = []
+        if location:
+            metadata_parts.append(f'<span style="margin-right: 16px;">📍 {location}</span>')
+        if response_date:
+            metadata_parts.append(f'<span style="margin-right: 16px;">📅 Response: {response_date}</span>')
+        if naics:
+            metadata_parts.append(f'<span>🏢 NAICS: {naics}</span>')
+
+        metadata_html = f'<div style="color: #64748b; font-size: 13px; margin: 8px 0;">{" ".join(metadata_parts)}</div>' if metadata_parts else ""
+
         rows_html.append(f"""
-          <li style="margin-bottom:20px; border-left: 3px solid #333; padding-left: 15px;">
-            <div style="margin-bottom: 8px;">
-              <a href="{url}" style="color: #0066cc; text-decoration: none; font-size: 16px;"><strong>{title}</strong></a>
+          <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px;">
+              <div style="flex: 1;">
+                <a href="{url}" style="color: #1e293b; text-decoration: none; font-size: 17px; font-weight: 600; line-height: 1.4; display: block; margin-bottom: 8px;">
+                  {title}
+                </a>
+              </div>
+              <div style="margin-left: 16px;">
+                <span style="display: inline-block; background-color: {score_color}; color: #ffffff; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; white-space: nowrap;">
+                  {score:.0f}%
+                </span>
+              </div>
             </div>
-            <div style="color: #000; font-weight: bold; margin: 5px 0;">
-                Match Score: {score:.1f}/100
+
+            {metadata_html}
+
+            <div style="background-color: #f0f9ff; border-left: 3px solid #3b82f6; padding: 12px 16px; border-radius: 4px; margin: 12px 0;">
+              <p style="color: #1e40af; font-size: 14px; line-height: 1.6; margin: 0; font-weight: 500;">
+                💡 {match_explanation}
+              </p>
             </div>
-            <div style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; font-style: italic; color: #495057;">
-              • {match_explanation}
+
+            {f'<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f5f9;"><p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0;"><em>Assessment: {reason}</em></p></div>' if reason else ''}
+
+            <div style="margin-top: 16px;">
+              <a href="{url}" style="color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 500;">
+                View Full Details →
+              </a>
             </div>
-            {f'<div style="margin: 5px 0; color: #666; font-size: 14px;"><em>Technical assessment: {reason}</em></div>' if reason else ''}
-          </li>
+          </div>
         """)
 
-    subject = f"KIP Daily: {len(rows_html)} top matches from yesterday"
-    header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
+    subject = f"KIP Daily Digest: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
+
     html = f"""
-    <p>Hi,</p>
-    <p>Here are your top-scoring opportunities from yesterday (minimum score: {MIN_SCORE}):</p>
-    <ul style="list-style-type: none; padding-left: 0;">
-      {''.join(rows_html)}
-    </ul>
-    <p><a href="{header_link}" style="color: #0066cc;">Open KIP</a> to view full details and manage preferences.</p>
-    <p style="color: #666; font-size: 12px; margin-top: 20px;">
-      <em>Match explanations generated by AI based on your company profile. Technical assessments use detailed scoring matrix.</em>
-    </p>
+    {email_wrapper}
+      {header}
+      <div style="padding: 32px 24px;">
+        <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 8px 0;">
+          Hello,
+        </p>
+        <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
+          We found <strong>{len(rows_html)} high-quality {'opportunity' if len(rows_html) == 1 else 'opportunities'}</strong> matching your company profile from yesterday's federal solicitations.
+        </p>
+
+        <div style="margin: 24px 0;">
+          {''.join(rows_html)}
+        </div>
+      </div>
+      {footer}
+    </div>
     """
     return subject, html
+
 
 # ---------- Main ----------
 
