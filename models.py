@@ -39,8 +39,8 @@ class User(SQLModel, table=True):
     created_at: Optional[str] = Field(default=None)
 
 
-class CompanyProfile(SQLModel, table=True):
-    __tablename__ = "company_profile"
+class UserCompany(SQLModel, table=True):
+    __tablename__ = "user_companies"
     __table_args__ = {"extend_existing": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(index=True, nullable=False)
@@ -48,6 +48,7 @@ class CompanyProfile(SQLModel, table=True):
     description: str = Field(nullable=False)
     city: Optional[str] = None
     state: Optional[str] = None
+    is_active: bool = Field(default=True)
     created_at: Optional[str] = Field(default=None)
     updated_at: Optional[str] = Field(default=None)
 

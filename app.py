@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 from typing import Dict
 from enhanced_matching import EnhancedMatcher
-
+from io import BytesIO
+import mimetypes
 import pandas as pd
 import numpy as np
 import sqlalchemy as sa
@@ -203,17 +204,20 @@ def query_filtered_df_optimized(filters: dict, limit: int = 1000) -> pd.DataFram
 
 def save_document(user_id: int, filename: str, file_content: bytes,
                   file_type: str, description: str = "", tags: str = "",
-                  notice_id: str = None) -> Optional[int]:
-    """Save a document to the database"""
+                  notice_id: str = None, metadata: dict = None) -> Optional[int]:
+    """Save a document to the database with optional metadata"""
     now = datetime.now(timezone.utc).isoformat()
     file_size = len(file_content)
+
+    # Store metadata as JSON if provided
+    metadata_json = json.dumps(metadata) if metadata else None
 
     with engine.begin() as conn:
         try:
             sql = sa.text("""
                 INSERT INTO documents 
-                (user_id, filename, file_type, file_size, content, description, tags, notice_id, uploaded_at)
-                VALUES (:uid, :fname, :ftype, :fsize, :content, :desc, :tags, :nid, :ts)
+                (user_id, filename, file_type, file_size, content, description, tags, notice_id, metadata, uploaded_at)
+                VALUES (:uid, :fname, :ftype, :fsize, :content, :desc, :tags, :nid, :meta, :ts)
                 RETURNING id
             """)
             doc_id = conn.execute(sql, {
@@ -225,6 +229,7 @@ def save_document(user_id: int, filename: str, file_content: bytes,
                 "desc": description,
                 "tags": tags,
                 "nid": notice_id,
+                "meta": metadata_json,
                 "ts": now
             }).scalar_one()
             return int(doc_id)
@@ -233,33 +238,89 @@ def save_document(user_id: int, filename: str, file_content: bytes,
             return None
 
 
-def get_user_documents(user_id: int) -> pd.DataFrame:
-    """Get all documents for a user (without content for list view)"""
+def get_user_documents(user_id: int, filter_tags: list = None,
+                       filter_notice_id: str = None) -> pd.DataFrame:
+    """Get documents for a user with optional filtering"""
     with engine.connect() as conn:
-        sql = sa.text("""
+        where_clauses = ["user_id = :uid"]
+        params = {"uid": user_id}
+
+        if filter_tags:
+            # Simple tag filtering - checks if any tag matches
+            tag_conditions = []
+            for i, tag in enumerate(filter_tags):
+                tag_conditions.append(f"tags LIKE :tag_{i}")
+                params[f"tag_{i}"] = f"%{tag}%"
+            where_clauses.append(f"({' OR '.join(tag_conditions)})")
+
+        if filter_notice_id:
+            where_clauses.append("notice_id = :nid")
+            params["nid"] = filter_notice_id
+
+        where_clause = " AND ".join(where_clauses)
+
+        sql = sa.text(f"""
             SELECT id, filename, file_type, file_size, description, tags, 
-                   notice_id, uploaded_at
+                   notice_id, metadata, uploaded_at
             FROM documents
-            WHERE user_id = :uid
+            WHERE {where_clause}
             ORDER BY uploaded_at DESC
         """)
-        return pd.read_sql_query(sql, conn, params={"uid": user_id})
+        return pd.read_sql_query(sql, conn, params=params)
 
 
 def get_document_content(doc_id: int, user_id: int) -> Optional[tuple]:
-    """Get document content (filename, file_type, content)"""
+    """Get document content (filename, file_type, content, metadata)"""
     with engine.connect() as conn:
         sql = sa.text("""
-            SELECT filename, file_type, content
+            SELECT filename, file_type, content, metadata
             FROM documents
             WHERE id = :did AND user_id = :uid
         """)
-        row = conn.execute(
-            sql, {"did": doc_id, "uid": user_id}).mappings().first()
+        row = conn.execute(sql, {"did": doc_id, "uid": user_id}).mappings().first()
         if row:
-            return (row["filename"], row["file_type"], bytes(row["content"]))
+            metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            return (row["filename"], row["file_type"], bytes(row["content"]), metadata)
         return None
 
+
+def bulk_upload_documents(user_id: int, files: list,
+                          common_tags: str = "",
+                          notice_id: str = None) -> list:
+    """Upload multiple documents at once"""
+    results = []
+
+    for file in files:
+        try:
+            content = file.read()
+            file_type = file.type or mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+
+            doc_id = save_document(
+                user_id=user_id,
+                filename=file.name,
+                file_content=content,
+                file_type=file_type,
+                description="",
+                tags=common_tags,
+                notice_id=notice_id,
+                metadata={"original_size": len(content), "upload_method": "bulk"}
+            )
+
+            results.append({
+                "filename": file.name,
+                "success": doc_id is not None,
+                "doc_id": doc_id,
+                "error": None
+            })
+        except Exception as e:
+            results.append({
+                "filename": file.name,
+                "success": False,
+                "doc_id": None,
+                "error": str(e)
+            })
+
+    return results
 
 def delete_document(doc_id: int, user_id: int) -> bool:
     """Delete a document"""
@@ -719,6 +780,7 @@ try:
                     description TEXT,
                     tags TEXT,
                     notice_id TEXT,
+                    metadata TEXT,
                     uploaded_at TEXT NOT NULL
                 )
             """))
@@ -735,19 +797,22 @@ try:
                     description TEXT,
                     tags TEXT,
                     notice_id TEXT,
+                    metadata TEXT,
                     uploaded_at TEXT NOT NULL
                 )
             """))
 
-        conn.execute(sa.text("""
-            CREATE INDEX IF NOT EXISTS idx_documents_user ON documents (user_id)
-        """))
-        conn.execute(sa.text("""
-            CREATE INDEX IF NOT EXISTS idx_documents_notice ON documents (notice_id)
-        """))
-        conn.execute(sa.text("""
-            CREATE INDEX IF NOT EXISTS idx_documents_uploaded ON documents (uploaded_at)
-        """))
+        # Add indexes
+        conn.execute(sa.text("CREATE INDEX IF NOT EXISTS idx_documents_user ON documents (user_id)"))
+        conn.execute(sa.text("CREATE INDEX IF NOT EXISTS idx_documents_notice ON documents (notice_id)"))
+        conn.execute(sa.text("CREATE INDEX IF NOT EXISTS idx_documents_uploaded ON documents (uploaded_at)"))
+
+        # Migration: Add metadata column if it doesn't exist
+        try:
+            conn.execute(sa.text("ALTER TABLE documents ADD COLUMN metadata TEXT"))
+        except:
+            pass  # Column already exists
+
 except Exception as e:
     st.warning(f"Document table creation note: {e}")
 
@@ -831,29 +896,73 @@ except Exception as e:
 # Authentication Functions
 # =========================
 
-def get_profile(user_id: int) -> Optional[dict]:
+def get_user_companies(user_id: int) -> pd.DataFrame:
+    """Get all companies for a user"""
     with engine.connect() as conn:
         sql = sa.text("""
-            SELECT id, user_id, company_name, description, state, created_at, updated_at
-            FROM company_profile WHERE user_id = :uid
+            SELECT id, user_id, company_name, description, city, state, is_active, created_at, updated_at
+            FROM user_companies WHERE user_id = :uid
+            ORDER BY created_at DESC
         """)
-        row = conn.execute(sql, {"uid": user_id}).mappings().first()
-        return dict(row) if row else None
+        return pd.read_sql_query(sql, conn, params={"uid": user_id})
 
 
-def upsert_profile(user_id: int, company_name: str, description: str, state: str) -> None:
+def add_user_company(user_id: int, company_name: str, description: str, city: str = "", state: str = "") -> int:
+    """Add a new company for a user"""
     with engine.begin() as conn:
-        now = datetime.now(timezone.utc).isoformat()
-        upd = conn.execute(sa.text("""
-            UPDATE company_profile
-            SET company_name = :cn, description = :d, state = :s, updated_at = :ts
-            WHERE user_id = :uid
-        """), {"cn": company_name, "d": description, "s": state, "uid": user_id, "ts": now})
-        if upd.rowcount == 0:
-            conn.execute(sa.text("""
-                INSERT INTO company_profile (user_id, company_name, description, state, created_at, updated_at)
-                VALUES (:uid, :cn, :d, :s, :ts, :ts)
-            """), {"uid": user_id, "cn": company_name, "d": description, "s": state, "ts": now})
+        sql = sa.text("""
+            INSERT INTO user_companies (user_id, company_name, description, city, state, is_active, created_at, updated_at)
+            VALUES (:uid, :cn, :desc, :city, :state, TRUE, NOW(), NOW())
+            RETURNING id
+        """)
+        result = conn.execute(sql, {
+            "uid": user_id,
+            "cn": company_name,
+            "desc": description,
+            "city": city,
+            "state": state
+        })
+        return result.scalar_one()
+
+def update_user_company(company_id: int, user_id: int, company_name: str, description: str, city: str = "", state: str = "") -> bool:
+    """Update an existing company"""
+    with engine.begin() as conn:
+        sql = sa.text("""
+            UPDATE user_companies
+            SET company_name = :cn, description = :desc, city = :city, state = :state, updated_at = NOW()
+            WHERE id = :cid AND user_id = :uid
+        """)
+        result = conn.execute(sql, {
+            "cid": company_id,
+            "uid": user_id,
+            "cn": company_name,
+            "desc": description,
+            "city": city,
+            "state": state
+        })
+        return result.rowcount > 0
+
+def delete_user_company(company_id: int, user_id: int) -> bool:
+    """Delete (or deactivate) a company"""
+    with engine.begin() as conn:
+        sql = sa.text("""
+            UPDATE user_companies
+            SET is_active = FALSE
+            WHERE id = :cid AND user_id = :uid
+        """)
+        result = conn.execute(sql, {"cid": company_id, "uid": user_id})
+        return result.rowcount > 0
+
+def toggle_company_active(company_id: int, user_id: int, is_active: bool) -> bool:
+    """Enable/disable a company"""
+    with engine.begin() as conn:
+        sql = sa.text("""
+            UPDATE user_companies
+            SET is_active = :active
+            WHERE id = :cid AND user_id = :uid
+        """)
+        result = conn.execute(sql, {"cid": company_id, "uid": user_id, "active": is_active})
+        return result.rowcount > 0
 
 # =========================
 # Partner Matching Functions
@@ -1926,6 +2035,14 @@ with colR2:
     except Exception:
         st.metric("Rows in DB", 0)
 
+
+# Check if user is logged in
+if "user_id" not in st.session_state or not st.session_state.user_id:
+    st.error("🔒 Please log in to access this application")
+    st.info("Authentication system integration required")
+    st.stop()
+
+
 # =========================
 # Tabs
 # =========================
@@ -1972,19 +2089,27 @@ with tab1:
     }
 
     st.subheader("Company profile for matching")
-    saved_desc = ""
-    use_saved = st.checkbox("Use saved company profile",
-                            value=bool(saved_desc))
+    # Get user's companies
+    user_companies = get_user_companies(st.session_state.user_id)
 
-    if use_saved and saved_desc:
-        st.info("Using your saved company profile description.")
-        company_desc = saved_desc
-        st.text_area("Company description (from Account → Company Profile)",
-                     value=saved_desc, height=120, disabled=True)
+    if not user_companies.empty:
+        company_options = [""] + user_companies["company_name"].tolist()
+        selected_company = st.selectbox(
+            "Select a company profile for matching",
+            options=company_options,
+            help="Choose which company to use for matching, or leave blank to enter custom description"
+        )
+
+        if selected_company:
+            selected_company_data = user_companies[user_companies["company_name"] == selected_company].iloc[0]
+            company_desc = selected_company_data["description"]
+            st.info(f"Using profile: **{selected_company}**")
+            st.text_area("Company description", value=company_desc, height=120, disabled=True)
+        else:
+            company_desc = st.text_area("Brief company description (temporary)", value="", height=120)
     else:
-        company_desc = st.text_area(
-            "Brief company description (temporary)", value="", height=120)
-
+        st.warning("No company profiles found. Add one in Account Settings.")
+        company_desc = st.text_area("Brief company description (temporary)", value="", height=120)
     st.session_state.company_desc = company_desc or ""
     use_ai_downselect = st.checkbox(
         "Use AI to downselect based on description", value=False)
@@ -2704,7 +2829,128 @@ with tab5:
     st.markdown("---")
     st.caption(
         "DB schema is fixed to only the required SAM fields. Refresh inserts brand-new notices only (no updates).")
-    
+
+with st.tabs(["1) Solicitation Match", "2) Supplier Suggestions", "3) Proposal Draft",
+              "4) Partner Matches", "5) Internal Use", "6) Document Library"])[-1]:
+    st.header("📁 Document Library")
+    st.caption("Manage your uploaded documents and files")
+
+    # Upload section
+    with st.expander("📤 Upload Documents", expanded=True):
+        upload_mode = st.radio("Upload mode", ["Single file", "Multiple files"], horizontal=True)
+
+        if upload_mode == "Single file":
+            uploaded_file = st.file_uploader("Choose a file", type=None)
+            if uploaded_file:
+                col1, col2 = st.columns(2)
+                with col1:
+                    doc_description = st.text_input("Description (optional)")
+                    doc_tags = st.text_input("Tags (comma-separated)")
+                with col2:
+                    link_to_notice = st.text_input("Link to Notice ID (optional)")
+
+                if st.button("Upload File"):
+                    with st.spinner("Uploading..."):
+                        content = uploaded_file.read()
+                        file_type = uploaded_file.type or mimetypes.guess_type(uploaded_file.name)[
+                            0] or "application/octet-stream"
+
+                        doc_id = save_document(
+                            user_id=st.session_state.user_id,
+                            filename=uploaded_file.name,
+                            file_content=content,
+                            file_type=file_type,
+                            description=doc_description,
+                            tags=doc_tags,
+                            notice_id=link_to_notice if link_to_notice else None
+                        )
+
+                        if doc_id:
+                            st.success(f"✅ Uploaded: {uploaded_file.name}")
+                            st.rerun()
+
+        else:  # Multiple files
+            uploaded_files = st.file_uploader("Choose files", type=None, accept_multiple_files=True)
+            if uploaded_files:
+                common_tags = st.text_input("Common tags for all files (comma-separated)")
+                link_to_notice = st.text_input("Link all to Notice ID (optional)")
+
+                if st.button(f"Upload {len(uploaded_files)} files"):
+                    with st.spinner(f"Uploading {len(uploaded_files)} files..."):
+                        results = bulk_upload_documents(
+                            user_id=st.session_state.user_id,
+                            files=uploaded_files,
+                            common_tags=common_tags,
+                            notice_id=link_to_notice if link_to_notice else None
+                        )
+
+                        success_count = sum(1 for r in results if r["success"])
+                        st.success(f"✅ Uploaded {success_count}/{len(results)} files")
+
+                        if success_count < len(results):
+                            with st.expander("Show errors"):
+                                for r in results:
+                                    if not r["success"]:
+                                        st.error(f"{r['filename']}: {r['error']}")
+
+                        st.rerun()
+
+    # Filter section
+    with st.expander("🔍 Filter Documents"):
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_tags_input = st.text_input("Filter by tags (comma-separated)")
+            filter_tags = [t.strip() for t in filter_tags_input.split(",") if t.strip()] if filter_tags_input else None
+        with col2:
+            filter_notice = st.text_input("Filter by Notice ID")
+
+    # Get and display documents
+    docs_df = get_user_documents(
+        st.session_state.user_id,
+        filter_tags=filter_tags,
+        filter_notice_id=filter_notice if filter_notice else None
+    )
+
+    if docs_df.empty:
+        st.info("No documents uploaded yet")
+    else:
+        st.success(f"Found {len(docs_df)} document(s)")
+
+        # Display documents
+        for _, doc in docs_df.iterrows():
+            with st.expander(f"📄 {doc['filename']} ({doc['file_size'] / 1024:.1f} KB)"):
+                col1, col2, col3 = st.columns([2, 1, 1])
+
+                with col1:
+                    st.write(f"**Type:** {doc['file_type']}")
+                    st.write(f"**Uploaded:** {doc['uploaded_at'][:10]}")
+                    if doc['description']:
+                        st.write(f"**Description:** {doc['description']}")
+                    if doc['tags']:
+                        st.write(f"**Tags:** {doc['tags']}")
+                    if doc['notice_id']:
+                        st.write(f"**Linked to:** {doc['notice_id']}")
+
+                with col2:
+                    # Download button
+                    doc_content = get_document_content(doc['id'], st.session_state.user_id)
+                    if doc_content:
+                        filename, file_type, content, metadata = doc_content
+                        st.download_button(
+                            label="📥 Download",
+                            data=content,
+                            file_name=filename,
+                            mime=file_type,
+                            key=f"download_{doc['id']}"
+                        )
+
+                with col3:
+                    # Delete button
+                    if st.button("🗑️ Delete", key=f"delete_{doc['id']}"):
+                        if delete_document(doc['id'], st.session_state.user_id):
+                            st.success("Deleted")
+                            st.rerun()
+
 try:
     with engine.begin() as conn:
         conn.execute(sa.text("""

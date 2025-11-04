@@ -83,26 +83,26 @@ def _yesterday_utc_window():
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 
-def _fetch_subscribers(conn) -> pd.DataFrame:
-    """Fetch active subscribers with complete company profile info"""
+def _fetch_subscribers_with_companies(conn) -> pd.DataFrame:
+    """Fetch subscribers with ALL their active companies - now using user_companies only"""
     try:
         df = pd.read_sql_query(
             """
             SELECT s.user_id,
                    s.email,
-                   COALESCE(cp.description, '') AS company_description,
-                   COALESCE(cp.company_name, '') AS company_name,
-                   COALESCE(cp.city, '') AS city,
-                   COALESCE(cp.state, '') AS state
+                   uc.company_name,
+                   uc.description AS company_description,
+                   COALESCE(uc.city, '') AS city,
+                   COALESCE(uc.state, '') AS state
             FROM digest_subscribers s
-            LEFT JOIN company_profile cp ON cp.user_id = s.user_id
+            INNER JOIN user_companies uc ON uc.user_id = s.user_id AND uc.is_active = TRUE
             WHERE COALESCE(s.is_enabled, TRUE) = TRUE
             """,
             conn
         )
     except Exception as e:
-        logging.error("Error reading subscribers/company_profile: %s", e)
-        return pd.DataFrame(columns=["user_id", "email", "company_description", "company_name", "city", "state"])
+        logging.error("Error reading subscribers/companies: %s", e)
+        return pd.DataFrame(columns=["user_id", "email", "company_name", "company_description", "city", "state"])
     return df.fillna('')
 
 
@@ -336,8 +336,9 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
     return explanations
 
 
-def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame) -> tuple[str, str]:
-    """Render email with matrix scores, reasons, and AI match explanations"""
+def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
+                  company_name: str = "") -> tuple[str, str]:
+    """Render email with company name in subject/header"""
 
     # Email base styles
     email_wrapper = """
@@ -346,16 +347,19 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
 
     # Header
     header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
+    # Show company name in header if provided
+    header_subtitle = company_name if company_name else "Your Daily Federal Opportunity Digest"
+
     header = f"""
-      <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
-          Knowledge Integration Platform
-        </h1>
-        <p style="color: #dbeafe; margin: 8px 0 0 0; font-size: 14px; font-weight: 400;">
-          Your Daily Federal Opportunity Digest
-        </p>
-      </div>
-    """
+          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0;">
+            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
+              Knowledge Integration Platform
+            </h1>
+            <p style="color: #dbeafe; margin: 8px 0 0 0; font-size: 14px; font-weight: 400;">
+              {header_subtitle}
+            </p>
+          </div>
+        """
 
     # Footer
     footer = f"""
@@ -376,7 +380,8 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
     """
 
     if picks.empty:
-        subject = "KIP Daily Digest: No Close Matches Today"
+        company_label = f" [{company_name}]" if company_name else ""
+        subject = f"KIP Daily Digest{company_label}: No Close Matches Today"
         html = f"""
         {email_wrapper}
           {header}
@@ -476,7 +481,9 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame)
           </div>
         """)
 
-    subject = f"KIP Daily Digest: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
+    # Add company name to subject if provided
+    company_label = f" [{company_name}]" if company_name else ""
+    subject = f"KIP Daily Digest{company_label}: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
 
     html = f"""
     {email_wrapper}
@@ -535,7 +542,7 @@ def main():
         except Exception as e:
             logging.warning("Could not fetch recent dates: %s", e)
 
-        subs = _fetch_subscribers(conn)
+        subs = _fetch_subscribers_with_companies(conn)
         if subs.empty:
             logging.info("No active subscribers. Exiting.")
             return
@@ -553,44 +560,45 @@ def main():
         logging.info("Found %d notices from %s, processing %d subscribers...", len(
             notices), yesterday_date, len(subs))
 
-        for _, s in subs.iterrows():
-            email = s["email"].strip()
-            desc = (s["company_description"] or "").strip()
+        # Group by user_id and email to handle multiple companies
+        grouped = subs.groupby(['user_id', 'email'])
 
-            if not email:
-                continue
+        for (user_id, email), group in grouped:
+            # Send separate email for EACH company this user has
+            for _, company_row in group.iterrows():
+                company_name = company_row["company_name"]
+                desc = (company_row["company_description"] or "").strip()
 
-            if not desc:
-                logging.info(
-                    "Subscriber %s has no company description; sending 'no matches'.", email)
-                subject, html = _render_email(email, desc, pd.DataFrame())
-                _send_email(email, subject, html)
-                continue
+                if not desc:
+                    logging.info(f"Skipping {company_name} for {email} (no description)")
+                    continue
 
-            logging.info(f"Processing subscriber: {email}")
+                logging.info(f"Processing {company_name} for {email}")
 
-            # STAGE 1: Fast embedding-based pre-filter
-            stage1_candidates = _stage1_embedding_filter(
-                notices, desc, top_k=PREFILTER_CANDIDATES)
+                # STAGE 1: Fast embedding-based pre-filter
+                stage1_candidates = _stage1_embedding_filter(
+                    notices, desc, top_k=PREFILTER_CANDIDATES)
 
-            if stage1_candidates.empty:
-                logging.info(f"Stage 1 returned no candidates for {email}")
-                subject, html = _render_email(email, desc, pd.DataFrame())
-                _send_email(email, subject, html)
-                continue
+                if stage1_candidates.empty:
+                    logging.info(f"Stage 1: No candidates for {company_name}")
+                    continue
 
-            # STAGE 2: Detailed scoring on filtered candidates
-            scored_notices = _stage2_detailed_scoring(
-                stage1_candidates, s.to_dict())
+                # STAGE 2: Detailed scoring
+                scored_notices = _stage2_detailed_scoring(
+                    stage1_candidates, company_row.to_dict())
 
-            # Filter by minimum score and limit results
-            final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(
-                MAX_RESULTS)
-            logging.info(
-                f"Final results for {email}: {len(final_matches)} matches above {MIN_SCORE}")
+                # Filter and send
+                final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
 
-            subject, html = _render_email(email, desc, final_matches)
-            _send_email(email, subject, html)
+                if not final_matches.empty:
+                    subject, html = _render_email(
+                        email,
+                        desc,
+                        final_matches,
+                        company_name=company_name  # NEW: distinguish emails
+                    )
+                    _send_email(email, subject, html)
+                    logging.info(f"Sent {len(final_matches)} matches for {company_name} to {email}")
 
     logging.info("Daily digest complete.")
 

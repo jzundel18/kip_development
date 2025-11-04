@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Defense Supplier Web Scraping Script
-Uses Google Custom Search API to find defense suppliers and adds them to Supabase.
+Defense Supplier Web Scraping Script - ENHANCED VERSION
+Features:
+- Better deduplication (checks names, domains, emails)
+- Search query rotation to find NEW companies each run
+- Persistent state tracking to avoid repeating searches
+- Domain-based duplicate detection
 
 Required Environment Variables:
 - SUPABASE_DB_URL: Your Supabase database connection string
@@ -10,7 +14,7 @@ Required Environment Variables:
 - OPENAI_API_KEY: OpenAI API key for intelligent data extraction
 
 Usage:
-    python defense_supplier_scraper.py [--max-companies 100] [--delay 1.0]
+    python defense_supplier_scraper_enhanced.py [--max-companies 100] [--delay 1.0]
 """
 
 import os
@@ -19,9 +23,11 @@ import time
 import re
 import json
 import argparse
+import hashlib
 from typing import List, Dict, Optional, Set, Tuple
 from urllib.parse import urlparse
 from datetime import datetime
+from pathlib import Path
 import requests
 from openai import OpenAI
 import sqlalchemy as sa
@@ -37,14 +43,20 @@ GOOGLE_CX = os.getenv("GOOGLE_CX")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DB_URL = os.getenv("SUPABASE_DB_URL")
 
-# Defense supplier search queries targeting different industries
-SEARCH_QUERIES = [
+# State file to track what we've searched
+STATE_FILE = Path(".scraper_state.json")
+
+# Defense supplier search queries - EXPANDED with more variations
+SEARCH_QUERY_POOL = [
     # Aerospace & Aviation
     "aerospace defense parts manufacturer supplier",
     "aircraft components defense contractor",
     "avionics systems defense supplier",
     "helicopter parts military supplier",
     "UAV drone components manufacturer",
+    "military aircraft maintenance services",
+    "aerospace engineering defense contractor",
+    "flight systems integration military",
 
     # Electronics & Communications
     "military electronics components supplier",
@@ -52,12 +64,17 @@ SEARCH_QUERIES = [
     "tactical radio systems supplier",
     "military radar components manufacturer",
     "defense semiconductor supplier",
+    "electronic warfare systems contractor",
+    "military signal intelligence equipment",
+    "defense satellite communications",
 
     # Weapons & Ammunition
     "military ammunition components supplier",
     "defense weapons systems parts manufacturer",
     "firearms components defense supplier",
     "military ordnance parts manufacturer",
+    "explosive ordnance disposal equipment",
+    "munitions handling equipment military",
 
     # Vehicles & Ground Systems
     "military vehicle parts supplier",
@@ -65,45 +82,77 @@ SEARCH_QUERIES = [
     "tactical vehicle parts manufacturer",
     "military truck components supplier",
     "armored vehicle parts manufacturer",
+    "combat vehicle systems contractor",
+    "military vehicle maintenance services",
 
     # Naval & Maritime
     "naval defense components supplier",
     "ship systems parts manufacturer",
     "submarine components defense supplier",
     "maritime defense equipment manufacturer",
+    "naval propulsion systems contractor",
+    "shipboard electronics military",
 
     # IT & Cybersecurity
     "defense IT services contractor",
     "military cybersecurity services provider",
     "defense software development company",
     "military network security contractor",
+    "defense cloud services provider",
+    "military data analytics contractor",
 
     # Manufacturing & Machining
     "precision machining defense contractor",
     "CNC machining military parts",
     "defense metal fabrication supplier",
     "military precision manufacturing",
+    "additive manufacturing defense",
+    "defense tooling and fixtures",
 
     # Logistics & Support
     "defense logistics services contractor",
     "military supply chain management",
     "defense maintenance services contractor",
     "military warehousing services provider",
+    "defense inventory management",
+    "military distribution services",
 
     # Textiles & Equipment
     "military uniform manufacturer supplier",
     "defense tactical gear manufacturer",
     "military body armor supplier",
     "defense protective equipment manufacturer",
+    "combat helmet manufacturer military",
+    "tactical load bearing equipment",
 
     # Testing & Engineering
     "defense testing services contractor",
     "military engineering services provider",
     "defense R&D contractor",
     "military test equipment manufacturer",
+    "defense systems integration",
+    "military prototype development",
+
+    # Medical & Healthcare
+    "military medical equipment supplier",
+    "defense healthcare services contractor",
+    "combat casualty care equipment",
+    "military pharmaceutical supplier",
+
+    # Energy & Power
+    "military power systems contractor",
+    "defense energy solutions provider",
+    "tactical power generation military",
+    "defense renewable energy systems",
+
+    # Training & Simulation
+    "military training systems contractor",
+    "defense simulation equipment supplier",
+    "combat training facility services",
+    "military virtual reality training",
 ]
 
-# Common defense-related NAICS codes
+# NAICS codes remain the same
 DEFENSE_NAICS_MAP = {
     "336411": "Aircraft Manufacturing",
     "336412": "Aircraft Engine and Engine Parts",
@@ -123,14 +172,81 @@ DEFENSE_NAICS_MAP = {
 }
 
 
-class DefenseSupplierScraper:
-    """Main scraper class for finding and processing defense suppliers"""
+class ScraperState:
+    """Track scraper state to avoid repeating searches"""
 
-    def __init__(self):
+    def __init__(self, state_file: Path):
+        self.state_file = state_file
+        self.state = self._load_state()
+
+    def _load_state(self) -> dict:
+        """Load state from file"""
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+
+        return {
+            "searched_queries": [],
+            "last_run": None,
+            "total_companies_added": 0,
+            "search_history": {}
+        }
+
+    def save_state(self):
+        """Save state to file"""
+        try:
+            with open(self.state_file, 'w') as f:
+                json.dump(self.state, f, indent=2)
+        except Exception as e:
+            print(f"⚠️  Could not save state: {e}")
+
+    def mark_query_searched(self, query: str, found_count: int):
+        """Mark a query as searched"""
+        query_hash = hashlib.md5(query.encode()).hexdigest()
+        self.state["searched_queries"].append(query_hash)
+        self.state["search_history"][query_hash] = {
+            "query": query,
+            "timestamp": datetime.now().isoformat(),
+            "found_count": found_count
+        }
+
+    def is_query_searched(self, query: str) -> bool:
+        """Check if query was already searched"""
+        query_hash = hashlib.md5(query.encode()).hexdigest()
+        return query_hash in self.state["searched_queries"]
+
+    def get_unsearched_queries(self, query_pool: List[str]) -> List[str]:
+        """Get queries that haven't been searched yet"""
+        return [q for q in query_pool if not self.is_query_searched(q)]
+
+    def reset(self):
+        """Reset state (useful for starting fresh)"""
+        self.state = {
+            "searched_queries": [],
+            "last_run": None,
+            "total_companies_added": 0,
+            "search_history": {}
+        }
+        self.save_state()
+
+    def update_stats(self, companies_added: int):
+        """Update statistics"""
+        self.state["last_run"] = datetime.now().isoformat()
+        self.state["total_companies_added"] = self.state.get("total_companies_added", 0) + companies_added
+
+
+class DefenseSupplierScraper:
+    """Main scraper class with enhanced deduplication"""
+
+    def __init__(self, state: ScraperState):
         self.validate_credentials()
         self.engine = create_engine(DB_URL, pool_pre_ping=True)
         self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
         self.existing_companies = self._load_existing_companies()
+        self.state = state
         self.companies_added = 0
         self.companies_skipped = 0
 
@@ -153,16 +269,35 @@ class DefenseSupplierScraper:
                 print(f"  {var}=your_value_here")
             sys.exit(1)
 
-    def _load_existing_companies(self) -> Set[str]:
-        """Load existing company names to avoid duplicates"""
+    def _load_existing_companies(self) -> dict:
+        """Load existing company names, domains, and emails to avoid duplicates"""
+        existing = {
+            "names": set(),
+            "domains": set(),
+            "emails": set()
+        }
+
         try:
             with self.engine.connect() as conn:
-                result = conn.execute(text("SELECT name FROM company_list"))
-                # Normalize names for comparison
-                return {row[0].lower().strip() for row in result if row[0]}
+                result = conn.execute(text("SELECT name, email FROM company_list"))
+
+                for row in result:
+                    if row[0]:  # name
+                        existing["names"].add(row[0].lower().strip())
+
+                    if row[1]:  # email
+                        existing["emails"].add(row[1].lower().strip())
+                        # Extract domain from email
+                        if "@" in row[1]:
+                            domain = row[1].split("@")[1].lower().strip()
+                            existing["domains"].add(domain)
+
+                print(f"✅ Loaded {len(existing['names'])} companies, {len(existing['domains'])} domains")
+
         except Exception as e:
             print(f"⚠️  Warning: Could not load existing companies: {e}")
-            return set()
+
+        return existing
 
     def google_search(self, query: str, num_results: int = 10) -> List[Dict]:
         """Perform Google Custom Search"""
@@ -172,7 +307,7 @@ class DefenseSupplierScraper:
             "key": GOOGLE_API_KEY,
             "cx": GOOGLE_CX,
             "q": query,
-            "num": min(num_results, 10)  # Google API max is 10
+            "num": min(num_results, 10)
         }
 
         try:
@@ -185,15 +320,11 @@ class DefenseSupplierScraper:
             return []
 
     def extract_company_info_with_ai(self, search_result: Dict) -> Optional[Dict]:
-        """
-        Use AI to extract comprehensive company information from search result
-        and by analyzing the company's website content
-        """
+        """Use AI to extract comprehensive company information"""
         title = search_result.get("title", "")
         snippet = search_result.get("snippet", "")
         url = search_result.get("link", "")
 
-        # Skip non-company results
         if not title or len(title) < 3:
             return None
 
@@ -277,14 +408,12 @@ Return valid JSON only."""
     def _fetch_website_content(self, url: str) -> str:
         """Fetch and extract text content from website"""
         try:
-            # Add user agent to avoid blocks
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
             response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
             response.raise_for_status()
 
-            # Simple text extraction (you could use BeautifulSoup for better extraction)
             text = response.text
 
             # Remove HTML tags
@@ -295,14 +424,13 @@ Return valid JSON only."""
             # Clean up whitespace
             text = re.sub(r'\s+', ' ', text).strip()
 
-            return text[:5000]  # Limit to first 5000 chars
+            return text[:5000]
 
         except Exception:
             return ""
 
     def _validate_company_data(self, data: Dict, source_url: str) -> Dict:
         """Validate and clean extracted company data"""
-        # Ensure all required fields exist
         required_fields = [
             "name", "description", "state", "email", "phone", "contact",
             "states_perform_work", "NAICS", "other_NAICS", "cage", "duns",
@@ -326,7 +454,6 @@ Return valid JSON only."""
             data["NAICS"] = naics if len(naics) == 6 else None
 
         if data.get("other_NAICS"):
-            # Clean and validate other NAICS codes
             other_naics = data["other_NAICS"].split(",")
             valid_naics = []
             for code in other_naics:
@@ -392,27 +519,47 @@ Return valid JSON only."""
         # Validate name (must be reasonable length)
         if data.get("name"):
             if len(data["name"]) < 2 or len(data["name"]) > 200:
-                return None  # Invalid company name
+                return None
 
         return data
 
-    def is_duplicate(self, company_name: str) -> bool:
-        """Check if company already exists in database"""
-        if not company_name:
-            return False
-        normalized_name = company_name.lower().strip()
-        return normalized_name in self.existing_companies
+    def is_duplicate(self, company_data: Dict) -> Tuple[bool, str]:
+        """
+        Check if company already exists using multiple methods.
+        Returns (is_duplicate, reason)
+        """
+        if not company_data.get("name"):
+            return True, "Missing company name"
+
+        # Check by name
+        normalized_name = company_data["name"].lower().strip()
+        if normalized_name in self.existing_companies["names"]:
+            return True, "Duplicate name"
+
+        # Check by email domain
+        if company_data.get("email"):
+            email = company_data["email"].lower().strip()
+
+            # Check exact email
+            if email in self.existing_companies["emails"]:
+                return True, "Duplicate email"
+
+            # Check domain
+            if "@" in email:
+                domain = email.split("@")[1]
+                if domain in self.existing_companies["domains"]:
+                    return True, f"Duplicate domain ({domain})"
+
+        return False, "Not duplicate"
 
     def add_company_to_database(self, company_data: Dict) -> bool:
         """Add company to Supabase database"""
         try:
-            # Validate that name exists
             if not company_data.get("name"):
                 print("    ⊘ Skipped: Missing company name")
                 return False
 
             with self.engine.begin() as conn:
-                # Get the next ID value from the sequence
                 next_id_result = conn.execute(text(
                     "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM company_list"
                 ))
@@ -433,7 +580,15 @@ Return valid JSON only."""
                 conn.execute(sql, company_data)
 
             # Add to existing companies set
-            self.existing_companies.add(company_data["name"].lower().strip())
+            self.existing_companies["names"].add(company_data["name"].lower().strip())
+
+            # Add email and domain
+            if company_data.get("email"):
+                email = company_data["email"].lower().strip()
+                self.existing_companies["emails"].add(email)
+                if "@" in email:
+                    domain = email.split("@")[1]
+                    self.existing_companies["domains"].add(domain)
 
             # Log what was added
             non_null_fields = [k for k, v in company_data.items() if v is not None]
@@ -449,22 +604,29 @@ Return valid JSON only."""
     def run(self, max_companies: int = 100, search_delay: float = 1.0,
             results_per_query: int = 10):
         """
-        Main scraping loop
-
-        Args:
-            max_companies: Maximum number of companies to add
-            search_delay: Delay between searches (seconds)
-            results_per_query: Number of results to fetch per search
+        Main scraping loop with state tracking
         """
         print("=" * 80)
-        print("DEFENSE SUPPLIER WEB SCRAPER")
+        print("DEFENSE SUPPLIER WEB SCRAPER - ENHANCED")
         print("=" * 80)
         print(f"\nConfiguration:")
         print(f"  Target companies: {max_companies}")
         print(f"  Search delay: {search_delay}s")
         print(f"  Results per query: {results_per_query}")
-        print(f"  Existing companies: {len(self.existing_companies)}")
-        print(f"  Total search queries: {len(SEARCH_QUERIES)}")
+        print(f"  Existing companies: {len(self.existing_companies['names'])}")
+        print(f"  Existing domains: {len(self.existing_companies['domains'])}")
+
+        # Get unsearched queries
+        unsearched = self.state.get_unsearched_queries(SEARCH_QUERY_POOL)
+        print(f"  Available search queries: {len(unsearched)}")
+        print(f"  Previously searched: {len(self.state.state['searched_queries'])}")
+
+        if not unsearched:
+            print("\n⚠️  All queries have been searched!")
+            print("Options:")
+            print("  1. Run with --reset flag to start fresh")
+            print("  2. Add more search queries to SEARCH_QUERY_POOL")
+            return
 
         print(f"\n{'=' * 80}")
         print("Starting scraping process...")
@@ -472,20 +634,22 @@ Return valid JSON only."""
 
         start_time = time.time()
 
-        for query_num, query in enumerate(SEARCH_QUERIES, 1):
+        for query_num, query in enumerate(unsearched, 1):
             if self.companies_added >= max_companies:
                 break
 
-            print(f"\n[Query {query_num}/{len(SEARCH_QUERIES)}] {query}")
+            print(f"\n[Query {query_num}/{len(unsearched)}] {query}")
 
             # Perform search
             results = self.google_search(query, num_results=results_per_query)
 
             if not results:
                 print("  No results found")
+                self.state.mark_query_searched(query, 0)
                 continue
 
             print(f"  Found {len(results)} results, processing...")
+            found_in_query = 0
 
             # Process each result
             for result_num, result in enumerate(results, 1):
@@ -503,25 +667,37 @@ Return valid JSON only."""
                     continue
 
                 # Check for duplicates
-                if self.is_duplicate(company_data["name"]):
-                    print(f"    ⊘ Skipped: {company_data['name']} (already in database)")
+                is_dup, reason = self.is_duplicate(company_data)
+                if is_dup:
+                    print(f"    ⊘ Skipped: {company_data['name']} ({reason})")
                     self.companies_skipped += 1
                     continue
 
                 # Add to database
                 if self.add_company_to_database(company_data):
                     self.companies_added += 1
+                    found_in_query += 1
                 else:
                     self.companies_skipped += 1
 
                 # Small delay to be polite to APIs
                 time.sleep(0.5)
 
+            # Mark query as searched
+            self.state.mark_query_searched(query, found_in_query)
+
+            # Save state after each query
+            self.state.save_state()
+
             # Delay between searches
             time.sleep(search_delay)
 
         # Final report
         elapsed_time = time.time() - start_time
+
+        # Update state
+        self.state.update_stats(self.companies_added)
+        self.state.save_state()
 
         print("\n" + "=" * 80)
         print("SCRAPING COMPLETE")
@@ -532,6 +708,10 @@ Return valid JSON only."""
         print(f"  Total processed: {self.companies_added + self.companies_skipped}")
         print(f"  Time elapsed: {elapsed_time / 60:.1f} minutes")
         print(f"  Average time per company: {elapsed_time / (self.companies_added + self.companies_skipped):.1f}s")
+        print(f"\n📈 Overall Progress:")
+        print(f"  Total queries searched: {len(self.state.state['searched_queries'])}/{len(SEARCH_QUERY_POOL)}")
+        print(f"  Total companies added (all time): {self.state.state.get('total_companies_added', 0)}")
+        print(f"  Queries remaining: {len(SEARCH_QUERY_POOL) - len(self.state.state['searched_queries'])}")
         print("\n" + "=" * 80)
 
 
@@ -558,6 +738,11 @@ def main():
         default=10,
         help="Number of results to fetch per query (default: 10, max: 10)"
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset search state and start fresh"
+    )
 
     args = parser.parse_args()
 
@@ -574,9 +759,17 @@ def main():
         print("Error: --results-per-query must be between 1 and 10")
         sys.exit(1)
 
+    # Initialize state
+    state = ScraperState(STATE_FILE)
+
+    if args.reset:
+        print("🔄 Resetting search state...")
+        state.reset()
+        print("✅ State reset complete")
+
     # Run scraper
     try:
-        scraper = DefenseSupplierScraper()
+        scraper = DefenseSupplierScraper(state)
         scraper.run(
             max_companies=args.max_companies,
             search_delay=args.delay,
@@ -584,11 +777,13 @@ def main():
         )
     except KeyboardInterrupt:
         print("\n\n⚠️  Scraping interrupted by user")
+        state.save_state()
         sys.exit(0)
     except Exception as e:
         print(f"\n\n❌ Fatal error: {e}")
         import traceback
         traceback.print_exc()
+        state.save_state()
         sys.exit(1)
 
 
