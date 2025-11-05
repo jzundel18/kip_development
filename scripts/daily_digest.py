@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Daily email digest with two-stage filtering for efficiency:
-Stage 1: Fast embedding-based pre-filter (cheap)
-Stage 2: Detailed matrix scoring on top candidates only (expensive but limited)
+Daily email digest - SIMPLIFIED VERSION
+Sends emails directly to email addresses stored in user_companies table.
+Each company with an email gets its own digest based on its description.
 
 Required env vars:
   SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD
@@ -27,7 +27,7 @@ from email.mime.multipart import MIMEMultipart
 
 from scoring import AIMatrixScorer, ai_matrix_score_solicitations
 
-# Module-level config (will be set when module loads)
+# Module-level config
 DB_URL = None
 OPENAI_API_KEY = None
 GMAIL_EMAIL = None
@@ -67,12 +67,8 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-# These will be initialized after config is loaded
 engine = None
 oai = None
-
-
-# ---------- Helper Functions ----------
 
 
 def _yesterday_utc_window():
@@ -83,27 +79,48 @@ def _yesterday_utc_window():
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 
-def _fetch_subscribers_with_companies(conn) -> pd.DataFrame:
-    """Fetch subscribers with ALL their active companies - now using user_companies only"""
+def _fetch_companies_with_emails(conn) -> pd.DataFrame:
+    """Fetch active companies that have email addresses configured"""
     try:
         df = pd.read_sql_query(
             """
-            SELECT s.user_id,
-                   s.email,
+            SELECT uc.id as company_id,
+                   uc.email,
                    uc.company_name,
                    uc.description AS company_description,
                    COALESCE(uc.city, '') AS city,
                    COALESCE(uc.state, '') AS state
-            FROM digest_subscribers s
-            INNER JOIN user_companies uc ON uc.user_id = s.user_id AND uc.is_active = TRUE
-            WHERE COALESCE(s.is_enabled, TRUE) = TRUE
+            FROM user_companies uc
+            WHERE uc.is_active = TRUE
+              AND uc.email IS NOT NULL
+              AND uc.email != ''
+              AND uc.description IS NOT NULL
+              AND uc.description != ''
+            ORDER BY uc.company_name
             """,
             conn
         )
+        logging.info(f"Found {len(df)} companies with email addresses configured")
     except Exception as e:
-        logging.error("Error reading subscribers/companies: %s", e)
-        return pd.DataFrame(columns=["user_id", "email", "company_name", "company_description", "city", "state"])
+        logging.error("Error reading companies: %s", e)
+        return pd.DataFrame(columns=["company_id", "email", "company_name", "company_description", "city", "state"])
     return df.fillna('')
+
+
+def _parse_email_addresses(email_field: str) -> list[str]:
+    """
+    Parse email field that may contain multiple comma-separated addresses.
+    Returns list of cleaned email addresses.
+    """
+    if not email_field or email_field.strip() == '':
+        return []
+
+    # Split by comma and clean each email
+    emails = [e.strip() for e in email_field.split(',')]
+    # Filter out empty strings
+    emails = [e for e in emails if e]
+
+    return emails
 
 
 def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFrame:
@@ -130,17 +147,15 @@ def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFra
 def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: int = 50) -> pd.DataFrame:
     """Stage 1: Fast embedding-based filtering"""
     if notices.empty or not company_desc.strip():
-        return notices.head(top_k)  # Fallback without filtering
+        return notices.head(top_k)
 
     try:
         logging.info(
             f"Stage 1: Filtering {len(notices)} notices to top {top_k} using embeddings")
 
-        # Create text representations for comparison
         notice_texts = (notices["title"].fillna(
             "") + " " + notices["description"].fillna("")).str.slice(0, 2000).tolist()
 
-        # Get company embedding
         company_response = oai.embeddings.create(
             model="text-embedding-3-small",
             input=[company_desc]
@@ -150,7 +165,6 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         company_vector = company_vector / \
                          (np.linalg.norm(company_vector) + 1e-9)
 
-        # Get notice embeddings in batches
         notice_vectors = []
         batch_size = 500
 
@@ -163,13 +177,11 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
             batch_vectors = [d.embedding for d in batch_response.data]
             notice_vectors.extend(batch_vectors)
 
-        # Calculate similarities
         notice_matrix = np.array(notice_vectors, dtype=np.float32)
         notice_matrix = notice_matrix / \
                         (np.linalg.norm(notice_matrix, axis=1, keepdims=True) + 1e-9)
         similarities = notice_matrix @ company_vector
 
-        # Sort by similarity and take top k
         notices_with_scores = notices.copy()
         notices_with_scores["similarity_score"] = similarities
         top_notices = notices_with_scores.sort_values(
@@ -186,39 +198,35 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         return notices.head(top_k)
 
 
-def _stage2_detailed_scoring(notices: pd.DataFrame, subscriber: dict) -> pd.DataFrame:
+def _stage2_detailed_scoring(notices: pd.DataFrame, company_row: dict) -> pd.DataFrame:
     """Stage 2: Detailed matrix scoring on pre-filtered candidates"""
     if notices.empty:
         return notices.copy()
 
     logging.info(f"Stage 2: Detailed scoring of {len(notices)} candidates")
 
-    # Build company profile
     company_profile = {
-        "description": subscriber.get("company_description", "").strip(),
-        "company_name": subscriber.get("company_name", "").strip(),
-        "city": subscriber.get("city", "").strip(),
-        "state": subscriber.get("state", "").strip()
+        "description": company_row.get("company_description", "").strip(),
+        "company_name": company_row.get("company_name", "").strip(),
+        "city": company_row.get("city", "").strip(),
+        "state": company_row.get("state", "").strip()
     }
 
     if not company_profile["description"]:
-        # No company description - return with default scores
         df = notices.copy()
         df["score"] = 50.0
         df["overall_reason"] = "No company description available for detailed scoring"
         return df
 
-    # Use the matrix scoring from scoring.py
     try:
         results = ai_matrix_score_solicitations(
             df=notices,
             company_profile=company_profile,
             api_key=OPENAI_API_KEY,
-            top_k=len(notices),  # Score all candidates
+            top_k=len(notices),
             model="gpt-4o-mini"
         )
 
-        # Convert results to DataFrame format
         scores_map = {r["notice_id"]: r["score"] for r in results}
         reasons_map = {r["notice_id"]: r.get(
             "overall_reason", "") for r in results}
@@ -235,7 +243,6 @@ def _stage2_detailed_scoring(notices: pd.DataFrame, subscriber: dict) -> pd.Data
 
     except Exception as e:
         logging.error(f"Stage 2 detailed scoring failed: {e}")
-        # Fallback with default scores
         df = notices.copy()
         df["score"] = 50.0
         df["overall_reason"] = f"Detailed scoring failed: {str(e)[:100]}"
@@ -257,15 +264,13 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
     msg['From'] = FROM_EMAIL
     msg['To'] = to_email
 
-    # Add plain text and HTML parts
     if text_body:
         msg.attach(MIMEText(text_body, 'plain'))
     msg.attach(MIMEText(html_body, 'html'))
 
     try:
-        # Connect to Gmail's SMTP server
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.starttls()  # Secure the connection
+            server.starttls()
             server.login(GMAIL_EMAIL, GMAIL_PASSWORD)
             server.send_message(msg)
 
@@ -282,12 +287,10 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
     explanations = {}
 
     try:
-        # Process in small batches to avoid token limits
         batch_size = 3
         for i in range(0, len(notices), batch_size):
             batch = notices.iloc[i:i + batch_size]
 
-            # Prepare batch data
             batch_items = []
             for _, row in batch.iterrows():
                 batch_items.append({
@@ -317,7 +320,6 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
                 timeout=30
             )
 
-            # Parse response
             try:
                 data = json.loads(response.choices[0].message.content or "{}")
                 for item in data.get("explanations", []):
@@ -336,18 +338,15 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
     return explanations
 
 
-def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
+def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
                   company_name: str = "") -> tuple[str, str]:
     """Render email with company name in subject/header"""
 
-    # Email base styles
     email_wrapper = """
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 680px; margin: 0 auto; background-color: #ffffff;">
     """
 
-    # Header
     header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
-    # Show company name in header if provided
     header_subtitle = company_name if company_name else "Your Daily Federal Opportunity Digest"
 
     header = f"""
@@ -361,7 +360,6 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
           </div>
         """
 
-    # Footer
     footer = f"""
       <div style="background-color: #f8fafc; padding: 24px; border-top: 1px solid #e2e8f0; margin-top: 32px; border-radius: 0 0 8px 8px;">
         <div style="text-align: center; margin-bottom: 16px;">
@@ -391,7 +389,7 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
             </p>
             <div style="background-color: #f1f5f9; border-left: 4px solid #64748b; padding: 16px 20px; border-radius: 4px; margin: 24px 0;">
               <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0;">
-                No close matches (score ≥ {MIN_SCORE}) were found for your company profile yesterday.
+                No close matches (score ≥ {MIN_SCORE}) were found for {company_name} yesterday.
               </p>
             </div>
             <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 16px 0 0 0;">
@@ -403,18 +401,16 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
         """
         return subject, html
 
-    # Generate AI explanations for why each notice matched
     logging.info(f"Generating match explanations for {len(picks)} final candidates")
     match_explanations = _generate_match_explanations(picks, company_desc)
 
-    # Score badge color based on score value
     def get_score_color(score):
         if score >= 85:
-            return "#10b981"  # Green
+            return "#10b981"
         elif score >= 70:
-            return "#3b82f6"  # Blue
+            return "#3b82f6"
         else:
-            return "#f59e0b"  # Amber
+            return "#f59e0b"
 
     rows_html = []
     for idx, r in picks.iterrows():
@@ -424,25 +420,21 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
         reason = r.get("overall_reason", "AI assessment of match quality")
         url = _sam_public_url(nid, r.get("link", ""))
 
-        # Get additional details
         posted_date = r.get("posted_date", "")
         response_date = r.get("response_date", "")
         pop_city = r.get("pop_city", "")
         pop_state = r.get("pop_state", "")
         naics = r.get("naics_code", "")
 
-        # Format location
         location = ""
         if pop_city or pop_state:
             location = f"{pop_city}, {pop_state}".strip(", ")
 
-        # Get AI match explanation
         match_explanation = match_explanations.get(
             nid, "This opportunity aligns with your company's capabilities.")
 
         score_color = get_score_color(score)
 
-        # Build metadata line
         metadata_parts = []
         if location:
             metadata_parts.append(f'<span style="margin-right: 16px;">📍 {location}</span>')
@@ -481,7 +473,6 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
           </div>
         """)
 
-    # Add company name to subject if provided
     company_label = f" [{company_name}]" if company_name else ""
     subject = f"KIP Daily Digest{company_label}: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
 
@@ -493,7 +484,7 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
           Hello,
         </p>
         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
-          We found <strong>{len(rows_html)} high-quality {'opportunity' if len(rows_html) == 1 else 'opportunities'}</strong> matching your company profile from yesterday's federal solicitations.
+          We found <strong>{len(rows_html)} high-quality {'opportunity' if len(rows_html) == 1 else 'opportunities'}</strong> matching {company_name}'s profile from yesterday's federal solicitations.
         </p>
 
         <div style="margin: 24px 0;">
@@ -506,16 +497,11 @@ def _render_email(subscriber_email: str, company_desc: str, picks: pd.DataFrame,
     return subject, html
 
 
-# ---------- Main ----------
-
-
 def main():
     global engine, oai
 
-    # Load config first
     _load_config()
 
-    # Now initialize database and OpenAI clients with loaded config
     engine = sa.create_engine(DB_URL, pool_pre_ping=True)
     oai = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -526,7 +512,7 @@ def main():
         "Two-stage filtering: Stage 1 → %d candidates, Stage 2 → detailed scoring", PREFILTER_CANDIDATES)
 
     with engine.connect() as conn:
-        # Debug: show what dates we have
+        # Debug: show recent dates
         try:
             recent_dates = conn.execute(text("""
                 SELECT posted_date, COUNT(*) 
@@ -542,63 +528,74 @@ def main():
         except Exception as e:
             logging.warning("Could not fetch recent dates: %s", e)
 
-        subs = _fetch_subscribers_with_companies(conn)
-        if subs.empty:
-            logging.info("No active subscribers. Exiting.")
+        companies = _fetch_companies_with_emails(conn)
+        if companies.empty:
+            logging.info("No companies with email addresses configured. Exiting.")
             return
 
         notices = _fetch_yesterday_notices(conn, yesterday_date, today_date)
         if notices.empty:
             logging.info(
-                "No notices posted on %s. Sending 'no matches' to all subscribers.", yesterday_date)
-            for _, s in subs.iterrows():
-                subject, html = _render_email(
-                    s["email"], s["company_description"], pd.DataFrame())
-                _send_email(s["email"], subject, html)
+                "No notices posted on %s. Sending 'no matches' to all companies.", yesterday_date)
+            for _, company in companies.iterrows():
+                emails = _parse_email_addresses(company["email"])
+                for email in emails:
+                    subject, html = _render_email(
+                        email, company["company_description"], pd.DataFrame(),
+                        company_name=company["company_name"])
+                    _send_email(email, subject, html)
             return
 
-        logging.info("Found %d notices from %s, processing %d subscribers...", len(
-            notices), yesterday_date, len(subs))
+        logging.info("Found %d notices from %s, processing %d companies...", len(
+            notices), yesterday_date, len(companies))
 
-        # Group by user_id and email to handle multiple companies
-        grouped = subs.groupby(['user_id', 'email'])
+        # Process each company separately
+        for _, company in companies.iterrows():
+            company_name = company["company_name"]
+            desc = (company["company_description"] or "").strip()
 
-        for (user_id, email), group in grouped:
-            # Send separate email for EACH company this user has
-            for _, company_row in group.iterrows():
-                company_name = company_row["company_name"]
-                desc = (company_row["company_description"] or "").strip()
+            if not desc:
+                logging.info(f"Skipping {company_name} (no description)")
+                continue
 
-                if not desc:
-                    logging.info(f"Skipping {company_name} for {email} (no description)")
-                    continue
+            logging.info(f"Processing {company_name}")
 
-                logging.info(f"Processing {company_name} for {email}")
+            # STAGE 1: Fast embedding-based pre-filter
+            stage1_candidates = _stage1_embedding_filter(
+                notices, desc, top_k=PREFILTER_CANDIDATES)
 
-                # STAGE 1: Fast embedding-based pre-filter
-                stage1_candidates = _stage1_embedding_filter(
-                    notices, desc, top_k=PREFILTER_CANDIDATES)
+            if stage1_candidates.empty:
+                logging.info(f"Stage 1: No candidates for {company_name}")
+                continue
 
-                if stage1_candidates.empty:
-                    logging.info(f"Stage 1: No candidates for {company_name}")
-                    continue
+            # STAGE 2: Detailed scoring
+            scored_notices = _stage2_detailed_scoring(
+                stage1_candidates, company.to_dict())
 
-                # STAGE 2: Detailed scoring
-                scored_notices = _stage2_detailed_scoring(
-                    stage1_candidates, company_row.to_dict())
+            # Filter and send
+            final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
 
-                # Filter and send
-                final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
+            # Parse email addresses (may be comma-separated)
+            emails = _parse_email_addresses(company["email"])
 
-                if not final_matches.empty:
-                    subject, html = _render_email(
-                        email,
-                        desc,
-                        final_matches,
-                        company_name=company_name  # NEW: distinguish emails
-                    )
+            if not emails:
+                logging.warning(f"No valid email addresses for {company_name}")
+                continue
+
+            if not final_matches.empty:
+                subject, html = _render_email(
+                    emails[0],  # Primary email for recipient field
+                    desc,
+                    final_matches,
+                    company_name=company_name
+                )
+
+                # Send to all configured email addresses
+                for email in emails:
                     _send_email(email, subject, html)
                     logging.info(f"Sent {len(final_matches)} matches for {company_name} to {email}")
+            else:
+                logging.info(f"No matches above threshold for {company_name}")
 
     logging.info("Daily digest complete.")
 
