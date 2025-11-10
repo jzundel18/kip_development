@@ -371,9 +371,6 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
     footer = f"""
       <div style="background-color: #f8fafc; padding: 24px; border-top: 1px solid #e2e8f0; margin-top: 32px; border-radius: 0 0 8px 8px;">
         <div style="text-align: center; margin-bottom: 16px;">
-          <a href="{header_link}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 500; font-size: 14px;">
-            Open KIP Dashboard
-          </a>
         </div>
         <p style="color: #64748b; font-size: 12px; line-height: 1.6; margin: 12px 0 0 0; text-align: center;">
           Match explanations are AI-generated based on your technology area profile.<br>
