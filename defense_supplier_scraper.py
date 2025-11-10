@@ -279,7 +279,7 @@ class DefenseSupplierScraper:
 
         try:
             with self.engine.connect() as conn:
-                result = conn.execute(text("SELECT name, email FROM company_list"))
+                result = conn.execute(text("SELECT name, email FROM companies"))
 
                 for row in result:
                     if row[0]:  # name
@@ -561,12 +561,12 @@ Return valid JSON only."""
 
             with self.engine.begin() as conn:
                 next_id_result = conn.execute(text(
-                    "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM company_list"
+                    "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM companies"
                 ))
                 next_id = next_id_result.scalar()
 
                 sql = text("""
-                    INSERT INTO company_list 
+                    INSERT INTO companies 
                     (id, name, description, state, email, phone, contact, 
                      states_perform_work, "NAICS", "other_NAICS", cage, duns, 
                      designation, prime_experience)

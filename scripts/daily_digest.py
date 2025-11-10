@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Daily email digest - SIMPLIFIED VERSION
-Sends emails directly to email addresses stored in user_companies table.
-Each company with an email gets its own digest based on its description.
+Daily email digest - CORRECTED FOR TECHNOLOGY_AREAS TABLE
+Sends emails directly to email addresses stored in technology_areas table.
+Each technology area with emails gets its own digest based on its description.
 
 Required env vars:
   SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD
@@ -79,31 +79,28 @@ def _yesterday_utc_window():
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 
-def _fetch_companies_with_emails(conn) -> pd.DataFrame:
-    """Fetch active companies that have email addresses configured"""
+def _fetch_technology_areas_with_emails(conn) -> pd.DataFrame:
+    """Fetch technology areas that have email addresses configured"""
     try:
         df = pd.read_sql_query(
             """
-            SELECT uc.id as company_id,
-                   uc.email,
-                   uc.company_name,
-                   uc.description AS company_description,
-                   COALESCE(uc.city, '') AS city,
-                   COALESCE(uc.state, '') AS state
-            FROM user_companies uc
-            WHERE uc.is_active = TRUE
-              AND uc.email IS NOT NULL
-              AND uc.email != ''
-              AND uc.description IS NOT NULL
-              AND uc.description != ''
-            ORDER BY uc.company_name
+            SELECT id as technology_id,
+                   emails,
+                   technology_name,
+                   description as technology_description
+            FROM technology_areas
+            WHERE emails IS NOT NULL
+              AND emails != ''
+              AND description IS NOT NULL
+              AND description != ''
+            ORDER BY technology_name
             """,
             conn
         )
-        logging.info(f"Found {len(df)} companies with email addresses configured")
+        logging.info(f"Found {len(df)} technology areas with email addresses configured")
     except Exception as e:
-        logging.error("Error reading companies: %s", e)
-        return pd.DataFrame(columns=["company_id", "email", "company_name", "company_description", "city", "state"])
+        logging.error("Error reading technology areas: %s", e)
+        return pd.DataFrame(columns=["technology_id", "emails", "technology_name", "technology_description"])
     return df.fillna('')
 
 
@@ -144,9 +141,9 @@ def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFra
     return df.fillna("")
 
 
-def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: int = 50) -> pd.DataFrame:
+def _stage1_embedding_filter(notices: pd.DataFrame, tech_desc: str, top_k: int = 50) -> pd.DataFrame:
     """Stage 1: Fast embedding-based filtering"""
-    if notices.empty or not company_desc.strip():
+    if notices.empty or not tech_desc.strip():
         return notices.head(top_k)
 
     try:
@@ -156,14 +153,13 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         notice_texts = (notices["title"].fillna(
             "") + " " + notices["description"].fillna("")).str.slice(0, 2000).tolist()
 
-        company_response = oai.embeddings.create(
+        tech_response = oai.embeddings.create(
             model="text-embedding-3-small",
-            input=[company_desc]
+            input=[tech_desc]
         )
-        company_vector = np.array(
-            company_response.data[0].embedding, dtype=np.float32)
-        company_vector = company_vector / \
-                         (np.linalg.norm(company_vector) + 1e-9)
+        tech_vector = np.array(
+            tech_response.data[0].embedding, dtype=np.float32)
+        tech_vector = tech_vector / (np.linalg.norm(tech_vector) + 1e-9)
 
         notice_vectors = []
         batch_size = 500
@@ -180,7 +176,7 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         notice_matrix = np.array(notice_vectors, dtype=np.float32)
         notice_matrix = notice_matrix / \
                         (np.linalg.norm(notice_matrix, axis=1, keepdims=True) + 1e-9)
-        similarities = notice_matrix @ company_vector
+        similarities = notice_matrix @ tech_vector
 
         notices_with_scores = notices.copy()
         notices_with_scores["similarity_score"] = similarities
@@ -198,30 +194,31 @@ def _stage1_embedding_filter(notices: pd.DataFrame, company_desc: str, top_k: in
         return notices.head(top_k)
 
 
-def _stage2_detailed_scoring(notices: pd.DataFrame, company_row: dict) -> pd.DataFrame:
+def _stage2_detailed_scoring(notices: pd.DataFrame, tech_area_row: dict) -> pd.DataFrame:
     """Stage 2: Detailed matrix scoring on pre-filtered candidates"""
     if notices.empty:
         return notices.copy()
 
     logging.info(f"Stage 2: Detailed scoring of {len(notices)} candidates")
 
-    company_profile = {
-        "description": company_row.get("company_description", "").strip(),
-        "company_name": company_row.get("company_name", "").strip(),
-        "city": company_row.get("city", "").strip(),
-        "state": company_row.get("state", "").strip()
+    # Build profile for scoring
+    tech_profile = {
+        "description": tech_area_row.get("technology_description", "").strip(),
+        "company_name": tech_area_row.get("technology_name", "").strip(),
+        "city": "",  # Not in technology_areas table
+        "state": ""  # Not in technology_areas table
     }
 
-    if not company_profile["description"]:
+    if not tech_profile["description"]:
         df = notices.copy()
         df["score"] = 50.0
-        df["overall_reason"] = "No company description available for detailed scoring"
+        df["overall_reason"] = "No technology description available for detailed scoring"
         return df
 
     try:
         results = ai_matrix_score_solicitations(
             df=notices,
-            company_profile=company_profile,
+            company_profile=tech_profile,
             api_key=OPENAI_API_KEY,
             top_k=len(notices),
             model="gpt-4o-mini"
@@ -279,9 +276,9 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
         logging.error("Gmail SMTP error to %s: %s", to_email, e)
 
 
-def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> dict[str, str]:
-    """Generate AI explanations for why each notice matched the company"""
-    if notices.empty or not company_desc.strip():
+def _generate_match_explanations(notices: pd.DataFrame, tech_desc: str) -> dict[str, str]:
+    """Generate AI explanations for why each notice matched the technology area"""
+    if notices.empty or not tech_desc.strip():
         return {}
 
     explanations = {}
@@ -300,12 +297,12 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
                     "score": float(row.get("score", 0))
                 })
 
-            system_prompt = """You explain why government solicitations match companies. Write concise, specific explanations using second person (your company, your capabilities, your services). Focus on relevant capabilities and requirements. Keep each explanation to 1-2 sentences maximum."""
+            system_prompt = """You explain why government solicitations match technology areas. Write concise, specific explanations focusing on relevant capabilities and requirements. Keep each explanation to 1-2 sentences maximum."""
 
             user_prompt = {
-                "company_description": company_desc[:300],
+                "technology_description": tech_desc[:300],
                 "solicitations": batch_items,
-                "instructions": 'For each solicitation, explain in 1-2 sentences why it matches using "your company" language. Return JSON: {"explanations":[{"notice_id":"...","reason":"..."}]}'
+                "instructions": 'For each solicitation, explain in 1-2 sentences why it matches this technology area. Return JSON: {"explanations":[{"notice_id":"...","reason":"..."}]}'
             }
 
             response = oai.chat.completions.create(
@@ -338,21 +335,21 @@ def _generate_match_explanations(notices: pd.DataFrame, company_desc: str) -> di
     return explanations
 
 
-def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
-                  company_name: str = "") -> tuple[str, str]:
-    """Render email with company name in subject/header"""
+def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
+                  tech_name: str = "") -> tuple[str, str]:
+    """Render email with technology area name in subject/header"""
 
     email_wrapper = """
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 680px; margin: 0 auto; background-color: #ffffff;">
     """
 
     header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
-    header_subtitle = company_name if company_name else "Your Daily Federal Opportunity Digest"
+    header_subtitle = tech_name if tech_name else "Your Daily Federal Opportunity Digest"
 
     header = f"""
           <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0;">
             <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
-              Knowledge Integration Platform
+              Kenai Infinite Pipeline (KIP)
             </h1>
             <p style="color: #dbeafe; margin: 8px 0 0 0; font-size: 14px; font-weight: 400;">
               {header_subtitle}
@@ -368,18 +365,18 @@ def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
           </a>
         </div>
         <p style="color: #64748b; font-size: 12px; line-height: 1.6; margin: 12px 0 0 0; text-align: center;">
-          Match explanations are AI-generated based on your company profile.<br>
+          Match explanations are AI-generated based on your technology area profile.<br>
           Technical assessments use our detailed scoring matrix for accuracy.
         </p>
         <p style="color: #94a3b8; font-size: 11px; margin: 16px 0 0 0; text-align: center;">
-          © 2025 Knowledge Integration Platform. All rights reserved.
+          © 2025 Kenai Infinite Pipeline (KIP). All rights reserved.
         </p>
       </div>
     """
 
     if picks.empty:
-        company_label = f" [{company_name}]" if company_name else ""
-        subject = f"KIP Daily Digest{company_label}: No Close Matches Today"
+        tech_label = f" [{tech_name}]" if tech_name else ""
+        subject = f"KIP Daily Digest{tech_label}: No Close Matches Today"
         html = f"""
         {email_wrapper}
           {header}
@@ -389,11 +386,11 @@ def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
             </p>
             <div style="background-color: #f1f5f9; border-left: 4px solid #64748b; padding: 16px 20px; border-radius: 4px; margin: 24px 0;">
               <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0;">
-                No close matches (score ≥ {MIN_SCORE}) were found for {company_name} yesterday.
+                No close matches (score ≥ {MIN_SCORE}) were found for {tech_name} yesterday.
               </p>
             </div>
             <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 16px 0 0 0;">
-              You'll receive up to {MAX_RESULTS} new opportunities when there are strong matches for your company.
+              You'll receive up to {MAX_RESULTS} new opportunities when there are strong matches for this technology area.
             </p>
           </div>
           {footer}
@@ -402,7 +399,7 @@ def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
         return subject, html
 
     logging.info(f"Generating match explanations for {len(picks)} final candidates")
-    match_explanations = _generate_match_explanations(picks, company_desc)
+    match_explanations = _generate_match_explanations(picks, tech_desc)
 
     def get_score_color(score):
         if score >= 85:
@@ -431,7 +428,7 @@ def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
             location = f"{pop_city}, {pop_state}".strip(", ")
 
         match_explanation = match_explanations.get(
-            nid, "This opportunity aligns with your company's capabilities.")
+            nid, "This opportunity aligns with this technology area.")
 
         score_color = get_score_color(score)
 
@@ -473,8 +470,8 @@ def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
           </div>
         """)
 
-    company_label = f" [{company_name}]" if company_name else ""
-    subject = f"KIP Daily Digest{company_label}: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
+    tech_label = f" [{tech_name}]" if tech_name else ""
+    subject = f"KIP Daily Digest{tech_label}: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
 
     html = f"""
     {email_wrapper}
@@ -484,7 +481,7 @@ def _render_email(recipient_email: str, company_desc: str, picks: pd.DataFrame,
           Hello,
         </p>
         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
-          We found <strong>{len(rows_html)} high-quality {'opportunity' if len(rows_html) == 1 else 'opportunities'}</strong> matching {company_name}'s profile from yesterday's federal solicitations.
+          We found <strong>{len(rows_html)} high-quality {'opportunity' if len(rows_html) == 1 else 'opportunities'}</strong> matching {tech_name} from yesterday's federal solicitations.
         </p>
 
         <div style="margin: 24px 0;">
@@ -528,58 +525,58 @@ def main():
         except Exception as e:
             logging.warning("Could not fetch recent dates: %s", e)
 
-        companies = _fetch_companies_with_emails(conn)
-        if companies.empty:
-            logging.info("No companies with email addresses configured. Exiting.")
+        tech_areas = _fetch_technology_areas_with_emails(conn)
+        if tech_areas.empty:
+            logging.info("No technology areas with email addresses configured. Exiting.")
             return
 
         notices = _fetch_yesterday_notices(conn, yesterday_date, today_date)
         if notices.empty:
             logging.info(
-                "No notices posted on %s. Sending 'no matches' to all companies.", yesterday_date)
-            for _, company in companies.iterrows():
-                emails = _parse_email_addresses(company["email"])
+                "No notices posted on %s. Sending 'no matches' to all technology areas.", yesterday_date)
+            for _, tech_area in tech_areas.iterrows():
+                emails = _parse_email_addresses(tech_area["emails"])
                 for email in emails:
                     subject, html = _render_email(
-                        email, company["company_description"], pd.DataFrame(),
-                        company_name=company["company_name"])
+                        email, tech_area["technology_description"], pd.DataFrame(),
+                        tech_name=tech_area["technology_name"])
                     _send_email(email, subject, html)
             return
 
-        logging.info("Found %d notices from %s, processing %d companies...", len(
-            notices), yesterday_date, len(companies))
+        logging.info("Found %d notices from %s, processing %d technology areas...", len(
+            notices), yesterday_date, len(tech_areas))
 
-        # Process each company separately
-        for _, company in companies.iterrows():
-            company_name = company["company_name"]
-            desc = (company["company_description"] or "").strip()
+        # Process each technology area separately
+        for _, tech_area in tech_areas.iterrows():
+            tech_name = tech_area["technology_name"]
+            desc = (tech_area["technology_description"] or "").strip()
 
             if not desc:
-                logging.info(f"Skipping {company_name} (no description)")
+                logging.info(f"Skipping {tech_name} (no description)")
                 continue
 
-            logging.info(f"Processing {company_name}")
+            logging.info(f"Processing {tech_name}")
 
             # STAGE 1: Fast embedding-based pre-filter
             stage1_candidates = _stage1_embedding_filter(
                 notices, desc, top_k=PREFILTER_CANDIDATES)
 
             if stage1_candidates.empty:
-                logging.info(f"Stage 1: No candidates for {company_name}")
+                logging.info(f"Stage 1: No candidates for {tech_name}")
                 continue
 
             # STAGE 2: Detailed scoring
             scored_notices = _stage2_detailed_scoring(
-                stage1_candidates, company.to_dict())
+                stage1_candidates, tech_area.to_dict())
 
             # Filter and send
             final_matches = scored_notices[scored_notices["score"] >= MIN_SCORE].head(MAX_RESULTS)
 
             # Parse email addresses (may be comma-separated)
-            emails = _parse_email_addresses(company["email"])
+            emails = _parse_email_addresses(tech_area["emails"])
 
             if not emails:
-                logging.warning(f"No valid email addresses for {company_name}")
+                logging.warning(f"No valid email addresses for {tech_name}")
                 continue
 
             if not final_matches.empty:
@@ -587,15 +584,15 @@ def main():
                     emails[0],  # Primary email for recipient field
                     desc,
                     final_matches,
-                    company_name=company_name
+                    tech_name=tech_name
                 )
 
                 # Send to all configured email addresses
                 for email in emails:
                     _send_email(email, subject, html)
-                    logging.info(f"Sent {len(final_matches)} matches for {company_name} to {email}")
+                    logging.info(f"Sent {len(final_matches)} matches for {tech_name} to {email}")
             else:
-                logging.info(f"No matches above threshold for {company_name}")
+                logging.info(f"No matches above threshold for {tech_name}")
 
     logging.info("Daily digest complete.")
 

@@ -46,10 +46,27 @@
     "f65b4d4d99b9b1da7cc1f63069be733a",
     "723852364acacbacfac4720a5d19ff69",
     "04139e52fe57016cf2536bc5e9de3f39",
-    "fd1bba9f1f2002b002e9b83f736b748d"
+    "fd1bba9f1f2002b002e9b83f736b748d",
+    "be7f5449129667b3deb16b8be7b81b15",
+    "86463743185534235c494d08ee7e9def",
+    "10b40e7680e28c7635943a161b9b80f4",
+    "8d236e6f9ab71ac769ea1eec03cf5106",
+    "513cbcc03ff7fba36ed7aae940085e33",
+    "0db74c3aa7126e6a3b0323e099c05a40",
+    "0ad860e92aaa31b1160495f5a6a78687",
+    "683af5ff2156030b201af2805c7341a8",
+    "ebe04458e920d59511eca6371a44513d",
+    "a65061a9c5d7f9f4155d2eecd0ce6987",
+    "b066a5300ed0c8791ef9f393521367dc",
+    "5b68cdf1363dc589827a060d93e3c6ae",
+    "a1d016db6d9d8050646baf240cc1587e",
+    "8425d9b0a60fcdcae6f7fe7f3b5f2b49",
+    "229c8c91d7b6e78148dae939c684ad98",
+    "75572b324dc8dc611996b2b3e3a7f770",
+    "d11ff02443c8d9453982d6db473b3f60"
   ],
-  "last_run": "2025-11-04T13:29:32.769096",
-  "total_companies_added": 220,
+  "last_run": "2025-11-07T16:37:42.547926",
+  "total_companies_added": 320,
   "search_history": {
     "f4468b5a233f85129c745a41b8a90ba1": {
       "query": "aerospace defense parts manufacturer supplier",
@@ -285,6 +302,91 @@
       "query": "defense tooling and fixtures",
       "timestamp": "2025-11-04T13:29:31.763523",
       "found_count": 1
+    },
+    "be7f5449129667b3deb16b8be7b81b15": {
+      "query": "defense logistics services contractor",
+      "timestamp": "2025-11-07T16:23:22.915826",
+      "found_count": 6
+    },
+    "86463743185534235c494d08ee7e9def": {
+      "query": "military supply chain management",
+      "timestamp": "2025-11-07T16:24:09.358364",
+      "found_count": 5
+    },
+    "10b40e7680e28c7635943a161b9b80f4": {
+      "query": "defense maintenance services contractor",
+      "timestamp": "2025-11-07T16:24:50.513276",
+      "found_count": 5
+    },
+    "8d236e6f9ab71ac769ea1eec03cf5106": {
+      "query": "military warehousing services provider",
+      "timestamp": "2025-11-07T16:25:48.934197",
+      "found_count": 7
+    },
+    "513cbcc03ff7fba36ed7aae940085e33": {
+      "query": "defense inventory management",
+      "timestamp": "2025-11-07T16:26:44.757888",
+      "found_count": 1
+    },
+    "0db74c3aa7126e6a3b0323e099c05a40": {
+      "query": "military distribution services",
+      "timestamp": "2025-11-07T16:27:31.399113",
+      "found_count": 7
+    },
+    "0ad860e92aaa31b1160495f5a6a78687": {
+      "query": "military uniform manufacturer supplier",
+      "timestamp": "2025-11-07T16:28:20.120247",
+      "found_count": 9
+    },
+    "683af5ff2156030b201af2805c7341a8": {
+      "query": "defense tactical gear manufacturer",
+      "timestamp": "2025-11-07T16:29:11.860597",
+      "found_count": 8
+    },
+    "ebe04458e920d59511eca6371a44513d": {
+      "query": "military body armor supplier",
+      "timestamp": "2025-11-07T16:30:00.612253",
+      "found_count": 7
+    },
+    "a65061a9c5d7f9f4155d2eecd0ce6987": {
+      "query": "defense protective equipment manufacturer",
+      "timestamp": "2025-11-07T16:31:22.937328",
+      "found_count": 5
+    },
+    "b066a5300ed0c8791ef9f393521367dc": {
+      "query": "combat helmet manufacturer military",
+      "timestamp": "2025-11-07T16:32:12.062448",
+      "found_count": 6
+    },
+    "5b68cdf1363dc589827a060d93e3c6ae": {
+      "query": "tactical load bearing equipment",
+      "timestamp": "2025-11-07T16:33:09.484669",
+      "found_count": 5
+    },
+    "a1d016db6d9d8050646baf240cc1587e": {
+      "query": "defense testing services contractor",
+      "timestamp": "2025-11-07T16:34:02.880693",
+      "found_count": 5
+    },
+    "8425d9b0a60fcdcae6f7fe7f3b5f2b49": {
+      "query": "military engineering services provider",
+      "timestamp": "2025-11-07T16:35:15.838975",
+      "found_count": 7
+    },
+    "229c8c91d7b6e78148dae939c684ad98": {
+      "query": "defense R&D contractor",
+      "timestamp": "2025-11-07T16:36:14.019327",
+      "found_count": 6
+    },
+    "75572b324dc8dc611996b2b3e3a7f770": {
+      "query": "military test equipment manufacturer",
+      "timestamp": "2025-11-07T16:37:04.166948",
+      "found_count": 8
+    },
+    "d11ff02443c8d9453982d6db473b3f60": {
+      "query": "defense systems integration",
+      "timestamp": "2025-11-07T16:37:41.542395",
+      "found_count": 3
     }
   }
 }

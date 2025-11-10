@@ -48,6 +48,7 @@ class UserCompany(SQLModel, table=True):
     description: str = Field(nullable=False)
     city: Optional[str] = None
     state: Optional[str] = None
+    email: Optional[str] = None  # ← ADD THIS
     is_active: bool = Field(default=True)
     created_at: Optional[str] = Field(default=None)
     updated_at: Optional[str] = Field(default=None)
