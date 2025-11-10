@@ -358,11 +358,11 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
     header_subtitle = tech_name if tech_name else "Your Daily Federal Opportunity Digest"
 
     header = f"""
-          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0;">
-            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
+          <div style="background-color: #2563eb; background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0; border: 2px solid #1e3a8a;">
+            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
               Kenai Infinite Pipeline (KIP)
             </h1>
-            <p style="color: #dbeafe; margin: 8px 0 0 0; font-size: 14px; font-weight: 400;">
+            <p style="color: #ffffff; margin: 8px 0 0 0; font-size: 14px; font-weight: 400; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
               {header_subtitle}
             </p>
           </div>
