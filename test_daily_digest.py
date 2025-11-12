@@ -29,27 +29,22 @@ from email.mime.multipart import MIMEMultipart
 
 import random
 
-# Rotating humorous KIP banner messages inspired by Napoleon Dynamite's spirit
+# Actual Kip quotes from Napoleon Dynamite
 KIP_QUOTES = [
-    "Your chat with SAM.gov... all day. 🤓",
-    "These opportunities are pretty much the best I've ever seen.",
-    "I caught you a delicious batch of opportunities.",
-    "How much you wanna bet I can find you opportunities over them mountains?",
-    "Your daily serving of tots... I mean, opportunities. 🍟",
-    "Finding contracts like it's my job. Because it is.",
-    "These matches are getting pretty serious.",
-    "I'm training to be a cage fighter... of federal solicitations.",
-    "Tina, come get some opportunities! 🦙",
-    "Gosh! These opportunities are actually pretty sweet.",
-    "Like, nunchuck skills, bow hunting skills... opportunity finding skills.",
-    "Your technology's future is happening right now.",
-    "I see you're drinking 1% milk. Is that 'cause you think you're fat? These are 100% matches.",
-    "Girls only want boyfriends with great skills. Here are your opportunities with great potential.",
-    "I don't even have any good skills... except finding federal opportunities.",
+    "Napoleon, don't be jealous that I've been chatting online with babes all day.",
+    "I'm just really trying to raise a few bucks now so I can bring her out for a few days.",
+    "I love technology, but not as much as you, you see...",
+    "But I STILL love technology... Always and forever.",
+    "LaFawnduh is the best thing that has ever happened to me.",
+    "I'm training to become a cage fighter.",
+    "Your mom goes to college.",
+    "Well, things are getting pretty serious right now. I mean, we chat online for, like, two hours every day so I guess you could say things are gettin' pretty serious.",
+    "Napoleon, like anyone can even know that.",
+    "I've already looked into it for myself.",
 ]
 
 def get_random_kip_quote():
-    """Return a random humorous KIP quote"""
+    """Return a random Kip quote from Napoleon Dynamite"""
     return random.choice(KIP_QUOTES)
 
 # Load .env file FIRST before any other imports that use env vars
@@ -82,12 +77,13 @@ MAX_RESULTS = 5
 MIN_SCORE = 60.0
 PREFILTER_CANDIDATES = 25
 TEST_EMAIL = "jayden@kenaidefense.com"
+KIP_MEME_URL = None
 
 
 def _load_config():
     """Load configuration from environment variables"""
     global DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD, FROM_EMAIL, APP_BASE_URL
-    global MAX_RESULTS, MIN_SCORE, PREFILTER_CANDIDATES
+    global MAX_RESULTS, MIN_SCORE, PREFILTER_CANDIDATES, KIP_MEME_URL
 
     DB_URL = os.getenv("SUPABASE_DB_URL")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -95,6 +91,7 @@ def _load_config():
     GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "kenaidefense!")
     FROM_EMAIL = os.getenv("FROM_EMAIL") or GMAIL_EMAIL
     APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
+    KIP_MEME_URL = os.getenv("KIP_MEME_URL", "")
 
     MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "10"))
     MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
@@ -371,6 +368,18 @@ def _generate_match_explanations(notices: pd.DataFrame, tech_desc: str) -> dict[
     return explanations
 
 
+def _get_funny_kip_greeting(num_matches: int, tech_name: str) -> str:
+    """Generate a funny Kip-themed greeting based on number of matches"""
+    greetings = [
+        f"Napoleon, don't be jealous - we've been chatting with SAM.gov all day and found <strong>{num_matches} {'babe' if num_matches == 1 else 'babes'}</strong>... I mean, {'opportunity' if num_matches == 1 else 'opportunities'} for {tech_name}.",
+        f"Yes, we love technology (and federal contracts), always and forever. Here {'is' if num_matches == 1 else 'are'} <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
+        f"We've been training to be cage fighters... of opportunity matching. Found <strong>{num_matches} solid {'match' if num_matches == 1 else 'matches'}</strong> for {tech_name}.",
+        f"Things are getting pretty serious right now. We found <strong>{num_matches} high-quality {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
+        f"LaFawnduh would be proud - we found <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name} from yesterday's federal solicitations.",
+    ]
+    return random.choice(greetings)
+
+
 def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
                   tech_name: str = "") -> tuple[str, str]:
     """Render email with technology area name in subject/header"""
@@ -380,18 +389,27 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
     """
 
     header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
-    # Get a random humorous quote for the banner
+    # Get a random Kip quote for the banner
     kip_quote = get_random_kip_quote()
-    header_subtitle = f"{kip_quote}"
+    header_subtitle = f"&ldquo;{kip_quote}&rdquo;"
     header = f"""
           <div style="background-color: #2563eb; background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0; border: 2px solid #1e3a8a;">
             <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
               Kenai Infinite Pipeline (KIP)
             </h1>
-            <p style="color: #ffffff; margin: 8px 0 0 0; font-size: 14px; font-weight: 400; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
+            <p style="color: #ffffff; margin: 8px 0 0 0; font-size: 14px; font-weight: 400; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); font-style: italic;">
               {header_subtitle}
             </p>
           </div>
+        """
+
+    # Add Kip meme section if URL is configured
+    kip_meme_section = ""
+    if KIP_MEME_URL:
+        kip_meme_section = f"""
+        <div style="text-align: center; margin: 24px 0; padding: 16px; background-color: #f8fafc; border-radius: 8px;">
+          <img src="{KIP_MEME_URL}" alt="Kip from Napoleon Dynamite" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);">
+        </div>
         """
 
     footer = f"""
@@ -424,7 +442,7 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
               </p>
             </div>
             <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">
-              Hello,
+              Napoleon, like anyone could even know if there'd be matches today...
             </p>
             <div style="background-color: #f1f5f9; border-left: 4px solid #64748b; padding: 16px 20px; border-radius: 4px; margin: 24px 0;">
               <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0;">
@@ -434,6 +452,7 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
             <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 16px 0 0 0;">
               You'll receive up to {MAX_RESULTS} new opportunities when there are strong matches for this technology area.
             </p>
+            {kip_meme_section}
           </div>
           {footer}
         </div>
@@ -515,6 +534,9 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
     tech_label = f" [{tech_name}]" if tech_name else ""
     subject = f"🧪 TEST - KIP Daily Digest{tech_label}: {len(rows_html)} Top {'Match' if len(rows_html) == 1 else 'Matches'} for {datetime.now().strftime('%B %d, %Y')}"
 
+    # Get funny Kip greeting
+    funny_greeting = _get_funny_kip_greeting(len(rows_html), tech_name)
+
     html = f"""
     {email_wrapper}
       {header}
@@ -527,12 +549,11 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
             Production emails would go to: {recipient_email}
           </p>
         </div>
-        <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 8px 0;">
-          Hello,
-        </p>
         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
-          We found <strong>{len(rows_html)} high-quality {'opportunity' if len(rows_html) == 1 else 'opportunities'}</strong> matching {tech_name} from yesterday's federal solicitations.
+          {funny_greeting}
         </p>
+
+        {kip_meme_section}
 
         <div style="margin: 24px 0;">
           {''.join(rows_html)}
