@@ -27,6 +27,31 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+import random
+
+# Rotating humorous KIP banner messages inspired by Napoleon Dynamite's spirit
+KIP_QUOTES = [
+    "Your chat with SAM.gov... all day. 🤓",
+    "These opportunities are pretty much the best I've ever seen.",
+    "I caught you a delicious batch of opportunities.",
+    "How much you wanna bet I can find you opportunities over them mountains?",
+    "Your daily serving of tots... I mean, opportunities. 🍟",
+    "Finding contracts like it's my job. Because it is.",
+    "These matches are getting pretty serious.",
+    "I'm training to be a cage fighter... of federal solicitations.",
+    "Tina, come get some opportunities! 🦙",
+    "Gosh! These opportunities are actually pretty sweet.",
+    "Like, nunchuck skills, bow hunting skills... opportunity finding skills.",
+    "Your technology's future is happening right now.",
+    "I see you're drinking 1% milk. Is that 'cause you think you're fat? These are 100% matches.",
+    "Girls only want boyfriends with great skills. Here are your opportunities with great potential.",
+    "I don't even have any good skills... except finding federal opportunities.",
+]
+
+def get_random_kip_quote():
+    """Return a random humorous KIP quote"""
+    return random.choice(KIP_QUOTES)
+
 # Load .env file FIRST before any other imports that use env vars
 try:
     from dotenv import load_dotenv
@@ -71,7 +96,7 @@ def _load_config():
     FROM_EMAIL = os.getenv("FROM_EMAIL") or GMAIL_EMAIL
     APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")
 
-    MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "5"))
+    MAX_RESULTS = int(os.getenv("DIGEST_MAX_RESULTS", "10"))
     MIN_SCORE = float(os.getenv("DIGEST_MIN_SCORE", "60"))
     PREFILTER_CANDIDATES = int(os.getenv("DIGEST_PREFILTER_CANDIDATES", "25"))
 
@@ -355,8 +380,9 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
     """
 
     header_link = f'{APP_BASE_URL}' if APP_BASE_URL else "#"
-    header_subtitle = tech_name if tech_name else "Your Daily Federal Opportunity Digest"
-
+    # Get a random humorous quote for the banner
+    kip_quote = get_random_kip_quote()
+    header_subtitle = f"{kip_quote}"
     header = f"""
           <div style="background-color: #2563eb; background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; border-radius: 8px 8px 0 0; border: 2px solid #1e3a8a;">
             <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">
