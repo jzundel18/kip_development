@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Master script to run all daily KIP maintenance tasks in sequence.
-This script runs cleanup, auto-refresh (3x), and daily digest.
+This script runs cleanup, auto-refresh (3x), description backfill, and daily digest.
 
 Usage:
     python run_daily_tasks.py [--all] [--cleanup] [--refresh] [--digest]
@@ -194,12 +194,13 @@ def run_auto_refresh():
 def run_backfill():
     """Run the description backfill script"""
     env_vars = {
-        'BACKFILL_MAX': '50',
-        'BACKFILL_DELAY_SEC': '1.0'
+        'BACKFILL_BATCH': '50',
+        'BACKFILL_MAX': '500',
+        'BACKFILL_DELAY_SEC': '0.5'
     }
     return run_script(
         "backfill_descriptions.py",
-        "BACKFILL: Adding Missing Descriptions",
+        "BACKFILL: Fetching Missing Descriptions",
         env_vars
     )
 
@@ -297,10 +298,11 @@ def main():
         time.sleep(2)  # Brief pause between tasks
 
     if run_refresh_flag:
+        # Run auto-refresh to get new solicitations
         results['auto_refresh'] = run_auto_refresh()
         time.sleep(2)
 
-        # Run backfill after refresh
+        # Run backfill after refresh to fetch missing descriptions
         results['backfill'] = run_backfill()
         time.sleep(2)
 

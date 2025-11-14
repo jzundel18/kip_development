@@ -7,6 +7,7 @@ Fast auto-refresh for SAM.gov opportunities:
 - Always stores a PUBLIC web URL for each notice (no API key required).
 - FIXED: Better key rotation and quota handling
 - NEW: Filters out solicitations with past response dates
+- FIXED: Leaves description blank if it's an api.sam.gov URL so backfill can fetch real descriptions
 """
 
 from __future__ import annotations
@@ -217,12 +218,9 @@ def map_record_basic_fields_only(rec: Dict[str, Any]) -> Dict[str, Any]:
     if link == "None":
         link = _first_nonempty(rec, "url", "samLink")
 
-    # Get basic description from the search result itself (no additional API calls)
-    description = _first_nonempty(rec, "description", "synopsis")
-
-    # Check if description is just a URL - if so, clear it
-    if description and (description.startswith(("http://", "https://")) or description.lower() in ("none", "n/a", "na")):
-        description = ""
+    # Don't extract description from search results - they're usually just API URLs
+    # Leave it blank so backfill_descriptions.py can fetch the real description later
+    description = ""
 
     # Basic place of performance extraction (no additional API calls)
     pop_city = ""

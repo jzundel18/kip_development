@@ -366,6 +366,15 @@ def _get_funny_kip_greeting(num_matches: int, tech_name: str) -> str:
         f"We've been training to be cage fighters... of opportunity matching. Found <strong>{num_matches} solid {'match' if num_matches == 1 else 'matches'}</strong> for {tech_name}.",
         f"Things are getting pretty serious right now. We found <strong>{num_matches} high-quality {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
         f"LaFawnduh would be proud - we found <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name} from yesterday's federal solicitations.",
+        f"Your mom goes to college... to learn about these <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> we found for {tech_name}.",
+        f"Tina, you fat lard, come get some federal contracts! We've got <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
+        f"I caught you a delicious {'bass' if num_matches == 1 else 'bass'}... er, <strong>{num_matches} federal {'solicitation' if num_matches == 1 else 'solicitations'}</strong> for {tech_name}.",
+        f"Vote for Pedro... or check out these <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}. Your call.",
+        f"Girls only want boyfriends who have great skills. Like finding <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
+        f"Forget the time machine, Napoleon. We found <strong>{num_matches} real {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
+        f"I see you're drinking 1% milk. Is that 'cause you think you're fat? Anyway, here {'is' if num_matches == 1 else 'are'} <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
+        f"Lucky! We've been hunting wolverines with a frickin' 12-gauge and found <strong>{num_matches} federal {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name} instead.",
+        f"Do the chickens have large talons? More importantly, does {tech_name} want these <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong>?",
     ]
     return random.choice(greetings)
 
