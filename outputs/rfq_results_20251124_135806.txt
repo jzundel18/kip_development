@@ -1,0 +1,516 @@
+================================================================================
+RFQ SUPPLIER ANALYSIS REPORT
+Generated: 2025-11-24 14:01:23
+================================================================================
+
+SUMMARY
+----------------------------------------
+Total Parts Searched:     10
+Parts with Suppliers:     9
+Exact Part Matches:       9
+No Suppliers Found:       1
+
+
+================================================================================
+PART 1 of 10
+================================================================================
+
+Part Number:     NAS625-19
+Description:     BOLT,SHEAR, THREAD CLASS: 3A, FASTENER LENGTH: 1.774 INCHES MAX, THREAD DIA: 0.312 INCHES, THREAD PER INCH: 24 CAGE CODE: 80205
+Quantity:        32
+Exact Match:     YES
+Sources Found:   3
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: ISO Parts
+  Website:    https://www.iso-parts.com
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing and availability require a quotation request
+
+  How to Order:
+    Visit the website, use the inventory search to locate NAS625
+    -19, and request a quotation through their online form.
+
+  Notes: ISO Parts lists NAS625-19 explicitly in their inventory catalog, indicating availability.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other military and aviation parts distributors or OEMs specializing in NAS parts.
+
+Search Recommendations:
+  Try searching for 'NAS625-19 bolt shear' or 'NAS625-19 military aviation parts' to find additional suppliers.
+
+
+================================================================================
+PART 2 of 10
+================================================================================
+
+Part Number:     NAS1097KE6-10
+Description:     RIVET, SOLID, PN: NAS1097KE6-10, 7050-T73 ALUMINUM ALLOY, 100 DEGREE FLUSH SHEAR HEAD HEAD MARKING: RAISED CIRCLE
+Quantity:        200
+Exact Match:     YES
+Sources Found:   5
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/rivets/solid+rivets/NAS1097KE6-10
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    90.09 per pound
+    Min Order Qty: 1 Pound
+    Lead Time:     Up to qty 6 ships same day if ordered before 4pm EST
+    Notes:         Manufacturer certifications are shipped with your order FREE of charge
+
+  How to Order:
+    Add to cart and proceed to checkout on the website or contac
+    t via phone for a quote.
+
+  Notes: The supplier explicitly lists the exact part number NAS1097KE6-10 with detailed specifications and pricing.
+
+  ------------------------------------
+
+
+================================================================================
+PART 3 of 10
+================================================================================
+
+Part Number:     MS20426AD3-4.5
+Description:     RIVET
+Quantity:        419
+Exact Match:     YES
+Sources Found:   13
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/rivets/solid+rivets/ms20426ad3-4.5
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    $84.00 per pound
+    Min Order Qty: 1 Pound
+    Lead Time:     Up to qty 11 ships same day if ordered before 4pm EST
+    Notes:         Manufacturer certifications are shipped with your order FREE of charge
+
+  How to Order:
+    Add to cart and proceed to checkout on the website or contac
+    t via phone for a quote.
+
+  Notes: The supplier explicitly lists the exact part number and provides detailed specifications.
+
+  ------------------------------------
+
+  Supplier 2: SkyGeek
+  Website:    https://skygeek.com/military-standard-ms20426ad3-4-5-rivet-solid-csk-hd-al-1lb.html
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    $122.22 per pound
+    Min Order Qty: 1 lb Bag
+    Lead Time:     Not Listed
+    Notes:         Bulk Shop & Save options available
+
+  How to Order:
+    Add to cart and proceed to checkout on the website.
+
+  Notes: SkyGeek is AS9120B and ISO 9001:2015 certified.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other aerospace hardware distributors or OEMs specializing in military standard parts.
+
+Search Recommendations:
+  Try searching for 'MS20426AD3-4.5 rivet distributor' or 'MS20426AD3-4.5 aerospace hardware supplier'.
+
+
+================================================================================
+PART 4 of 10
+================================================================================
+
+Part Number:     MS20426AD4-2
+Description:     RIVET, FLUSH HEAD, .125 x .125 LONG
+Quantity:        500
+Exact Match:     YES
+Sources Found:   12
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/rivets/solid+rivets/ms20426ad4-2
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: 1 Pound
+    Lead Time:     Not Listed
+    Notes:         Currently out of stock, pricing and availability upon request
+
+  How to Order:
+    Add the item to a quote request on their website to receive 
+    pricing and availability by email.
+
+  Notes: The supplier lists the exact part number but is currently out of stock. Manufacturer certifications are provided with orders.
+
+  ------------------------------------
+
+  Supplier 2: LAS Aerospace Ltd
+  Website:    https://www.lasaero.com/products/article/F00P2HVZ1
+  Confidence: MEDIUM
+
+  Contact Information:
+    Phone:   01837 658081
+    Email:   sales@lasaero.com
+
+  Pricing Information:
+    Unit Price:    £0.0162
+    Currency:      GBP
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Price listed in GBP, availability not confirmed
+
+  How to Order:
+    Click on the price to add the product to your basket. Contac
+    t for confirmed price and lead time if out of stock.
+
+  Notes: The supplier lists the exact part number with a price, but stock availability is not confirmed.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other aerospace hardware distributors or contacting the manufacturer directly for availability.
+
+Search Recommendations:
+  Try searching for 'MS20426AD4-2 rivet supplier' or 'MS20426AD4-2 aerospace hardware distributor'.
+
+
+================================================================================
+PART 5 of 10
+================================================================================
+
+Part Number:     CR3213-4-02
+Description:     RIVET, BLIND, HEAD STYLE: C28           UNIVERSAL,FASTENER LG 0.194" - 0.224",  GRIP LG    0.063" - 0.125", SHANK DIA.  0.125" - 0.129"; CAGE CODE: 11815
+Quantity:        179
+Exact Match:     YES
+Sources Found:   18
+
+SUPPLIERS FOUND: 4
+----------------------------------------
+
+  Supplier 1: McFarlane Aviation
+  Website:    https://www.mcfarlaneaviation.com/products/CR3213-4-02/
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1-866-920-2
+
+  Pricing Information:
+    Unit Price:    14.98
+    Min Order Qty: Not Listed
+    Lead Time:     Expected ship date is 12-05-2025
+    Notes:         Retail Price $18.73, Your Price $14.98
+
+  How to Order:
+    Add to cart on the website and proceed to checkout. Notify w
+    hen back in stock option available.
+
+  Notes: Free shipping on orders over $500.00. Stock status indicates future availability.
+
+  ------------------------------------
+
+  Supplier 2: Air Power Inc
+  Website:    https://www.airpowerinc.com/cr3213-4-02
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   (800) 247-7693
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Price Valid Until Stock is Depleted
+    Notes:         Free FedEx Ground Shipping, no order minimum
+
+  How to Order:
+    Log in or register on the website to order. Contact customer
+     service for assistance.
+
+  Notes: In-stock items ship the same day if ordered by 3:00 PM Central Time.
+
+  ------------------------------------
+
+  Supplier 3: Century Fasteners Corp.
+  Website:    https://www.centuryfasteners.com/aerospace-products-on-amazon/
+  Confidence: HIGH
+
+  Contact Information:
+    Email:   sales@centuryfasteners.com
+
+  Pricing Information:
+    Unit Price:    6.95
+    Min Order Qty: 100
+    Lead Time:     In stock and ready to ship today
+    Notes:         Available in 100pc bags for immediate shipment
+
+  How to Order:
+    Purchase through Amazon link provided on the website.
+
+  Notes: Authorized stocking distributor for Cherry Aerospace.
+
+  ------------------------------------
+
+  Supplier 4: Loran Aerospace
+  Website:    https://aviation.loranaerospace.com/product/nas9301b-4-02-cr3213-4-02-hc3213-4-02-rivet-blind
+  Confidence: MEDIUM
+
+  Contact Information:
+    Phone:   +1 (470) 728-3213
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: 1000
+    Lead Time:     180 Days
+    Notes:         Lead time confirmation is required
+
+  How to Order:
+    Order through the Loran portal, requires end-user declaratio
+    n and approval.
+
+  Notes: Loran is not a manufacturer; lead time and price may vary.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting Cherry Aerospace directly or other authorized distributors.
+
+Search Recommendations:
+  Try searching for 'CherryMAX CR3213-4-02', 'Cherry Aerospace distributors', or 'blind rivet suppliers'.
+
+
+================================================================================
+PART 6 of 10
+================================================================================
+
+Part Number:     RMLH2577-064
+Description:     NUT, SELF-LOCKING, BARREL, NON-FLOATING,0.531 HEIGHT, 0.375-24 UNF3B RH THREADS, STEEL, CADMIUM FINISH; CAGE: 56878
+Quantity:        32
+Exact Match:     YES
+Sources Found:   9
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/nuts/self_locking+barrel+nuts/RMLH2577-064
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   +1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: 2
+    Lead Time:     Not Listed
+    Notes:         Manufacturer certifications are shipped with your order FREE of charge
+
+  How to Order:
+    Add the item to a quote request on their website to receive 
+    up-to-date pricing and availability by email.
+
+  Notes: Currently out of stock, but can be added to a quote request for pricing and availability updates.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other aerospace fastener distributors or contacting the OEM directly.
+
+Search Recommendations:
+  Try searching for 'RMLH2577-064 self-locking barrel nut' or 'RMLH2577-064 aerospace fasteners' to find additional suppliers.
+
+
+================================================================================
+PART 7 of 10
+================================================================================
+
+Part Number:     AS21919WDG33
+Description:     CLAMP,LOOP
+Quantity:        125
+Exact Match:     YES
+Sources Found:   1
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/clamps/loop+clamps/MS21919WDG33
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: 10
+    Lead Time:     Not Listed
+    Notes:         Currently out of stock; pricing and availability provided upon request
+
+  How to Order:
+    Add the item to a quote request on the website to receive pr
+    icing and availability by email.
+
+  Notes: The supplier lists the exact part number AS21919WDG33 as an alternate part number for MS21919WDG33.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking other military or aerospace hardware suppliers for the exact part number.
+
+Search Recommendations:
+  Try searching for 'AS21919WDG33 clamp supplier' or 'AS21919WDG33 loop clamp distributor'.
+
+
+================================================================================
+PART 8 of 10
+================================================================================
+
+Part Number:     4074610-1
+Description:     N/A
+Quantity:        1
+Exact Match:     NO
+Sources Found:   0
+
+NO SUPPLIERS FOUND
+----------------------------------------
+
+Alternative Sources:
+  No search results. Try searching manufacturer directly.
+
+Search Recommendations:
+  Contact OEM or authorized distributors
+
+
+================================================================================
+PART 9 of 10
+================================================================================
+
+Part Number:     PC47291
+Description:     PIN-RIVET; HOLE LGTH OVERALL .450NOM HEAD DIA .450NOM HEAD DIA .370 NOM; CAGE CODE(S): 83058 OR 13940
+Quantity:        8
+Exact Match:     YES
+Sources Found:   3
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: PB Aviation Parts
+  Website:    https://www.partsbase.com/parts/PC47291.html
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details require account access or demo booking
+
+  How to Order:
+    Visit the website and book a demo or log in to access full p
+    ricing and ordering options.
+
+  Notes: The part is listed on the supplier's website, but specific pricing and ordering details require further action such as booking a demo or logging in.
+
+  ------------------------------------
+
+  Supplier 2: Omega Air Supply
+  Website:    None
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Condition and paperwork details are not specified
+
+  How to Order:
+    Contact Omega Air Supply directly for availability and prici
+    ng.
+
+  Notes: The part is listed as 'RIVET, NYLON' with no further details on condition or paperwork.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting distributors or OEMs directly for more detailed information and potential availability.
+
+Search Recommendations:
+  Try searching for 'PC47291 pin-rivet suppliers' or 'PC47291 aerospace parts' to find additional suppliers.
+
+
+================================================================================
+PART 10 of 10
+================================================================================
+
+Part Number:     5306-01-280-6686
+Description:     BOLT, MACHINE, THREAD CLASS: 3A, RIGHT HAND, THREAD LENGTH: 0.625 INCHES MINI AND 0.704 INCHES MAX, FASTENER LENGTH: 2.953 INCHES MINI AND 3.000 INCHES MAX, NOMINAL THREAD DIAMETER: 0.438 INCHES, THREAD QUANTITY PER INCH: 20, UNF, CAGE CODE: 88044
+Quantity:        64
+Exact Match:     YES
+Sources Found:   1
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: ISO Parts
+  Website:    https://www.iso-parts.com/Inventory2/38
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details require a quotation request
+
+  How to Order:
+    Visit the website, register or log in, and request a quotati
+    on for the part number 5306-01-280-6686.
+
+  Notes: ISO Parts lists the exact part number 5306-01-280-6686 in their inventory catalog.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider reaching out to other military and aviation parts distributors or OEMs specializing in NSN parts.
+
+Search Recommendations:
+  Try searching for the NSN 5306-01-280-6686 on other military parts databases or contact distributors with a focus on aviation and military components.
+

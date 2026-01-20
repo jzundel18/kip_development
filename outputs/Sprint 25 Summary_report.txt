@@ -1,0 +1,210 @@
+================================================================================
+TASK REPORT BY ASSIGNEE
+================================================================================
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Anthony Pearson
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Dynamic IR) Test new device
+  2. (Dynamic IR) Reformulate heater layer with new base
+  3. (Dynamic IR) Fabricate new design
+  4. (Dynamic IR) Test Repeat Device
+  5. (Dynamic IR) DIR: Fabricate New 10X10 device
+  6. (ERDC D6: Improved carbon nanomaterial coatings research approach identified (Due 1/6/26)) Create presentation for ERDC, research approach
+
+● IN PROGRESS:
+  1. (Dynamic IR) Plan scale up
+  2. (Dynamic Camo) Add electrical connectors to transparent electrodes
+  3. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Finalize LabVIEW for CVD process monitoring
+
+● ON HOLD:
+  1. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Set up ultrasonic system and train Caleb
+  2. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Get the ultrasonic system
+
+● REVIEW:
+  1. (Adaptive Multilayer Coating Development) Design metasurface absorber for multilayer device
+
+● TO DO:
+  1. (Dynamic Camo) Help determine layer geometry for device scale up
+  2. (ERDC D9: Improved produced coatings (Due 6/2/26)) Plan specific formulations for initial coatings testing
+  3. (Dynamic IR) Fabricate scaled up device
+  4. (Dynamic Camo) Test DC device
+  5. (ERDC D9: Improved produced coatings (Due 6/2/26)) Measure electrical properties of EMI and RAM coatings
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Bob Dawson
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Dynamic Camo) find UV-ozone lamp to activate ITO surface
+  2. Setup Tawny and Jerry with Webroot
+  3. Setup Tawny and Jerry with Adobe
+  4. (ERDC D9: Improved produced coatings (Due 6/2/26)) Formulation mixing for initial coatings
+  5. Setup Phone number for Tawny and Jerry
+  6. Setup Tawny for Microsoft Apps
+  7. Add Tawny and Jerry to Dropbox
+  8. AS9100 2nd Meeting
+  9. Add exhaust outlet for CVD furnaces (drill hole in the wall)
+  10. (ERDC D9: Improved produced coatings (Due 6/2/26)) Produce formulations for RAM Layer
+
+● IN PROGRESS:
+  1. (Dynamic Camo) Find conductive paint to replace electrodes
+
+● ON HOLD:
+  1. Test Environmental Chamber, Salt Fog Chamber, and UV chamber
+  2. FTIR Setup with Fan
+  3. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Assemble SS mesh, cut SS sheet, and rod, and support install
+  4. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Support setup of CVD test on etched and non-etched SS
+  5. Send Tawny December expenses
+  6. Test autoclave
+  7. (ERDC D9: Improved produced coatings (Due 6/2/26)) Produce formulations for EMI Layer
+  8. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Mount the external thermocouples
+
+● TO DO:
+  1. (Dynamic Camo) Find alternative to transparent films
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Brandon G
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Dynamic Camo) connect wires for testing
+  2. (Dynamic Camo) DC: Develop spin coating method to coat ink layers
+  3. (Dynamic IR) DIR-HC-004: Create Schematic for HC
+  4. (Dynamic IR) DIR: Order control hardware for DIR matrix
+  5. (Dynamic Camo) DC: Design electronic controls for DC array
+  6. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) ERDCII: Manufacture A2D Trigger PCB
+  7. ERDCII: D6 Slides
+  8. (Dynamic Camo) DC: Setup Electronics for testing
+  9. (Dynamic Camo) DC: Design Electrical hardware for single cell test
+
+● ON HOLD:
+  1. (ERDC D9: Improved produced coatings (Due 6/2/26)) ERDCII: Conductivity testing for initial formulations
+  2. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) ERDCII: Assemble hardware for CVD apparatus
+  3. (ERDC D6: Improved carbon nanomaterial coatings research approach identified (Due 1/6/26)) ERDCII: Get Calibration File from Pasternack
+  4. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) KD: Design send-cut-send panel for CVD process monitoring DAQ enclosure (work with Tony)
+  5. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) KD: Design Gas Board for SendCutSend (work with Tony)
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Caleb Garnica
+--------------------------------------------------------------------------------
+
+● IN PROGRESS:
+  1. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Manufacture additive/matrix test specimens (5 different concentrations for each material combination)
+
+● ON HOLD:
+  1. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Research digital image correlation and decide how to implement with drop tower test
+  2. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Ultrasonic testing on composite samples prior to testing
+  3. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Manufacture composite specimens for drop tower testing
+  4. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Narrow down materials for composite manufacturing based on test results
+  5. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Analyze mechanical test data
+  6. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Begin electromechanical testing of additive/matrix test specimens
+  7. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Test Drop Tower Software
+  8. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Finish putting together large laser cutter
+  9. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Work with Bob to setup and test UV chamber
+  10. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Work with Bob to setup and test environmental chamber
+  11. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Work with Bob to setup and test salt fog chamber
+  12. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Set-up DAQ and sensor equipment test
+
+● TO DO:
+  1. (Dynamic Camo) develop manufacturing concept for array of DC devices
+  2. (Dynamic Camo) seal edges with conductive paints or tapes on top and bottom films
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Fan Yang
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Dynamic Camo) Analyze results of DC testing
+  2. (Dynamic Camo) Make DC Device with Anode and Cathode
+  3. (Dynamic Camo) Make Anode material
+  4. (Dynamic Camo) Test single cell device
+  5. (Dynamic Camo) Make single cell device with single color
+  6. (Dynamic Camo) Prepare electrode materials for testing
+  7. (Dynamic Camo) Mix Cathode ink and electrolyte formulations
+
+● IN PROGRESS:
+  1. (Dynamic Camo) Help with scale up concept
+  2. (Dynamic Camo) Optimize formulations for DC device
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jayden Zundel
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Business Development) Send BD Summaries to Joshua
+  2. (KIP) Add sophistication to pricing model
+  3. Start KPI Review for Q4 2025
+  4. (Business Development) Supply Chain Strategy Path Forward
+  5. Onboarding Tawny
+  6. (KIP) Haystack - get set up with free trial and use for new quotes
+  7. (Business Development) AS9100 2nd Meeting
+  8. (Business Development) Roadmap plan forward for CMMC compliance
+
+● IN PROGRESS:
+  1. (Business Development) Build compliance check documents
+  2. (Business Development) Draft of QMS Policy Document
+
+● ON HOLD:
+  1. Set up Microsoft Intune
+  2. (Business Development) Update DNS for new website (GoDaddy)
+
+● REVIEW:
+  1. (Business Development) PR announcement - opening office in Kentucky
+  2. (Business Development) Review BD summaries and program match findings
+  3. (Business Development) New website template
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jerry Gray
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (KIP) Set up Haystack account for free trial
+  2. AS9100 2nd Meeting
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Joshua Riley
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. Refine KIP with Jayden
+  2. Sales Tax Exemption - Kentucky
+  3. Setup Tawny's email account
+  4. AS9100 2nd Meeting
+  5. Register as a foreign entity in Kentucky
+  6. (Business Development) Register with DDTC (ITAR Compliance)
+
+● IN PROGRESS:
+  1. (Business Development) Identify other areas within Army that coatings could apply
+  2. (Business Development) Research other applications for our coating stacks
+
+● ON HOLD:
+  1. Get business license for Kentucky
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Tawny Bonzo
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. Send invoices to Lockheed
+  2. Figure out secure place for passwords and credentials
+  3. Change Presidents Day holiday to correct date on Clockify
+  4. Get admin access to Clockify (from Jeremiah)
+  5. Set up accounting email
+  6. Review Policy and Procedures Document
+  7. Send PO to cleaning lady
+
+● IN PROGRESS:
+  1. Get quickbooks up to date.
+
+● ON HOLD:
+  1. Issue 1099s
+
+● TO DO:
+  1. Set up process for sales and use tax filing
+
+================================================================================
+END OF REPORT
+================================================================================

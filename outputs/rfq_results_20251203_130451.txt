@@ -1,0 +1,423 @@
+================================================================================
+RFQ SUPPLIER ANALYSIS REPORT
+Generated: 2025-12-03 13:06:29
+================================================================================
+
+SUMMARY
+----------------------------------------
+Total Parts Searched:     7
+Parts with Suppliers:     5
+Exact Part Matches:       5
+No Suppliers Found:       2
+
+
+================================================================================
+PART 1 of 7
+================================================================================
+
+Part Number:     MS20426AD5-7
+Description:     RIVET, SOLID
+CAGE CODE: 80205
+Quantity:        10
+Exact Match:     YES
+Sources Found:   17
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/rivets/solid+rivets/ms20426ad5-7
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: 1 Pound
+    Lead Time:     Not Listed
+    Notes:         Currently out of stock, pricing and availability provided upon request
+
+  How to Order:
+    Add the item to a quote request on the website to receive pr
+    icing and availability by email.
+
+  Notes: The supplier lists the exact part number MS20426AD5-7 but is currently out of stock. They offer to provide up-to-date pricing and availability via email.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider reaching out to other distributors specializing in military or aerospace fasteners.
+
+Search Recommendations:
+  Try searching for 'MS20426AD5-7 rivet distributor' or 'MS20426AD5-7 aerospace fasteners' for additional suppliers.
+
+
+================================================================================
+PART 2 of 7
+================================================================================
+
+Part Number:     MS51552L3
+Description:     NUTPLATE,SELF LOCKING,RIGHT ANGLE, FLOATING, A122 STYLE, 10-32 UNJF
+Quantity:        8
+Exact Match:     YES
+Sources Found:   5
+
+SUPPLIERS FOUND: 5
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/nuts/self_locking+nutplates/MS51552L3
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    10.85
+    Min Order Qty: 5
+    Lead Time:     Up to qty 5 ships same day if ordered before 4pm EST
+    Notes:         Sold in increments of 5
+
+  How to Order:
+    Add to cart and proceed to checkout on the website or contac
+    t via phone for orders.
+
+  Notes: Manufacturer certifications are shipped with the order free of charge.
+
+  ------------------------------------
+
+  Supplier 2: Global Supply
+  Website:    https://www.globalsupply.com/details/item?itemid=MF60003
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1-408-960-0370
+    Email:   [email protected]
+    Address: 500 Division Street Campbell, CA 95008-6906
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: Not Listed
+    Lead Time:     Contact Sales for Availability
+    Notes:         Log in to see if custom discounts apply
+
+  How to Order:
+    Log in to the website to view pricing and availability or co
+    ntact sales for a quote.
+
+  Notes: Alternative Mfg. Part #s include MS51552L3.
+
+  ------------------------------------
+
+  Supplier 3: ISO Parts
+  Website:    https://www.iso-parts.com/inventory2/10
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Request a quotation for pricing
+
+  How to Order:
+    Request a quotation through the website by entering the part
+     number and contact information.
+
+  Notes: Offers a free locator service and is a stocking distributor for military and aviation parts.
+
+  ------------------------------------
+
+  Supplier 4: Stars and Stripes Aerospace
+  Website:    https://www.starsandstripesaerospace.com/stock.html
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Contact for a quote or question
+
+  How to Order:
+    Contact the supplier for a quote or further information.
+
+  Notes: Listed as having stock of the part.
+
+  ------------------------------------
+
+  Supplier 5: Liberty Engineering
+  Website:    https://www.libertyeng.com/anchornut.aspx
+  Confidence: MEDIUM
+
+  Contact Information:
+    Phone:   800-257-4838
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Contact for pricing and availability
+
+  How to Order:
+    Contact the supplier directly for pricing and availability.
+
+  Notes: Supplies threaded fasteners to commercial, aerospace, and military markets.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other military and aerospace fastener distributors or OEMs.
+
+Search Recommendations:
+  Try searching for 'MS51552L3 nutplate supplier' or 'MS51552L3 military fasteners'.
+
+
+================================================================================
+PART 3 of 7
+================================================================================
+
+Part Number:     MS20470AD3-3-5
+Description:     RIVET, SOLID, ALUMINUM, LENGTH 0.229, DIA 0.097
+Quantity:        16
+Exact Match:     YES
+Sources Found:   5
+
+SUPPLIERS FOUND: 3
+----------------------------------------
+
+  Supplier 1: Military Fasteners
+  Website:    https://military-fasteners.com/rivets/solid+rivets/MS20470AD3-3.5
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    $90.40 per pound
+    Min Order Qty: 1 Pound
+    Lead Time:     Up to qty 12 ships same day if ordered before 4pm EST
+    Notes:         Manufacturer certifications are shipped with your order FREE of charge
+
+  How to Order:
+    Add to cart and proceed to checkout on the website
+
+  Notes: The part number MS20470AD3-3.5 is explicitly listed and available for purchase.
+
+  ------------------------------------
+
+  Supplier 2: Monroe Aerospace
+  Website:    https://catalog.monroeaerospace.com/item/all-categories/solid-rivets-1/ms20470ad3-3-5
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   (877) 920-1876
+    Email:   aerosales@askmonroe.com
+    Address: 300 North Dr Ste 100 Melbourne, FL 32934
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: 1 Pound
+    Lead Time:     Not Listed
+    Notes:         Discounts available for larger quantities
+
+  How to Order:
+    Request a quote via phone or email, or add to cart on the we
+    bsite
+
+  Notes: The part number MS20470AD3-3.5 is explicitly listed and available for purchase.
+
+  ------------------------------------
+
+  Supplier 3: Textron Aviation
+  Website:    https://ww2.txtav.com/Parts/PartSearch/PartsDetail/MS20470AD3-3.5
+  Confidence: HIGH
+
+  Contact Information:
+    Email:   metadata@txtav.com
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing and availability require login or registration
+
+  How to Order:
+    Log in or register on the website to view pricing and availa
+    bility
+
+  Notes: The part number MS20470AD3-3.5 is explicitly listed and available for purchase.
+
+  ------------------------------------
+
+Search Recommendations:
+  Consider searching for additional suppliers using terms like 'MS20470AD3-3-5 solid rivet supplier' or 'MS20470AD3-3-5 aerospace rivet distributor'.
+
+
+================================================================================
+PART 4 of 7
+================================================================================
+
+Part Number:     5315-01-120-3941
+Description:     N/A
+Quantity:        1
+Exact Match:     NO
+Sources Found:   0
+
+NO SUPPLIERS FOUND
+----------------------------------------
+
+Alternative Sources:
+  No search results. Try searching manufacturer directly.
+
+Search Recommendations:
+  Contact OEM or authorized distributors
+
+
+================================================================================
+PART 5 of 7
+================================================================================
+
+Part Number:     5315-01-120-3941
+Description:     N/A
+Quantity:        1
+Exact Match:     NO
+Sources Found:   0
+
+NO SUPPLIERS FOUND
+----------------------------------------
+
+Alternative Sources:
+  No search results. Try searching manufacturer directly.
+
+Search Recommendations:
+  Contact OEM or authorized distributors
+
+
+================================================================================
+PART 6 of 7
+================================================================================
+
+Part Number:     NAS1197-816
+Description:     WASHER,FLAT
+CAGE CODE:80205
+Quantity:        36
+Exact Match:     YES
+Sources Found:   1
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: ISO Parts
+  Website:    https://www.iso-parts.com/Inventory2/32
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing and availability require a quotation request
+
+  How to Order:
+    Visit the website, register or log in, and request a quotati
+    on for the part number NAS1197-816.
+
+  Notes: The part number NAS1197-816 is explicitly listed in their inventory catalog.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking other military and aviation parts distributors or contacting the OEM directly.
+
+Search Recommendations:
+  Try searching with variations like 'NAS1197 816' or 'NAS1197816' to find more results.
+
+
+================================================================================
+PART 7 of 7
+================================================================================
+
+Part Number:     CR3212-4-3
+Description:     BLIND RIVET,                            HEAD STYLE: C9 FLUSH COUNTERSUNK,       MATERIAL: ALUM ALLOY 5056 SLEEVE,       CAGE CODE: 11815
+Quantity:        99
+Exact Match:     YES
+Sources Found:   22
+
+SUPPLIERS FOUND: 3
+----------------------------------------
+
+  Supplier 1: Aircraft Spruce & Specialty Co.
+  Website:    https://www.aircraftspruce.com/catalog/hapages/cherrymax.php
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   877-477-7823
+    Email:   info@aircraftspruce.com
+
+  Pricing Information:
+    Unit Price:    $1.64
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Price per 100 is $148.00
+
+  How to Order:
+    Add to cart and proceed to checkout on the website.
+
+  Notes: The exact part number CR3212-4-3 is listed with pricing.
+
+  ------------------------------------
+
+  Supplier 2: Aircraft Spruce Australia
+  Website:    https://www.aircraftspruce.com.au/catalog/hapages/cherrymax.php
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   +61 (1800) 953522
+    Email:   info@aircraftspruce.com.au
+    Address: Melbourne, VIC Australia
+
+  Pricing Information:
+    Unit Price:    $3.20
+    Currency:      AUD
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Price per 100 is $288.20 including GST
+
+  How to Order:
+    Add to cart and proceed to checkout on the website.
+
+  Notes: The exact part number CR3212-4-3 is listed with pricing.
+
+  ------------------------------------
+
+  Supplier 3: Military Fasteners
+  Website:    https://military-fasteners.com/rivets/blind+rivets/cr3212-4-3
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1 (904) 543-6395
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: 100
+    Lead Time:     Not Listed
+    Notes:         Currently out of stock, requires quote for pricing and availability.
+
+  How to Order:
+    Request a quote via the website or contact by phone.
+
+  Notes: The exact part number CR3212-4-3 is listed but currently out of stock.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting Cherry Aerospace directly or checking with other aerospace hardware distributors.
+
+Search Recommendations:
+  Try searching for 'CherryMax CR3212-4-3' or 'CR3212-4-3 blind rivet' on aerospace supplier websites.
+

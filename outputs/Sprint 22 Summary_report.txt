@@ -1,0 +1,166 @@
+================================================================================
+TASK REPORT BY ASSIGNEE
+================================================================================
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Anthony Pearson
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. Scan patent application signatures
+  2. Message Joshua about part/full time position for technician.
+  3. List of bullet points for technician work.
+  4. (Business Development) IR Coating: Identify potential partnership opportunities and companies
+  5. Look for technical conferences for team
+  6. (ERDC D5: Improved composite protection systems research approach identified (Due 11/25/25)) Collect example code for DAQ system for drop tower
+  7. (Business Development) IR Coating: Find relevant DoD programs where tech could apply
+  8. (Business Development) IR Coating: Develop technical brief (1-2 page)
+
+● IN PROGRESS:
+  1. (Dynamic IR) DIR: Optimize 10X10 prototype design
+  2. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Add DAQ and process control capabilities to LabVIEW
+
+● ON HOLD:
+  1. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Build DAQ system for CVD process monitoring
+  2. Begin planning out LabVIEW programming for VNA measurements
+
+● TO DO:
+  1. (ERDC D5: Improved composite protection systems research approach identified (Due 11/25/25)) Test data acquisition electronics
+  2. (ERDC D5: Improved composite protection systems research approach identified (Due 11/25/25)) Plan UT Testing on panels
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Bob Dawson
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Stealth Coatings) Inventory of material
+  2. (ERDC D5: Improved composite protection systems research approach identified (Due 11/25/25)) Prepare PPT for ERDC
+
+● IN PROGRESS:
+  1. Add exhaust outlet for CVD furnaces (drill hole in the wall)
+
+● ON HOLD:
+  1. Test Homogenizer
+  2. Test autoclave
+
+● TO DO:
+  1. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Mount the external thermocouples
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Brandon G
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (ERDC D6: Improved carbon nanomaterial coatings research approach identified (Due 1/6/26)) ERDCII: Revise D6 Testing Approach
+  2. (Dynamic IR) DIR - HC: Create a Timeline for Future Development
+  3. (Business Development) DIR: Develop technical brief (1-2 page)
+  4. (Dynamic IR) DIR - C: Develop Controls for Coating Matrix Concept
+  5. (Dynamic IR) DIR - HC: Components Selection for Heater Pad Cell
+  6. (ERDC D6: Improved carbon nanomaterial coatings research approach identified (Due 1/6/26)) ERDCII: Determine Waveguide Powder Sample Preparation Process
+  7. (ERDC D6: Improved carbon nanomaterial coatings research approach identified (Due 1/6/26)) ERDC II: Develop Testing Approach for D6
+
+● IN PROGRESS:
+  1. (Business Development) DIR: Identify potential partnership opportunities and companies
+  2. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) KD: Design Gas Board for SendCutSend (work with Tony)
+  3. (Business Development) DIR: Find relevant DoD programs where tech could apply
+
+● ON HOLD:
+  1. (ERDC D6: Improved carbon nanomaterial coatings research approach identified (Due 1/6/26)) ERDCII: Get Calibration File from Pasternack
+  2. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) KD: Design send-cut-send panel for CVD process monitoring DAQ enclosure (work with Tony)
+  3. (IR Coating Development) ERDC II - IR: Complete heat lamp IR testing Apparatus
+  4. (Dynamic IR) DIR - HC: Test Prototype
+
+● TO DO:
+  1. (Dynamic IR) DIR: BOM for scaled up device
+  2. (Dynamic IR) DIR: Plan Scale-up
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Caleb Garnica
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. Monday Meeting Presentation
+  2. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Manufacture matrix test specimens for electromechanical testing
+
+● IN PROGRESS:
+  1. Work with Bob to setup and test UV chamber
+  2. Work with Bob to setup and test environmental chamber
+  3. Work with Bob to setup and test salt fog chamber
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Fan Yang
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (Adaptive Multilayer Coating Development) Determine colors DC can do
+  2. ERDC Dec Update Slides
+  3. (Dynamic Camo) DC: Develop project plan
+  4. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Document results
+  5. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Prepare acid solution
+  6. Run initial temperature tests for methane only CVD
+  7. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Determine equipment and supplies needed for CVD research
+
+● IN PROGRESS:
+  1. (Adaptive Multilayer Coating Development) Determine temperature effects on DC functionality
+  2. Prepare catalyst for methane/catalyst CVD experiments
+
+● ON HOLD:
+  1. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Test Mass Spec
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jayden Zundel
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. (KIP) Add new BD summaries to database
+  2. (KIP) Add AS/ISO cert check to database
+  3. (KIP) Submit first bid
+  4. (KIP) Set up distributor accounts for primes
+  5. Add ERDC deadlines to Jira timelines
+  6. (KIP) Create script to summarize RFQs
+  7. (KIP) Create script to catalog RFQ items
+  8. Add points to future sprints
+  9. (KIP) Pull correct solicitations on Mondays
+  10. (KIP) KIP: Create feature to read in RFQ and find suppliers
+  11. Separate decoy/deception projects on JIRA
+  12. Figure out new website
+
+● IN PROGRESS:
+  1. (KIP) Create onboarding doc for new companies
+  2. New website template
+
+● ON HOLD:
+  1. NGC Intro Meeting
+  2. (KIP) KIP: Contact 100+ suppliers
+
+● REVIEW:
+  1. (Business Development) KIP: Find relevant DoD programs where tech could apply
+  2. ITAR Compliance Plan
+
+● TO DO:
+  1. (Business Development) Review BD summaries and program match findings
+  2. Update DNS for new website (GoDaddy)
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jerry Gray
+--------------------------------------------------------------------------------
+
+● DONE:
+  1. Quote 12022025NI
+  2. Quote 2686-CP4 BASE SKR - M011
+  3. Quote 2912-CP2 OPT - M011
+  4. Quote 2686-CP4 BASE DVE - M011
+  5. Quote 2686-CP4 BASE CHMD - M011
+  6. Quote 2686-CP4 BASE 4TL - M011
+  7. Quote 2686-CP4 BASE DAP - M011
+  8. Quote 2686-CP4 BASE RIVERJACK - M011
+  9. Quote 2686-CP4 OPT ASLT - M011
+  10. Quote 2686-CP4 LAD - M011
+  11. (KIP) How to buy parts from Boeing.
+
+● TO DO:
+  1. Quote 12042025NI-2
+
+================================================================================
+END OF REPORT
+================================================================================

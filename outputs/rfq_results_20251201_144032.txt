@@ -1,0 +1,903 @@
+================================================================================
+RFQ SUPPLIER ANALYSIS REPORT
+Generated: 2025-12-01 14:47:52
+================================================================================
+
+SUMMARY
+----------------------------------------
+Total Parts Searched:     16
+Parts with Suppliers:     14
+Exact Part Matches:       14
+No Suppliers Found:       2
+
+
+================================================================================
+PART 1 of 16
+================================================================================
+
+Part Number:     ATUM-24/6-0-STK
+Description:     HEATSHRINK TUBING LINED, DUAL WALLED 24mm X 4',INNER DIA SUPPLIED .945", INNER DIA RECOVERED .236"; CAGE CODE: 06090
+Quantity:        1
+Exact Match:     YES
+Sources Found:   21
+
+SUPPLIERS FOUND: 3
+----------------------------------------
+
+  Supplier 1: Mouser Electronics
+  Website:    https://www.mouser.com/ProductDetail/TE-Connectivity-Raychem/ATUM-24-6-0-STK?qs=jdeZAcMgN5n1EmIWf0cwBQ%3D%3D
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Access to pricing information was denied
+
+  How to Order:
+    Visit the website and search for the part number to view pri
+    cing and availability. Ensure JavaScript and cookies are ena
+    bled.
+
+  Notes: Access to the page was denied, so specific details could not be verified.
+
+  ------------------------------------
+
+  Supplier 2: WireMasters
+  Website:    https://www.wiremasters.com/atum-24-6-0-stk
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details are not listed on the website
+
+  How to Order:
+    Contact WireMasters directly via phone or visit their websit
+    e to inquire about pricing and availability.
+
+  Notes: WireMasters is a stocking distributor for this part.
+
+  ------------------------------------
+
+  Supplier 3: Lapp Tannehill
+  Website:    https://www.lapptannehill.com/atum-24-6-high-shrink-ratio-adhesive-lined-polyolefin-tubing-black
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   800-633-6339
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details are not listed on the website
+
+  How to Order:
+    Visit the website or contact them via phone for a quote and 
+    to place an order.
+
+  Notes: Lapp Tannehill lists the exact part number on their website.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting TE Connectivity directly or checking with other authorized distributors.
+
+Search Recommendations:
+  Try searching for 'TE Connectivity ATUM-24/6-0-STK distributor' or 'Raychem ATUM-24/6-0-STK supplier'.
+
+
+================================================================================
+PART 2 of 16
+================================================================================
+
+Part Number:     ATUM-32/8-0
+Description:     INSULATION SLEEVING; ADHESIVE LINED;    POLYOLEFIN TUBING; 1.260" EXPANDED      0.315" RECOVERED; CAGE:  06090
+Quantity:        1
+Exact Match:     YES
+Sources Found:   15
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: Newark Electronics
+  Website:    https://www.newark.com/raychem-te-connectivity/atum-32-8-0-stk/heat-shrink-tubing-32mm-id-po/dp/01AH7355
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing and availability may vary; check website for details
+
+  How to Order:
+    Visit the Newark Electronics website and search for the part
+     number ATUM-32/8-0-STK to view availability and pricing. Fo
+    llow the website's instructions to place an order.
+
+  Notes: Newark Electronics lists the exact part number ATUM-32/8-0-STK, indicating availability.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other distributors like Mouser or TE Connectivity directly if more options are needed.
+
+Search Recommendations:
+  Try searching for 'ATUM-32/8-0-STK TE Connectivity' or 'Raychem ATUM-32/8-0-STK' on other electronics distributor websites.
+
+
+================================================================================
+PART 3 of 16
+================================================================================
+
+Part Number:     ATUM-8/2-0-STK
+Description:     HEATSHRINK, ADHESIVE LINED; DUAL WALLED 8mm X 4'; INNER DIA SUPPLIED .315", INNER DIA REC.079"; CAGE: 06090; ORDEREDIN 4 FT SECT IONS
+Quantity:        1
+Exact Match:     YES
+Sources Found:   17
+
+SUPPLIERS FOUND: 3
+----------------------------------------
+
+  Supplier 1: WireMasters
+  Website:    https://www.wiremasters.com/atum-8-2-0-stk
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details not provided on the website
+
+  How to Order:
+    Visit the website and contact customer service for ordering 
+    details.
+
+  Notes: WireMasters is a stocking distributor of the exact part number.
+
+  ------------------------------------
+
+  Supplier 2: Mouser Electronics
+  Website:    https://www.mouser.com/ProductDetail/TE-Connectivity-Raychem/ATUM-8-2-0-STK?qs=lNuF3X%252BbSAyUgPeobiMpQQ%3D%3D
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Access to pricing details was denied
+
+  How to Order:
+    Visit the website and ensure JavaScript and cookies are enab
+    led to access the page.
+
+  Notes: Access to the page was denied, but the part number is listed in the preview.
+
+  ------------------------------------
+
+  Supplier 3: Digi-Key Electronics
+  Website:    https://www.digikey.com/en/products/detail/te-connectivity-raychem-cable-protection/ATUM-8-2-0-STK/1825192
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    $9.72
+    Min Order Qty: 1
+    Lead Time:     Not Listed
+    Notes:         Pricing available for different quantities
+
+  How to Order:
+    Visit the website and add the item to the cart for purchase.
+
+  Notes: Digi-Key lists the exact part number with pricing details.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting TE Connectivity directly or checking other major electronic component distributors.
+
+Search Recommendations:
+  Try searching for 'TE Connectivity ATUM-8/2-0-STK distributor' or 'Raychem ATUM-8/2-0-STK supplier'.
+
+
+================================================================================
+PART 4 of 16
+================================================================================
+
+Part Number:     M22759/4-6-9
+Description:     PN: M22759/4-6-9 WIRE, ELECTRIC, FLUOROPOLYMER-INSULATED,TFE-GLASS-FEP CAGE CODE: 81343
+Quantity:        18
+Exact Match:     YES
+Sources Found:   2
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: WireMasters
+  Website:    https://www.wiremasters.com/m22759-4-6-9
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    13.35
+    Min Order Qty: 1
+    Lead Time:     98 days
+    Notes:         Price per foot
+
+  How to Order:
+    Contact WireMasters via phone or website to place an order. 
+    Note that the customer account is currently blocked, so ensu
+    re account issues are resolved before ordering.
+
+  Notes: The part is listed with specific details including pricing and lead time.
+
+  ------------------------------------
+
+  Supplier 2: TrustedParts.com
+  Website:    https://www.trustedparts.com/en/search/M22759
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Lead Time:     6 days
+    Notes:         Pricing and stock availability can be checked on the website.
+
+  How to Order:
+    Visit TrustedParts.com to check stock and pricing, and proce
+    ed with the purchase through their platform.
+
+  Notes: The part is listed with stock availability and lead time.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other aerospace wire distributors or contacting the manufacturer directly for additional stock options.
+
+Search Recommendations:
+  Try searching for 'M22759/4-6-9 wire distributor' or 'M22759/4-6-9 aerospace wire supplier' for more options.
+
+
+================================================================================
+PART 5 of 16
+================================================================================
+
+Part Number:     M23053/5-106-0
+Description:     INSULATION SLEEVING, ELECTRICAL, 0.250" ID, 2:1 SHRINK RATIO, SINGLE WALL, MIL-I-23053/5; CAGE: 0U583
+Quantity:        5
+Exact Match:     YES
+Sources Found:   19
+
+SUPPLIERS FOUND: 3
+----------------------------------------
+
+  Supplier 1: Heat Shrink Supply
+  Website:    https://www.heatshrinksupply.com/pages/product_details.php?part=M23053/5-106-0
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1-(866)-217-8933
+
+  Pricing Information:
+    Unit Price:    0.41
+    Min Order Qty: 100 FT
+    Lead Time:     Stock
+    Notes:         Price breaks available for larger quantities
+
+  How to Order:
+    Add to shopping cart and proceed to checkout on the website
+
+  Notes: Manufacturer C of C included. Large inventory available.
+
+  ------------------------------------
+
+  Supplier 2: WireMasters
+  Website:    https://www.wiremasters.com/m23053-5-106-0
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    0.39
+    Min Order Qty: 1 FT
+    Lead Time:     15 days
+    Notes:         Volume pricing available
+
+  How to Order:
+    Contact WireMasters directly to place an order
+
+  Notes: In stock with a large quantity available.
+
+  ------------------------------------
+
+  Supplier 3: SkyGeek
+  Website:    https://skygeek.com/hix-1-4.html
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    33.00
+    Min Order Qty: 100 FT
+    Lead Time:     Not Listed
+    Notes:         Price per 100 ft length
+
+  How to Order:
+    Purchase directly from the website
+
+  Notes: Listed as military spec. M23053/5-106-0 black insulation sleeving.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with major distributors like Digi-Key, Mouser, or contacting the manufacturer directly.
+
+Search Recommendations:
+  Try searching for 'M23053/5-106-0 heat shrink tubing' or 'MIL-I-23053/5-106-0 insulation sleeving'.
+
+
+================================================================================
+PART 6 of 16
+================================================================================
+
+Part Number:     M23053/5-112-0
+Description:     INSULATION SLEEVING, ELECTRICAL, BLACK, EXPANDED INSIDE DIAMETER 1" MINIMUM,    SHRINKABLE; CAGE: 81349
+Quantity:        1
+Exact Match:     YES
+Sources Found:   19
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: Heat Shrink Supply
+  Website:    https://www.heatshrinksupply.com/pages/product_details.php?part=M23053/5-112-0
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1-(866)-217-8933
+
+  Pricing Information:
+    Unit Price:    $4.47 per FT
+    Min Order Qty: 40 FT
+    Lead Time:     Stock
+    Notes:         Price breaks available for larger quantities
+
+  How to Order:
+    Add to shopping cart and proceed to checkout on the website.
+
+  Notes: Manufacturer C of C Included. Image is for illustrative purposes only.
+
+  ------------------------------------
+
+  Supplier 2: WireMasters
+  Website:    https://www.wiremasters.com/m23053-5-112-0
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    $2.34 per FT
+    Min Order Qty: 1 FT
+    Lead Time:     15 days
+    Notes:         Volume pricing available
+
+  How to Order:
+    Sign in to your account or request an account to place an or
+    der.
+
+  Notes: Customer account required for ordering.
+
+  ------------------------------------
+
+Search Recommendations:
+  Consider searching for distributors like Mouser or TE Connectivity for additional options.
+
+
+================================================================================
+PART 7 of 16
+================================================================================
+
+Part Number:     M27500-22SP3T23
+Description:     CABLE, 22 AWG, SPECIAL PURPOSE, ELECTRICAL; CAGE: 81349
+Quantity:        240
+Exact Match:     YES
+Sources Found:   2
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: WireMasters
+  Website:    https://www.wiremasters.com/m27500-22sp3t23
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details are not listed on the website; contact supplier for a quote.
+
+  How to Order:
+    Visit the website and contact WireMasters directly via phone
+     or their contact form to request a quote and place an order
+    .
+
+  Notes: WireMasters explicitly lists the exact part number M27500-22SP3T23 on their website.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider reaching out to TE Connectivity, Judd Wire, or Marmon Aerospace as potential manufacturers.
+
+Search Recommendations:
+  Try searching for 'M27500-22SP3T23 cable supplier' or 'M27500-22SP3T23 TE Connectivity distributor' for additional sources.
+
+
+================================================================================
+PART 8 of 16
+================================================================================
+
+Part Number:     M83413/8-A003BB
+Description:     GROUND WIRE, 3.0" LONG CAGE CODE: 04939
+Quantity:        14
+Exact Match:     YES
+Sources Found:   7
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: SkyGeek
+  Website:    https://skygeek.com/military-standard-m83413-8a003bb-jumper.html
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details not provided on the website
+
+  How to Order:
+    Visit the website and search for the part number M83413/8-A0
+    03BB to place an order.
+
+  Notes: SkyGeek explicitly lists the part number M83413/8-A003BB on their website.
+
+  ------------------------------------
+
+  Supplier 2: AeroBase Group
+  Website:    https://aerobase.store/
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   (321) 802-5889
+
+  Pricing Information:
+    Unit Price:    9.35
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Price per unit is $9.35
+
+  How to Order:
+    Visit the AeroBase Store website and search for the part num
+    ber M83413/8-A003BB to place an order.
+
+  Notes: AeroBase Group lists the part number M83413/8-A003BB with pricing information.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting distributors like Mouser Electronics or Digi-Key for availability.
+
+Search Recommendations:
+  Try searching for 'M83413/8-A003BB ground wire supplier' or 'M83413/8-A003BB military specification jumper'.
+
+
+================================================================================
+PART 9 of 16
+================================================================================
+
+Part Number:     M83413/8-A004BB
+Description:     GROUND WIRE, 4" LONG, CAGE 81349        12 AWG SINGLE CONDUCTOR, TERMINAL LUG   SIZE .19 BOTH ENDS
+Quantity:        12
+Exact Match:     YES
+Sources Found:   12
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: SkyGeek
+  Website:    https://skygeek.com/military-standard-m83413-8a004bb-jumper-assembly.html
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details not provided on the website
+
+  How to Order:
+    Visit the website and add the item to the cart for purchasin
+    g. Contact customer service for more details if needed.
+
+  Notes: The part number M83413/8-A004BB is explicitly listed on the website.
+
+  ------------------------------------
+
+  Supplier 2: Stahl Metall
+  Website:    https://www.stahlmetall.com/products/copy-of-mil-dtl-83413-ground-straps-electrical-lead-m83413-8-a004ac
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details not provided on the website
+
+  How to Order:
+    Visit the website and contact the supplier for purchasing de
+    tails.
+
+  Notes: The part number M83413/8-A004BB is explicitly listed on the website.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting authorized distributors or OEMs directly for availability.
+
+Search Recommendations:
+  Try searching for 'M83413/8-A004BB ground wire supplier' or 'M83413/8-A004BB electrical lead distributor'.
+
+
+================================================================================
+PART 10 of 16
+================================================================================
+
+Part Number:     M83519/2-5
+Description:     SHIELD TERMINATOR; HEAT SHRINKABLE,     COLOR: WHITE, LENGTH 0.750", MIN. DIA.  0.275" ONE END, MIN. DIA. 0.300"        OTHER END; CAGE 81349
+Quantity:        2
+Exact Match:     YES
+Sources Found:   21
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: WireMasters
+  Website:    https://www.wiremasters.com/m83519-2-5
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    1.43
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Quantity entered must be a multiple of a certain number
+
+  How to Order:
+    Visit the website, select the part, and proceed to checkout.
+     Note that the customer company account is blocked and canno
+    t place orders directly.
+
+  Notes: WireMasters is a stocking distributor of the exact part number M83519/2-5.
+
+  ------------------------------------
+
+  Supplier 2: TTI, Inc.
+  Website:    https://www.tti.com/content/ttiinc/en/apps/part-detail.html?partsNumber=M83519%2F2-5&mfgShortname=RAY
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: 1
+    Lead Time:     Not Listed
+    Notes:         Bulk pricing available
+
+  How to Order:
+    Visit the website and search for the part number to view pri
+    cing and availability.
+
+  Notes: TTI, Inc. lists the exact part number M83519/2-5 with TE Connectivity as the manufacturer.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other major electronic component distributors like Digi-Key or Newark for availability.
+
+Search Recommendations:
+  Try searching for 'M83519/2-5 TE Connectivity' or 'M83519/2-5 Raychem' to find additional suppliers.
+
+
+================================================================================
+PART 11 of 16
+================================================================================
+
+Part Number:     M85049/140-01BC
+Description:     ELECTRICAL BOOT, HEAT SHRINKABLE        CAGE CODE 81343, SAE AS85049/140
+Quantity:        3
+Exact Match:     NO
+Sources Found:   9
+
+NO SUPPLIERS FOUND
+----------------------------------------
+
+Alternative Sources:
+  Consider checking with major electronic component distributors such as Digi-Key, Newark, or directly with the manufacturer Glenair for availability. Additionally, contacting specialized aerospace suppliers or using a procurement service might yield results.
+
+Search Recommendations:
+  Try searching for 'Glenair M85049/140-01BC heat shrink boot' or 'SAE AS85049/140 electrical boot' on major distributor websites or industry-specific marketplaces.
+
+
+================================================================================
+PART 12 of 16
+================================================================================
+
+Part Number:     M85049/140-02BC
+Description:     ELECTRICAL BOOT, HEAT SHRINKABLE; CAGE CODE: 81343; SAE AS85049/140
+Quantity:        1
+Exact Match:     YES
+Sources Found:   3
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: Mouser Electronics
+  Website:    https://www.mouser.com/ProductDetail/Glenair/M85049-140-02BC?qs=x%252BovkjSnLSXM5479zi9RpQ%3D%3D
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Access to pricing information is restricted
+
+  How to Order:
+    Visit the website and search for the part number to view ava
+    ilability and pricing.
+
+  Notes: Access to the page is restricted, but the part number is explicitly listed in the search results.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting Glenair directly or checking with other major electronic component distributors like Digi-Key or Newark.
+
+Search Recommendations:
+  Try searching for 'Glenair M85049/140-02BC' or 'M85049/140-02BC heat shrink boot' on other distributor websites.
+
+
+================================================================================
+PART 13 of 16
+================================================================================
+
+Part Number:     MS20659-130
+Description:     TERMINALS RING TERM 6AWG 10, CAGE CODE: 00779
+Quantity:        3
+Exact Match:     YES
+Sources Found:   22
+
+SUPPLIERS FOUND: 1
+----------------------------------------
+
+  Supplier 1: E&E Trading
+  Website:    https://eandetrading.net/collections/electrical-products
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing details not available on the website
+
+  How to Order:
+    Visit the website and search for the part number MS20659-130
+     to check availability and order.
+
+  Notes: The part number MS20659-130 is explicitly listed on their website.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with other electronic component distributors like Digi-Key, Mouser, or directly with TE Connectivity.
+
+Search Recommendations:
+  Try searching for 'MS20659-130 terminal' or 'TE Connectivity MS20659-130' on major distributor websites.
+
+
+================================================================================
+PART 14 of 16
+================================================================================
+
+Part Number:     S03-03-R
+Description:     SHIELD TERMINATOR; SOLDER SLEEVE;       INSIDEDIA:  .170 INCH,  JACKET DIA:     .200 INCH, 6 INCH BRAID; CAGE:  06090
+Quantity:        20
+Exact Match:     YES
+Sources Found:   18
+
+SUPPLIERS FOUND: 3
+----------------------------------------
+
+  Supplier 1: TE Connectivity
+  Website:    https://www.te.com/en/product-676516-000.html
+  Confidence: HIGH
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Quote Required
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Pricing and availability can be requested directly from the website
+
+  How to Order:
+    Visit the TE Connectivity website, search for the part numbe
+    r S03-03-R, and request a quote or sample.
+
+  Notes: TE Connectivity is the manufacturer of the part, ensuring authenticity and availability.
+
+  ------------------------------------
+
+  Supplier 2: Mouser Electronics
+  Website:    https://www.mouser.com/ProductDetail/TE-Connectivity-Raychem/S03-03-R?qs=GyBxYo12BStLEvuyy6%252B26A%3D%3D
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Access to pricing and inventory may require enabling cookies and JavaScript.
+
+  How to Order:
+    Visit the Mouser Electronics website, search for the part nu
+    mber S03-03-R, and follow the instructions to view pricing a
+    nd availability.
+
+  Notes: Access to the page was denied, suggesting potential issues with viewing the content without proper browser settings.
+
+  ------------------------------------
+
+  Supplier 3: Element14
+  Website:    https://in.element14.com/raychem-te-connectivity/s03-03-r/solder-sleeve-pvdf-blue/dp/2765561
+  Confidence: MEDIUM
+
+  Contact Information:
+
+  Pricing Information:
+    Unit Price:    Not Listed
+    Min Order Qty: Not Listed
+    Lead Time:     Not Listed
+    Notes:         Technical datasheet available for more details.
+
+  How to Order:
+    Visit the Element14 website, search for the part number S03-
+    03-R, and follow the instructions to order.
+
+  Notes: Element14 lists the part but does not provide immediate pricing information.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider contacting TE Connectivity directly or checking other major electronic component distributors like Digi-Key or Newark.
+
+Search Recommendations:
+  Try searching for 'TE Connectivity S03-03-R' or 'Raychem S03-03-R' on distributor websites or contact TE Connectivity for direct sales.
+
+
+================================================================================
+PART 15 of 16
+================================================================================
+
+Part Number:     TMS-SCE-1/2-2.00-9
+Description:     N/A
+Quantity:        1
+Exact Match:     NO
+Sources Found:   0
+
+NO SUPPLIERS FOUND
+----------------------------------------
+
+Alternative Sources:
+  No search results. Try searching manufacturer directly.
+
+Search Recommendations:
+  Contact OEM or authorized distributors
+
+
+================================================================================
+PART 16 of 16
+================================================================================
+
+Part Number:     M23053/5-104-0
+Description:     INSULATION SLEEVING, .125/.062 ID, BLACK, MIL-I-23053/5 CLASS 1; CROSSLINKED LEFIN HEAD SHRINKABLE, CAGE CODE: 0U583
+Quantity:        1
+Exact Match:     YES
+Sources Found:   18
+
+SUPPLIERS FOUND: 2
+----------------------------------------
+
+  Supplier 1: WireMasters
+  Website:    https://www.wiremasters.com/m23053-5-104-0-0-125
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1.855.WM.SPOOL
+
+  Pricing Information:
+    Unit Price:    0.29
+    Min Order Qty: 1
+    Lead Time:     15 days
+    Notes:         Price per foot
+
+  How to Order:
+    Visit the website, add the product to the cart, and proceed 
+    to checkout. Contact customer service if account issues aris
+    e.
+
+  Notes: The part number matches exactly, and the supplier lists the product with clear pricing and lead time.
+
+  ------------------------------------
+
+  Supplier 2: Heat Shrink Supply
+  Website:    https://www.heatshrinksupply.com/pages/product_details.php?part=M23053/5-104-0
+  Confidence: HIGH
+
+  Contact Information:
+    Phone:   1-(866)-217-8933
+
+  Pricing Information:
+    Unit Price:    0.28
+    Min Order Qty: 200
+    Lead Time:     Stock
+    Notes:         Price per foot for 200 FT minimum order
+
+  How to Order:
+    Visit the website, sign in or register, add the product to t
+    he cart, and proceed to checkout.
+
+  Notes: The part number matches exactly, and the supplier provides detailed product information and pricing.
+
+  ------------------------------------
+
+Alternative Sources:
+  Consider checking with major distributors like Mouser or TTI, Inc. for additional stock or pricing options.
+
+Search Recommendations:
+  Try searching with variations like 'M23053/5-104-0 TE Connectivity' or 'M23053/5-104-0 Raychem' to find more suppliers.
+

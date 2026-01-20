@@ -8,6 +8,7 @@ Fast auto-refresh for SAM.gov opportunities:
 - FIXED: Better key rotation and quota handling
 - NEW: Filters out solicitations with past response dates
 - FIXED: Leaves description blank if it's an api.sam.gov URL so backfill can fetch real descriptions
+- NEW: Filters for R&D NAICS codes only (5417xx series)
 """
 
 from __future__ import annotations
@@ -29,13 +30,39 @@ import get_relevant_solicitations as gs
 # ---------------- Config ----------------
 PAGE_SIZE = int(os.getenv("PAGE_SIZE", "200"))
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", "5000"))
-DAYS_BACK = int(os.getenv("DAYS_BACK", "1"))
+from zoneinfo import ZoneInfo
+from datetime import datetime
+
+def get_days_back() -> int:
+    mst = ZoneInfo("America/Denver")
+    now_mst = datetime.now(mst)
+
+    # Debug output
+    print(f"DEBUG: now_mst = {now_mst}")
+    print(f"DEBUG: weekday() = {now_mst.weekday()} (0=Mon, 1=Tue, ...)")
+    print(f"DEBUG: date name = {now_mst.strftime('%A')}")
+
+    if now_mst.weekday() == 0:  # Monday
+        return 3
+    return 1
+
+# ADD THIS LINE - it's missing from your script
+DAYS_BACK = int(os.getenv("DAYS_BACK")) if os.getenv("DAYS_BACK") else get_days_back()
 DB_URL = os.getenv("SUPABASE_DB_URL") or os.getenv(
     "DB_URL") or "sqlite:///app.db"
 
 # Read keys from env or secrets-like CSV
 SAM_KEYS_RAW = os.getenv("SAM_KEYS", "")
 SAM_KEYS = [k.strip() for k in SAM_KEYS_RAW.split(",") if k.strip()]
+
+# R&D NAICS codes to filter for
+# 541711: R&D in Biotechnology
+# 541712: R&D in Physical, Engineering, and Life Sciences (except Nanotechnology and Biotechnology)
+# 541713: R&D in Nanotechnology
+# 541714: R&D in Biotechnology (except Nanobiotechnology)
+# 541715: R&D in the Physical, Engineering, and Life Sciences (except Nanotechnology and Biotechnology)
+# 541720: R&D in the Social Sciences and Humanities
+RD_NAICS_CODES = ["541711", "541712", "541713", "541714", "541715", "541720"]
 
 # ---------------- Date Parsing Helpers ----------------
 DATE_ISO_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -90,6 +117,18 @@ def _is_response_date_past(response_date_str: str) -> bool:
 
     today = date.today()
     return parsed_date < today
+
+
+def _is_rd_naics(naics_code: str) -> bool:
+    """
+    Check if a NAICS code is in the R&D category (5417xx).
+    Returns True if it matches any R&D NAICS code.
+    """
+    if not naics_code:
+        return False
+    naics_str = str(naics_code).strip()
+    # Check if it starts with any of our R&D codes
+    return any(naics_str.startswith(code) for code in RD_NAICS_CODES)
 
 
 # ---------------- Existing Helper Functions ----------------
@@ -280,6 +319,7 @@ def main():
     print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)")
     print(f"DAYS_BACK = {DAYS_BACK}")
     print(f"Paging: PAGE_SIZE={PAGE_SIZE}, MAX_RECORDS={MAX_RECORDS}")
+    print(f"Filtering: R&D NAICS codes ({', '.join(RD_NAICS_CODES)}) - CLIENT-SIDE FILTERING")
     print(f"Filtering: Will skip solicitations with past response dates")
 
     if not SAM_KEYS:
@@ -316,6 +356,7 @@ def main():
     total_inserted = 0
     total_seen = 0
     total_skipped_expired = 0
+    total_skipped_non_rd = 0
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     try:
@@ -323,7 +364,7 @@ def main():
             existing = _already_have_ids(conn)
             rows_to_insert: List[Dict[str, Any]] = []
 
-            print("Fetching solicitations from SAM.gov with pagination…")
+            print("Fetching solicitations from SAM.gov (will filter for R&D NAICS client-side)…")
             offset = 0
 
             while True:
@@ -335,12 +376,12 @@ def main():
                     f"  → Page {offset//PAGE_SIZE + 1}: offset={offset}, limit={limit}")
 
                 try:
-                    # This uses proper key rotation in _request_sam()
+                    # Fetch ALL solicitations - filter client-side since SAM API filtering isn't working
                     raw = gs.get_sam_raw_v3(
                         days_back=DAYS_BACK,
                         limit=limit,
                         api_keys=SAM_KEYS,
-                        filters={},       # we want everything in the window
+                        filters={},  # No server-side filtering
                         offset=offset,
                     )
                 except gs.SamQuotaError:
@@ -367,6 +408,12 @@ def main():
                     m = map_record_basic_fields_only(r)
                     nid = (m.get("notice_id") or "").strip()
                     if not nid or nid in existing:
+                        continue
+
+                    # NEW: Client-side NAICS filtering for R&D codes
+                    naics_code = m.get("naics_code", "")
+                    if not _is_rd_naics(naics_code):
+                        total_skipped_non_rd += 1
                         continue
 
                     # NEW: Check if response date has passed
@@ -407,7 +454,7 @@ def main():
                     inserted = _insert_rows(conn, rows_to_insert)
                     total_inserted += inserted
                     print(
-                        f"    inserted {inserted} new records (total new: {total_inserted})")
+                        f"    inserted {inserted} new R&D records (total new: {total_inserted})")
                     rows_to_insert.clear()
 
                 # Next page
@@ -415,7 +462,8 @@ def main():
                 if total_seen >= MAX_RECORDS:
                     break
 
-        print(f"Auto refresh success: inserted {total_inserted} new notices.")
+        print(f"Auto refresh success: inserted {total_inserted} new R&D notices.")
+        print(f"Skipped {total_skipped_non_rd} non-R&D notices.")
         print(
             f"Skipped {total_skipped_expired} notices with expired response dates.")
         if total_seen == 0:

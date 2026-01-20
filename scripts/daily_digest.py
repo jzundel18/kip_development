@@ -4,6 +4,9 @@ Daily email digest - CORRECTED FOR TECHNOLOGY_AREAS TABLE
 Sends emails directly to email addresses stored in technology_areas table.
 Each technology area with emails gets its own digest based on its description.
 
+UPDATED: Now processes ALL solicitations (not just research category)
+UPDATED: Now includes solicitation description summary in email
+
 Required env vars:
   SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD
 Optional:
@@ -44,9 +47,11 @@ KIP_QUOTES = [
     "I've already looked into it for myself.",
 ]
 
+
 def get_random_kip_quote():
     """Return a random Kip quote from Napoleon Dynamite"""
     return random.choice(KIP_QUOTES)
+
 
 # Module-level config
 DB_URL = None
@@ -59,6 +64,7 @@ MAX_RESULTS = 5
 MIN_SCORE = 60.0
 PREFILTER_CANDIDATES = 25
 KIP_MEME_URL = None
+
 
 
 def _load_config():
@@ -93,13 +99,54 @@ logging.basicConfig(
 engine = None
 oai = None
 
+# Healthcare keywords to filter out
+HEALTHCARE_KEYWORDS = [
+    "healthcare", "health care", "medical", "hospital", "clinical",
+    "pharmaceutical", "pharmacy", "nursing", "patient care", "medicare",
+    "medicaid", "hhs", "nih", "cdc", "fda", "cms", "veterans health",
+    "mental health", "dental", "laboratory services", "biomedical",
+    "health services", "healthcare services", "medical supplies",
+    "medical equipment", "ambulance", "emergency medical"
+]
 
-def _yesterday_utc_window():
-    """Return start and end dates as YYYY-MM-DD strings"""
+
+def _filter_out_healthcare(notices: pd.DataFrame) -> pd.DataFrame:
+    """Remove healthcare-related solicitations from consideration"""
+    if notices.empty:
+        return notices
+
+    def is_healthcare(row):
+        title = (row.get("title", "") or "").lower()
+        description = (row.get("description", "") or "").lower()
+        naics = str(row.get("naics_code", "") or "")
+        combined = f"{title} {description}"
+
+        # Check keywords
+        for keyword in HEALTHCARE_KEYWORDS:
+            if keyword in combined:
+                return True
+
+        # Healthcare NAICS codes (621xxx, 622xxx, 623xxx, 624xxx are health/social services)
+        if naics.startswith(("621", "622", "623", "624")):
+            return True
+
+        return False
+
+    original_count = len(notices)
+    filtered = notices[~notices.apply(is_healthcare, axis=1)]
+    removed_count = original_count - len(filtered)
+
+    if removed_count > 0:
+        logging.info(f"Filtered out {removed_count} healthcare-related solicitations")
+
+    return filtered.reset_index(drop=True)
+
+
+def _today_utc_date():
+    """Return today's date as YYYY-MM-DD string"""
     now = datetime.now(timezone.utc)
-    end_date = now.date()
-    start_date = end_date - timedelta(days=1)
-    return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
+    today_date = now.date()
+    return today_date.strftime("%Y-%m-%d")
 
 
 def _fetch_technology_areas_with_emails(conn) -> pd.DataFrame:
@@ -143,21 +190,35 @@ def _parse_email_addresses(email_field: str) -> list[str]:
     return emails
 
 
-def _fetch_yesterday_notices(conn, start_date: str, end_date: str) -> pd.DataFrame:
-    """Fetch notices posted on the start_date (yesterday)"""
+def _fetch_today_notices(conn, today_date: str) -> pd.DataFrame:
+    """Fetch notices pulled today (based on pulled_at date) - ALL CATEGORIES"""
     cols = [
         "notice_id", "title", "description", "naics_code", "set_aside_code",
-        "posted_date", "response_date", "link", "pop_city", "pop_state"
+        "posted_date", "response_date", "link", "pop_city", "pop_state", "category"
     ]
     try:
         sql = text(f"""
             SELECT {", ".join(cols)}
             FROM solicitationraw
-            WHERE posted_date = :yesterday_date
+            WHERE DATE(pulled_at) = :today_date
         """)
         df = pd.read_sql_query(
-            sql, conn, params={"yesterday_date": start_date})
-        logging.info(f"Found {len(df)} notices posted on {start_date}")
+            sql, conn, params={"today_date": today_date})
+        logging.info(f"Found {len(df)} notices pulled today ({today_date})")
+
+        # Debug: Check if descriptions are populated
+        if len(df) > 0:
+            sample_desc = df["description"].iloc[0] if "description" in df.columns else "COLUMN MISSING"
+            logging.info(f"Sample description length: {len(str(sample_desc))} chars")
+            logging.info(f"Sample description preview: {str(sample_desc)[:100]}...")
+            null_count = df["description"].isna().sum()
+            empty_count = (df["description"] == "").sum()
+            logging.info(f"Descriptions - Null: {null_count}, Empty string: {empty_count}, Total: {len(df)}")
+
+            # Category breakdown
+            if "category" in df.columns:
+                category_counts = df["category"].value_counts()
+                logging.info(f"Category breakdown: {category_counts.to_dict()}")
     except Exception as e:
         logging.error("Error reading solicitationraw: %s", e)
         return pd.DataFrame(columns=cols)
@@ -299,6 +360,82 @@ def _send_email(to_email: str, subject: str, html_body: str, text_body: str = ""
         logging.error("Gmail SMTP error to %s: %s", to_email, e)
 
 
+def _generate_description_summaries(notices: pd.DataFrame) -> dict[str, str]:
+    """Generate AI summaries of solicitation descriptions (~500 characters each)"""
+    if notices.empty:
+        return {}
+
+    summaries = {}
+
+    try:
+        batch_size = 3
+        for i in range(0, len(notices), batch_size):
+            batch = notices.iloc[i:i + batch_size]
+
+            batch_items = []
+            for _, row in batch.iterrows():
+                # Access description directly from the Series
+                desc = str(row["description"]) if "description" in row else ""
+                # Check if description is actually populated (not just empty string)
+                if pd.notna(row["description"]) and desc.strip():
+                    desc_to_use = desc.strip()
+                else:
+                    desc_to_use = ""
+
+                nid = str(row["notice_id"]) if "notice_id" in row else ""
+
+                # Debug: log if description is empty
+                if not desc_to_use:
+                    logging.warning(f"Empty/missing description for notice_id: {nid}")
+                else:
+                    logging.info(f"Notice {nid} has description: {len(desc_to_use)} chars")
+
+                batch_items.append({
+                    "notice_id": nid,
+                    "description": desc_to_use[:2000] if desc_to_use else "No description available."
+                })
+
+            system_prompt = """You summarize government solicitation descriptions concisely. Focus on the core requirements, objectives, and key technical details. Keep summaries to approximately 500 characters (3-4 sentences)."""
+
+            user_prompt = {
+                "solicitations": batch_items,
+                "instructions": 'For each solicitation, provide a concise summary of approximately 500 characters. Return JSON: {"summaries":[{"notice_id":"...","summary":"..."}]}'
+            }
+
+            response = oai.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(user_prompt)}
+                ],
+                temperature=0.2,
+                max_tokens=1000,
+                timeout=30
+            )
+
+            try:
+                data = json.loads(response.choices[0].message.content or "{}")
+                for item in data.get("summaries", []):
+                    notice_id = str(item.get("notice_id", "")).strip()
+                    summary = (item.get("summary", "") or "").strip()
+                    if notice_id and summary:
+                        summaries[notice_id] = summary
+                        logging.info(f"Generated summary for notice_id {notice_id}: {len(summary)} chars")
+                    else:
+                        logging.warning(f"Empty summary returned for notice_id: {notice_id}")
+            except json.JSONDecodeError:
+                logging.warning(
+                    f"Failed to parse description summaries for batch {i // batch_size + 1}")
+                continue
+
+    except Exception as e:
+        logging.warning(f"Failed to generate description summaries: {e}")
+
+    logging.info(f"Successfully generated {len(summaries)} description summaries")
+    return summaries
+
+
 def _generate_match_explanations(notices: pd.DataFrame, tech_desc: str) -> dict[str, str]:
     """Generate AI explanations for why each notice matched the technology area"""
     if notices.empty or not tech_desc.strip():
@@ -365,7 +502,7 @@ def _get_funny_kip_greeting(num_matches: int, tech_name: str) -> str:
         f"Yes, we love technology (and federal contracts), always and forever. Here {'is' if num_matches == 1 else 'are'} <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
         f"We've been training to be cage fighters... of opportunity matching. Found <strong>{num_matches} solid {'match' if num_matches == 1 else 'matches'}</strong> for {tech_name}.",
         f"Things are getting pretty serious right now. We found <strong>{num_matches} high-quality {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
-        f"LaFawnduh would be proud - we found <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name} from yesterday's federal solicitations.",
+        f"LaFawnduh would be proud - we found <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name} from today's federal solicitations.",
         f"Your mom goes to college... to learn about these <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> we found for {tech_name}.",
         f"Tina, you fat lard, come get some federal contracts! We've got <strong>{num_matches} {'opportunity' if num_matches == 1 else 'opportunities'}</strong> for {tech_name}.",
         f"I caught you a delicious {'bass' if num_matches == 1 else 'bass'}... er, <strong>{num_matches} federal {'solicitation' if num_matches == 1 else 'solicitations'}</strong> for {tech_name}.",
@@ -437,7 +574,7 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
             </p>
             <div style="background-color: #f1f5f9; border-left: 4px solid #64748b; padding: 16px 20px; border-radius: 4px; margin: 24px 0;">
               <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0;">
-                No close matches (score ≥ {MIN_SCORE}) were found for {tech_name} yesterday.
+                No close matches (score ≥ {MIN_SCORE}) were found for {tech_name} in today's pulled solicitations.
               </p>
             </div>
             <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 16px 0 0 0;">
@@ -449,6 +586,38 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
         </div>
         """
         return subject, html
+
+    logging.info(f"Generating description summaries for {len(picks)} final candidates")
+
+    # CRITICAL DEBUG: Check what's actually in the DataFrame
+    if len(picks) > 0:
+        logging.info("=" * 60)
+        logging.info("DEBUG: Checking DataFrame before summary generation")
+        logging.info(f"DataFrame columns: {list(picks.columns)}")
+        logging.info(f"DataFrame shape: {picks.shape}")
+
+        # Check first row in detail
+        first_row = picks.iloc[0]
+        logging.info(f"First row notice_id: {first_row['notice_id']}")
+        logging.info(f"First row has 'description' column: {'description' in picks.columns}")
+
+        if 'description' in picks.columns:
+            first_desc = first_row['description']
+            logging.info(f"First row description type: {type(first_desc)}")
+            logging.info(f"First row description is None: {first_desc is None}")
+            logging.info(f"First row description is NaN: {pd.isna(first_desc)}")
+            if pd.notna(first_desc):
+                desc_str = str(first_desc)
+                logging.info(f"First row description length: {len(desc_str)}")
+                logging.info(f"First row description preview: {desc_str[:100]}...")
+            else:
+                logging.info("First row description is NULL/NaN")
+        else:
+            logging.error("❌ CRITICAL: 'description' column not in DataFrame!")
+            logging.info(f"Available columns: {list(picks.columns)}")
+        logging.info("=" * 60)
+
+    description_summaries = _generate_description_summaries(picks)
 
     logging.info(f"Generating match explanations for {len(picks)} final candidates")
     match_explanations = _generate_match_explanations(picks, tech_desc)
@@ -474,10 +643,24 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
         pop_city = r.get("pop_city", "")
         pop_state = r.get("pop_state", "")
         naics = r.get("naics_code", "")
+        category = r.get("category", "")
 
         location = ""
         if pop_city or pop_state:
             location = f"{pop_city}, {pop_state}".strip(", ")
+
+        # Get AI-generated summary, fallback to actual description if AI fails
+        if nid in description_summaries:
+            description_summary = description_summaries[nid]
+        else:
+            # Fallback: get description directly from row
+            raw_desc = str(r["description"]) if "description" in r else ""
+            # Check if it's actually populated
+            if pd.notna(r["description"]) and raw_desc.strip():
+                description_summary = raw_desc.strip()[:500]
+            else:
+                description_summary = "No description available."
+                logging.warning(f"No description found for notice_id {nid} (in fallback)")
 
         match_explanation = match_explanations.get(
             nid, "This opportunity aligns with this technology area.")
@@ -485,6 +668,9 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
         score_color = get_score_color(score)
 
         metadata_parts = []
+        if category:
+            category_emoji = "🔬" if category == "research" else "🔧" if category == "parts_services" else "📋"
+            metadata_parts.append(f'<span style="margin-right: 16px;">{category_emoji} {category.upper()}</span>')
         if location:
             metadata_parts.append(f'<span style="margin-right: 16px;">📍 {location}</span>')
         if response_date:
@@ -506,13 +692,17 @@ def _render_email(recipient_email: str, tech_desc: str, picks: pd.DataFrame,
 
             {metadata_html}
 
+            <div style="background-color: #f8fafc; border-left: 3px solid #94a3b8; padding: 12px 16px; border-radius: 4px; margin: 12px 0;">
+              <p style="color: #475569; font-size: 14px; line-height: 1.6; margin: 0;">
+                {description_summary}
+              </p>
+            </div>
+
             <div style="background-color: #f0f9ff; border-left: 3px solid #3b82f6; padding: 12px 16px; border-radius: 4px; margin: 12px 0;">
               <p style="color: #1e40af; font-size: 14px; line-height: 1.6; margin: 0; font-weight: 500;">
                 💡 {match_explanation}
               </p>
             </div>
-
-            {f'<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f5f9;"><p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0;"><em>Assessment: {reason}</em></p></div>' if reason else ''}
 
             <div style="margin-top: 16px;">
               <a href="{url}" style="color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 500;">
@@ -556,8 +746,8 @@ def main():
     engine = sa.create_engine(DB_URL, pool_pre_ping=True)
     oai = OpenAI(api_key=OPENAI_API_KEY)
 
-    yesterday_date, today_date = _yesterday_utc_window()
-    logging.info("Processing notices posted on: %s", yesterday_date)
+    today_date = _today_utc_date()
+    logging.info("Processing notices pulled today: %s", today_date)
 
     logging.info(
         "Two-stage filtering: Stage 1 → %d candidates, Stage 2 → detailed scoring", PREFILTER_CANDIDATES)
@@ -566,16 +756,16 @@ def main():
         # Debug: show recent dates
         try:
             recent_dates = conn.execute(text("""
-                SELECT posted_date, COUNT(*) 
+                SELECT DATE(pulled_at) as pull_date, category, COUNT(*) 
                 FROM solicitationraw 
-                WHERE posted_date IS NOT NULL 
-                GROUP BY posted_date 
-                ORDER BY posted_date DESC 
-                LIMIT 5
+                WHERE pulled_at IS NOT NULL 
+                GROUP BY DATE(pulled_at), category
+                ORDER BY pull_date DESC, category
+                LIMIT 15
             """)).fetchall()
-            logging.info("Recent posted_dates in database:")
-            for date_val, count in recent_dates:
-                logging.info("  %s: %d records", date_val, count)
+            logging.info("Recent pull dates in database (by category):")
+            for date_val, cat, count in recent_dates:
+                logging.info("  %s [%s]: %d records", date_val, cat or "NULL", count)
         except Exception as e:
             logging.warning("Could not fetch recent dates: %s", e)
 
@@ -584,10 +774,11 @@ def main():
             logging.info("No technology areas with email addresses configured. Exiting.")
             return
 
-        notices = _fetch_yesterday_notices(conn, yesterday_date, today_date)
+        notices = _fetch_today_notices(conn, today_date)
+        notices = _filter_out_healthcare(notices)
         if notices.empty:
             logging.info(
-                "No notices posted on %s. Sending 'no matches' to all technology areas.", yesterday_date)
+                "No notices pulled today (%s). Sending 'no matches' to all technology areas.", today_date)
             for _, tech_area in tech_areas.iterrows():
                 emails = _parse_email_addresses(tech_area["emails"])
                 for email in emails:
@@ -597,8 +788,8 @@ def main():
                     _send_email(email, subject, html)
             return
 
-        logging.info("Found %d notices from %s, processing %d technology areas...", len(
-            notices), yesterday_date, len(tech_areas))
+        logging.info("Found %d notices pulled today (%s), processing %d technology areas...", len(
+            notices), today_date, len(tech_areas))
 
         # Process each technology area separately
         for _, tech_area in tech_areas.iterrows():

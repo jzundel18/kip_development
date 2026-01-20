@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
 Master script to run all daily KIP maintenance tasks in sequence.
-This script runs cleanup, auto-refresh (3x), description backfill, and daily digest.
+This script runs cleanup, auto-refresh (3x), description backfill, categorization, and daily digest.
 
 Usage:
     python run_daily_tasks.py [--all] [--cleanup] [--refresh] [--digest]
 
 Options:
-    --all       Run all tasks (default if no options specified)
-    --cleanup   Run cleanup only
-    --refresh   Run auto-refresh only
-    --digest    Run daily digest only
-    --dry-run   Run cleanup in dry-run mode
+    --all           Run all tasks (default if no options specified)
+    --cleanup       Run cleanup only
+    --refresh       Run auto-refresh only
+    --categorize    Run categorization only
+    --digest        Run daily digest only
+    --dry-run       Run cleanup in dry-run mode
 """
 
 import sys
@@ -201,7 +202,21 @@ def run_backfill():
     return run_script(
         "backfill_descriptions.py",
         "BACKFILL: Fetching Missing Descriptions",
-        env_vars
+        env_vars,
+        unbuffered=True
+    )
+
+def run_categorize():
+    """Run the categorization script"""
+    env_vars = {
+        'CATEGORIZE_BATCH_SIZE': '100',
+        'CATEGORIZE_MAX_TOTAL': '1000'
+    }
+    return run_script(
+        "categorize_solicitations.py",
+        "CATEGORIZE: AI Classification of Solicitations (parts/services/research)",
+        env_vars,
+        unbuffered=True
     )
 
 
@@ -214,7 +229,7 @@ def run_daily_digest():
     }
     return run_script(
         "daily_digest.py",
-        "DAILY DIGEST: Sending Email Summaries",
+        "DAILY DIGEST: Sending Email Summaries (Research Only)",
         env_vars
     )
 
@@ -271,6 +286,7 @@ def main():
     run_all = '--all' in args or len([a for a in args if a.startswith('--') and a != '--dry-run']) == 0
     run_cleanup_flag = '--cleanup' in args or run_all
     run_refresh_flag = '--refresh' in args or run_all
+    run_categorize_flag = '--categorize' in args or run_all
     run_digest_flag = '--digest' in args or run_all
     dry_run = '--dry-run' in args
 
@@ -298,11 +314,11 @@ def main():
         time.sleep(2)  # Brief pause between tasks
 
     if run_refresh_flag:
-        # Run auto-refresh to get new solicitations
+        # Step 1: Run auto-refresh to get new solicitations
         results['auto_refresh'] = run_auto_refresh()
         time.sleep(2)
 
-        # Run backfill after refresh to fetch missing descriptions
+        # Step 2: Run backfill after refresh to fetch missing descriptions
         results['backfill'] = run_backfill()
         time.sleep(2)
 
@@ -318,13 +334,18 @@ def main():
     total_time = time.time() - start_time
     print_header("SUMMARY")
 
-    for task, success in results.items():
-        if success is None:
-            print_info(f"{task}: Skipped")
-        elif success:
-            print_success(f"{task}: Success")
-        else:
-            print_error(f"{task}: Failed")
+    # Task order for display
+    task_order = ['cleanup', 'auto_refresh', 'backfill', 'daily_digest']
+
+    for task in task_order:
+        if task in results:
+            success = results[task]
+            if success is None:
+                print_info(f"{task}: Skipped")
+            elif success:
+                print_success(f"{task}: Success")
+            else:
+                print_error(f"{task}: Failed")
 
     print(f"\nTotal time: {total_time:.1f} seconds")
     print(f"Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')}")

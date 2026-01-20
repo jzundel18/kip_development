@@ -63,10 +63,23 @@
     "8425d9b0a60fcdcae6f7fe7f3b5f2b49",
     "229c8c91d7b6e78148dae939c684ad98",
     "75572b324dc8dc611996b2b3e3a7f770",
-    "d11ff02443c8d9453982d6db473b3f60"
+    "d11ff02443c8d9453982d6db473b3f60",
+    "3b51790bff95fd201edaa92811f16e4a",
+    "b1e146392ef3c18b2b7ccfda311ed74c",
+    "ddfc640ac8b72098c2c2113c92de5138",
+    "ddb1959ce592ed156a23d2708a2d3cfc",
+    "c0a94e35fb59b157eb622870698419b1",
+    "58e3ebc3fdef8de273fd746598de7823",
+    "5b0f359989bdb9ae1263fac38839915e",
+    "d3ab26b509179fad385f933a713a5e10",
+    "be83282597db543ae467fa33f46b5944",
+    "f29b0cbc0edaa8d17312385d102ccd69",
+    "c794245c684342a420cb473aa76a7eb2",
+    "0a1ae454c7e238a2fe1add7f432ddde9",
+    "42f8714e80597ede888fb7c72efb621d"
   ],
-  "last_run": "2025-11-07T16:37:42.547926",
-  "total_companies_added": 320,
+  "last_run": "2025-11-17T14:31:40.462727",
+  "total_companies_added": 383,
   "search_history": {
     "f4468b5a233f85129c745a41b8a90ba1": {
       "query": "aerospace defense parts manufacturer supplier",
@@ -387,6 +400,71 @@
       "query": "defense systems integration",
       "timestamp": "2025-11-07T16:37:41.542395",
       "found_count": 3
+    },
+    "3b51790bff95fd201edaa92811f16e4a": {
+      "query": "military prototype development",
+      "timestamp": "2025-11-17T14:21:55.468221",
+      "found_count": 4
+    },
+    "b1e146392ef3c18b2b7ccfda311ed74c": {
+      "query": "military medical equipment supplier",
+      "timestamp": "2025-11-17T14:22:49.474087",
+      "found_count": 7
+    },
+    "ddfc640ac8b72098c2c2113c92de5138": {
+      "query": "defense healthcare services contractor",
+      "timestamp": "2025-11-17T14:23:41.447318",
+      "found_count": 3
+    },
+    "ddb1959ce592ed156a23d2708a2d3cfc": {
+      "query": "combat casualty care equipment",
+      "timestamp": "2025-11-17T14:24:25.711781",
+      "found_count": 1
+    },
+    "c0a94e35fb59b157eb622870698419b1": {
+      "query": "military pharmaceutical supplier",
+      "timestamp": "2025-11-17T14:25:04.083573",
+      "found_count": 0
+    },
+    "58e3ebc3fdef8de273fd746598de7823": {
+      "query": "military power systems contractor",
+      "timestamp": "2025-11-17T14:25:53.693845",
+      "found_count": 6
+    },
+    "5b0f359989bdb9ae1263fac38839915e": {
+      "query": "defense energy solutions provider",
+      "timestamp": "2025-11-17T14:26:41.235718",
+      "found_count": 7
+    },
+    "d3ab26b509179fad385f933a713a5e10": {
+      "query": "tactical power generation military",
+      "timestamp": "2025-11-17T14:27:34.175365",
+      "found_count": 7
+    },
+    "be83282597db543ae467fa33f46b5944": {
+      "query": "defense renewable energy systems",
+      "timestamp": "2025-11-17T14:28:20.972308",
+      "found_count": 3
+    },
+    "f29b0cbc0edaa8d17312385d102ccd69": {
+      "query": "military training systems contractor",
+      "timestamp": "2025-11-17T14:29:05.335219",
+      "found_count": 3
+    },
+    "c794245c684342a420cb473aa76a7eb2": {
+      "query": "defense simulation equipment supplier",
+      "timestamp": "2025-11-17T14:29:57.107790",
+      "found_count": 8
+    },
+    "0a1ae454c7e238a2fe1add7f432ddde9": {
+      "query": "combat training facility services",
+      "timestamp": "2025-11-17T14:30:46.017682",
+      "found_count": 7
+    },
+    "42f8714e80597ede888fb7c72efb621d": {
+      "query": "military virtual reality training",
+      "timestamp": "2025-11-17T14:31:39.455605",
+      "found_count": 7
     }
   }
 }

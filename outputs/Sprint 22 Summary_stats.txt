@@ -1,0 +1,61 @@
+============================================================
+TASK STATISTICS
+============================================================
+
+Total Tasks: 83
+Total Assignees: 7
+
+------------------------------------------------------------
+OVERALL STATUS BREAKDOWN
+------------------------------------------------------------
+  Done: 49 (59.0%)
+  In Progress: 13 (15.7%)
+  On Hold: 11 (13.3%)
+  Review: 2 (2.4%)
+  To Do: 8 (9.6%)
+
+------------------------------------------------------------
+TASKS BY ASSIGNEE
+------------------------------------------------------------
+
+Anthony Pearson: 14 total
+    Done: 8
+    In Progress: 2
+    On Hold: 2
+    To Do: 2
+
+Bob Dawson: 6 total
+    Done: 2
+    In Progress: 1
+    On Hold: 2
+    To Do: 1
+
+Brandon G: 16 total
+    Done: 7
+    In Progress: 3
+    On Hold: 4
+    To Do: 2
+
+Caleb Garnica: 5 total
+    Done: 2
+    In Progress: 3
+
+Fan Yang: 10 total
+    Done: 7
+    In Progress: 2
+    On Hold: 1
+
+Jayden Zundel: 20 total
+    Done: 12
+    In Progress: 2
+    On Hold: 2
+    Review: 2
+    To Do: 2
+
+Jerry Gray: 12 total
+    Done: 11
+    To Do: 1
+
+============================================================
+END OF STATISTICS
+============================================================

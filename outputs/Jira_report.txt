@@ -1,0 +1,188 @@
+================================================================================
+TASK REPORT BY ASSIGNEE
+================================================================================
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Anthony Pearson
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. Plan LabVIEW software for Drop Dower DAQ systems
+  2. Send ERDC work updates to Joshua
+  3. (ERDC D5: Improved composite protection systems research approach identified) Assemble testing data acquisition electronics
+  4. (ERDC D6: Improved carbon nanomaterial coatings research approach identified) Determine research approach
+  5. (Decoy/ Deception) DIR: Test screen printed prototype
+  6. (IR Coating Development) Determine optimal environment(s) for coatings
+
+◐ IN PROGRESS:
+  1. List of bullet points for technician work.
+  2. (Business Development) IR Coating: Identify potential partnership opportunities and companies
+  3. Look for technical conferences for team
+  4. (ERDC D5: Improved composite protection systems research approach identified) Collect example code for DAQ system for drop tower
+  5. (ERDC D7: Methane Production Apparatus Produced) Add DAQ and process control capabilities to LabVIEW
+  6. (Business Development) IR Coating: Find relevant DoD programs where tech could apply
+  7. (Decoy/ Deception) DIR: Scale up Screen Printed Prototype
+
+○ TO DO:
+  1. QA Equipment for Kentucky
+  2. Message Joshua about part/full time position for technician.
+  3. (ERDC D7: Methane Production Apparatus Produced) Build DAQ system for CVD process monitoring
+  4. (Stealth Coatings) Measure electrical properties of EMI and RAM coatings
+  5. (ERDC D6: Improved carbon nanomaterial coatings research approach identified) Create presentation for ERDC, research approach
+  6. (Business Development) IR Coating: Develop technical brief (1-2 page)
+  7. (ERDC D5: Improved composite protection systems research approach identified) Test data acquisition electronics
+  8. (ERDC D5: Improved composite protection systems research approach identified) UT Scans on Tested Panels
+  9. Begin planning out LabVIEW programming for VNA measurements
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Bob Dawson
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. Send 3-5 Bullet points on ERDC progress in October.
+  2. Find Location for Homogenizer and setup equipment
+  3. Order remaining lab furniture
+  4. Find location for UV chamber and setup equipment
+  5. Find location for environmental chamber and setup equipment
+  6. Find location for salt fog chamber and setup equipment
+  7. Find location for Autoclave and setup apparatus
+  8. (Decoy/ Deception) DIR: Purchase hardware and materials for scale-up
+
+◐ IN PROGRESS:
+  1. Add exhaust outlet for CVD furnaces (drill hole in the wall)
+  2. (Stealth Coatings) Inventory of material
+
+○ TO DO:
+  1. (Stealth Coatings) Produce formulations for RAM Layer
+  2. (Stealth Coatings) Produce formulations for EMI Layer
+  3. (Decoy/ Deception) DC: receive/inspect materials; cut ITO sheets; labelling & storage (dry box)
+  4. (Decoy/ Deception) DC: order consumables, revise, spacers, masks; prepare clean bench.
+  5. (ERDC D7: Methane Production Apparatus Produced) Mount the external thermocouples
+  6. (ERDC D7: Methane Production Apparatus Produced) Mount the mass flow controllers
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Brandon G
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. Thursday Presentation
+  2. ERDCII: Prepare Waveguide Offset for R&S Training
+  3. Review of heater pad based DIR concept with Tony, Bob, and Jayden
+  4. KD: Create BOM for Supplies to Organize Lab Shelves
+  5. (Decoy/ Deception) BOM for electronics for scaled up coating-based DIR device
+  6. (Decoy/ Deception) DIR - HC: Develope Concept for Individual Heater Pad Cell
+  7. (ERDC D6: Improved carbon nanomaterial coatings research approach identified) ERDCII: R&S Lunch and Learn - Continued
+  8. (Decoy/ Deception) DIR - HC: Build Basic 5x5 Prototype
+
+◐ IN PROGRESS:
+  1. (Business Development) DIR: Develop technical brief (1-2 page)
+  2. (Decoy/ Deception) DIR - C: Develop concept for coating based DIR Controls
+  3. (Decoy/ Deception) DIR - HC: Components Selection for Heater Pad Cell
+
+○ TO DO:
+  1. (Business Development) DIR: Identify potential partnership opportunities and companies
+  2. (Decoy/ Deception) DIR - HC: Create a Timeline for Future Development
+  3. KD: Design send-cut-send panel for CVD process monitoring DAQ enclosure (work with Tony)
+  4. KD: Design Gas Board for SendCutSend (work with Tony)
+  5. (Decoy/ Deception) DIR: BOM for scale up device
+  6. (Stealth Coatings) Prepare EMI Coating for VNA testing
+  7. (Decoy/ Deception) DC: bench bring-up for drivers; electric design; safety interlocks
+  8. (Decoy/ Deception) DC: Design electric wiring, batteries, power path, connectors; order dev kits
+  9. (Business Development) DIR: Find relevant DoD programs where tech could apply
+  10. (Stealth Coatings) Testing of initial prototype formulations
+  11. (IR Coating Development) ERDC II - IR: Complete heat lamp IR testing Apparatus
+  12. (Decoy/ Deception) DIR: Plan Scale-up
+  13. (Decoy/ Deception) DIR - HC: Test Prototype
+  14. (ERDC D6: Improved carbon nanomaterial coatings research approach identified) ERDCII: Determine Waveguide Powder Sample Preparation Process
+  15. (ERDC D6: Improved carbon nanomaterial coatings research approach identified) ERDC II: Develop Testing Approach for D6
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Caleb Garnica
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. Find location for and setup benchtop CNC.
+  2. (ERDC D8: Produce Improved composite systems) Review plan with Engineering team
+  3. (ERDC D8: Produce Improved composite systems) Produce detailed experimental plan
+  4. (ERDC D5: Improved composite protection systems research approach identified) CNT Additive Testing
+
+◐ IN PROGRESS:
+  1. Work with Bob to setup and test UV chamber
+  2. Work with Bob to setup and test environmental chamber
+  3. Work with Bob to setup and test salt fog chamber
+
+○ TO DO:
+  1. (Decoy/ Deception) DC: build masks/holding jigs; trial laser/etch on scrap ITO
+  2. (Decoy/ Deception) DC: Design segmentation masks, lamination fixture, simple nip roller setup
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Fan Yang
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. (ERDC D7: Methane Production Apparatus Produced) Document  experimental conditions and results
+  2. (ERDC D7: Methane Production Apparatus Produced) Characterize products from methane only experiments
+  3. (ERDC D7: Methane Production Apparatus Produced) Run flow rate tests for Methane only experiments
+
+◐ IN PROGRESS:
+  1. Prepare catalyst for methane/catalyst CVD experiments
+  2. Run temperature tests for methane only CVD
+  3. (ERDC D7: Methane Production Apparatus Produced) Begin CVD testing for methane + catalyst experiments
+
+○ TO DO:
+  1. (ERDC D7: Methane Production Apparatus Produced) Test Mass Spec
+  2. (ERDC D7: Methane Production Apparatus Produced) Determine equipment and supplies needed for CVD research
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jayden Zundel
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. Set up BD file management structure
+  2. Create Counterfeit Protection Document
+  3. Lockheed RFQ / PO process tag up
+  4. (KIP) KIP: add teaming feature for each technology area
+  5. Look into ClickUp, decide on transition for program management
+  6. (Business Development) Schedule BD working group meetings
+  7. Schedule initial ISO9001 trainings
+  8. (KIP) KIP: Get set up with Exostar / Lockheed
+  9. (KIP) KIP: Set up all working groups with KIP
+  10. (Business Development) KIP: Develop technical brief (1-2 page)
+  11. (KIP) White Paper for Somerset CC
+  12. Identify most urgent internal policies to develop for Lockheed/Primes
+
+○ TO DO:
+  1. NGC Intro Meeting
+  2. (KIP) KIP: Create onboarding doc for new companies
+  3. (Business Development) KIP: Find relevant DoD programs where tech could apply
+  4. (KIP) KIP: Contact 100+ suppliers
+  5. ITAR Compliance Plan
+  6. Figure out new website
+
+--------------------------------------------------------------------------------
+ASSIGNEE: hoang
+--------------------------------------------------------------------------------
+
+✓ DONE:
+  1. (Business Development) Stealth Coating: Identify potential partnership opportunities and companies
+  2. (Business Development) DC: Identify potential partnership opportunities and companies
+  3. (ERDC D7: Methane Production Apparatus Produced) BOM for catalysts and other materials
+  4. (ERDC D7: Methane Production Apparatus Produced) Produce detailed experimental plan
+  5. (Decoy/ Deception) DC: BOM/ vendor selections
+  6. (Business Development) Stealth Coating: Find relevant programs where tech could apply
+  7. (Business Development) DC: Find relevant DoD programs where tech could apply
+  8. (Business Development) Stealth Coating: Develop technical brief (1-2 page)
+  9. (Business Development) DC: Develop technical brief (1-2 page)
+
+◐ IN PROGRESS:
+  1. BAA proposal preparation
+
+○ TO DO:
+  1. Non-kinetic protection wraps for ground vehicle: research plan
+  2. (Decoy/ Deception) DC: Analyze results from prototype testing
+  3. (Stealth Coatings) Analysis of testing data
+  4. (Stealth Coatings) Optimize and retest
+
+================================================================================
+END OF REPORT
+================================================================================
