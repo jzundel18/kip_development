@@ -1,0 +1,283 @@
+================================================================================
+TASK REPORT BY ASSIGNEE
+================================================================================
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Anthony Pearson
+--------------------------------------------------------------------------------
+
+  ┌─ HIGH PRIORITY ─┐
+
+  ● DONE:
+    1. Develop Concept for First DIR prototype
+    2. (Dynamic Camo) Review Manufacturing process with Caleb
+    3. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Prepare ERDC Presentation
+
+  ● IN PROGRESS:
+    1. Finalize ERDC II and III Equipment needs
+    2. (Dynamic IR) Fabricate 20X20 DIR device
+    3. (ERDC D9: Improved produced coatings (Due 6/2/26)) Plan specific formulations for initial coatings testing
+
+  ● ON HOLD:
+    1. (Dynamic IR) Test 20X20 DIR device
+    2. (Dynamic Camo) Review Control Test results with Brandon
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● IN PROGRESS:
+    1. (Dynamic IR) Fabricate improved 20X20 DIR device
+
+  ● ON HOLD:
+    1. Figure out how to sell Raman
+    2. (ERDC D9: Improved produced coatings (Due 6/2/26)) Measure electrical properties of EMI and RAM coatings
+    3. (ERDC D9: Improved produced coatings (Due 6/2/26)) Begin planning out LabVIEW programming for VNA measurements
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Bob Dawson
+--------------------------------------------------------------------------------
+
+  ┌─ HIGH PRIORITY ─┐
+
+  ● DONE:
+    1. Add updates to ERDC Presentation
+
+  ● IN PROGRESS:
+    1. What will it take to make this a classified facility?
+    2. Repair High Pressure Homogenizer
+    3. (ERDC D9: Improved produced coatings (Due 6/2/26)) Calibrate Mass Spec
+    4. (Dynamic Camo) Finalize wetting technique and make recommendation to Fan/Caleb
+
+  ● ON HOLD:
+    1. (ERDC D9: Improved produced coatings (Due 6/2/26)) Finalize initial test formulation for RAM and EMI layers
+
+  ● TO DO:
+    1. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Place thermocouples into CVD furnaces
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. order UGA gas calibration cylinder and cylinder regulator
+
+  ● IN PROGRESS:
+    1. order parts for Gas Board
+    2. Contact manufacturer about selling back Raman
+    3. ISO - define SOP for future production
+    4. Get quotes for ERDC II Kentucky Budget Equipment
+    5. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Prepare plumbing for mass spec so it can be implemented in CVD runs
+
+  ● ON HOLD:
+    1. ISO training 5
+    2. (ERDC D9: Improved produced coatings (Due 6/2/26)) Mix final formulations for RAM and EMI coatings for testing
+    3. Help Jayden with CMMC compliance
+    4. Setup Microsoft Intune for everyone
+    5. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Support setup of CVD test on etched and non-etched SS
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Brandon G
+--------------------------------------------------------------------------------
+
+  ┌─ HIGH PRIORITY ─┐
+
+  ● DONE:
+    1. (Dynamic Camo) DC: Design CNC PCB
+    2. (Dynamic Camo) DC: Program AtTiny Followers
+    3. Add updates to ERDC presentation
+    4. (Dynamic Camo) DC: Test control electronics
+    5. (Dynamic Camo) DC: Assemble control electronics - Breadboard Prototype
+    6. (Dynamic Camo) DC: Update Components & Schematic for DC Cell
+
+  ● IN PROGRESS:
+    1. (Dynamic Camo) DC: CNC PCB for 4 Cells
+    2. (Dynamic Camo) DC: Finalize cycle testing device for DC cells
+
+  ● TO DO:
+    1. (Dynamic Camo) DC: Implement control electronics on a 2X2 array
+    2. (Dynamic Camo) DC: Assist Fan with Spin Coating Setup
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. (Dynamic IR) DIR-CM: Design PCB Base For Resistive Heater Coating
+    2. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) KD: Design Gas Board for SendCutSend (work with Tony)
+
+  ● ON HOLD:
+    1. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) KD: Design send-cut-send panel for CVD process monitoring DAQ enclosure (work with Tony)
+    2. (ERDC D9: Improved produced coatings (Due 6/2/26)) ERDCII: Perform VNA testing on EMI and RAM Coatings
+    3. (ERDC D9: Improved produced coatings (Due 6/2/26)) ERDCII: Prepare EMI Coating for VNA testing
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Caleb Garnica
+--------------------------------------------------------------------------------
+
+  ┌─ HIGH PRIORITY ─┐
+
+  ● DONE:
+    1. Add updates to ERDC Presentation
+    2. (Dynamic Camo) Finalize concept for large scale manufacturing
+
+  ● IN PROGRESS:
+    1. (Dynamic Camo) Test large scale manufacturing concepts
+    2. (Dynamic Camo) Determine optimal electrode (silver, copper tape, etc) placement on top ITO layer
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. Monday Meeting Presentation
+    2. Dropped parts off for Cerakote Job
+    3. (Dynamic Camo) Determine scalable manufacturing process for 4-cell DC array
+    4. (Dynamic Camo) develop manufacturing concept for array of DC devices
+
+  ● IN PROGRESS:
+    1. (Dynamic Camo) Determine method to improve electrolyte mechanical stability
+    2. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Manufacture additive/matrix test specimens (5 different concentrations for each material combination)
+
+  ● TO DO:
+    1. (ERDC D8: Produce Improved composite systems (Due 5/5/26)) Begin electromechanical testing of additive/matrix test specimens
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Fan Yang
+--------------------------------------------------------------------------------
+
+  ┌─ HIGH PRIORITY ─┐
+
+  ● DONE:
+    1. Add updates to ERDC Presentation
+    2. (Dynamic Camo) Document ink formulations and test results
+    3. (Dynamic Camo) Optimize DC ink for brown color
+    4. (Dynamic Camo) Optimize DC ink formulation for Green color
+
+  ● IN PROGRESS:
+    1. (Dynamic Camo) Optimize DC ink for gray color
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. (Dynamic Camo) Assist Caleb with scale-up concept
+
+  ● IN PROGRESS:
+    1. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Etch SS sheets using stock acid solution
+
+  ● TO DO:
+    1. (Dynamic Camo) Implement Bob's surface wetting techniques
+    2. (Dynamic Camo) Verify formulations can meet military color specifications
+    3. (ERDC D7: Methane Production Apparatus Produced (Due 3/3/26)) Run CVD test on etched and non-etched SS
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jayden Zundel
+--------------------------------------------------------------------------------
+
+  ┌─ HIGH PRIORITY ─┐
+
+  ● DONE:
+    1. (Supply Chain) Build process for invoicing at appropriate intervals
+    2. (Supply Chain) Manage Cerakote Order
+
+  ● IN PROGRESS:
+    1. DIR Patent Draft
+
+  ● ON HOLD:
+    1. Find new ISO certification firm
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. How to secure IP on classified technology
+    2. Help set up background check process with Tawny
+    3. Help set up website with Tawny
+    4. Technician Interviews
+    5. Get/order copy of AS9100/ISO9001 standards PDF
+    6. Refine tasking.py script to incorporate priority tracking
+    7. Org Chart for ISO/AS
+    8. (Business Development) Build compliance check documents
+
+  ● ON HOLD:
+    1. Get quote from ISO cert body
+    2. ISO - create a process defining purchasing and delivery approval authority
+    3. ISO - delineate internal and external risk factors in relation to organizational strategic direction
+    4. ISO - implement strategic planning process documentation
+    5. ISO - fill out competence assessment and skills matrix
+    6. ISO - build out intro to policy statement from Nate's templates
+    7. ISO stakeholder risk assessment
+    8. ISO Training 5
+
+  ● TO DO:
+    1. Competitor analysis DIR
+    2. Find sustainment contracts at other primes
+    3. KIP Updates from Joshua
+    4. (Business Development) CMMC Self Certification
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Jerry Gray
+--------------------------------------------------------------------------------
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● IN PROGRESS:
+    1. Lillian - Request for information urgent request
+    2. PO# 4500077296
+    3. PO# 4500077796
+    4. PO# 4500077768
+    5. PO# 4500077614
+    6. PO# 4500078040
+    7. PO# 4500078297
+    8. PO# 4500078410
+
+  ● TO DO:
+    1. PO# 4500079493
+    2. PO# 4500079135
+    3. Request for Quote # 02042026NI
+    4. Request for Quote # 02022026NI
+    5. ISO Training 5
+    6. (Supply Chain) Set up delivery bin at Somerset
+    7. (Supply Chain) Set up company signage at Somerset
+    8. Request for Quote # 01232026NI
+    9. PO# 4500078477
+    10. Request for Quote # 01212026NI-2
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Joshua Riley
+--------------------------------------------------------------------------------
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. ERDC SOW
+
+  ● IN PROGRESS:
+    1. (Business Development) Identify other areas within Army that coatings could apply
+    2. (Business Development) Research other applications for our coating stacks
+
+  ● TO DO:
+    1. "Why Somerset" write-up for KY PR
+    2. HUBZone set up
+    3. Change EIN
+
+--------------------------------------------------------------------------------
+ASSIGNEE: Tawny Bonzo
+--------------------------------------------------------------------------------
+
+  ┌─ MEDIUM PRIORITY ─┐
+
+  ● DONE:
+    1. Set up QuickBooks Austere Ops
+    2. Schedule interviews
+    3. Make sign in sheets
+    4. Post January transactions in Quickbooks
+    5. Fix EIN for Hubzone
+    6. Pay KY Rent
+    7. KY P&L
+    8. Invoice completed Lockheed POs 
+    9. Get quickbooks up to date.
+
+  ● IN PROGRESS:
+    1. Research R&D Tax Credit
+    2. Create website layout
+    3. Create depreciation schedule
+
+  ● ON HOLD:
+    1. Set up HR personnel files/process
+    2. Control Manual Update
+
+================================================================================
+END OF REPORT
+================================================================================

@@ -15,46 +15,78 @@ OVERALL STATUS BREAKDOWN
   To Do: 8 (9.6%)
 
 ------------------------------------------------------------
-TASKS BY ASSIGNEE
+TASKS BY ASSIGNEE (Priority Breakdown)
 ------------------------------------------------------------
 
-Anthony Pearson: 14 total
-    Done: 8
-    In Progress: 2
-    On Hold: 2
-    To Do: 2
+Anthony Pearson:
+  [High Priority]
+    Done:                          2
+    Done + To Do + In Progress:     2
+    Total Sprint:                  2
+  [Medium Priority]
+    Done:                          6
+    Done + To Do + In Progress:     10
+    Total Sprint:                  12
 
-Bob Dawson: 6 total
-    Done: 2
-    In Progress: 1
-    On Hold: 2
-    To Do: 1
+Bob Dawson:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     0
+    Total Sprint:                  0
+  [Medium Priority]
+    Done:                          2
+    Done + To Do + In Progress:     4
+    Total Sprint:                  6
 
-Brandon G: 16 total
-    Done: 7
-    In Progress: 3
-    On Hold: 4
-    To Do: 2
+Brandon G:
+  [High Priority]
+    Done:                          4
+    Done + To Do + In Progress:     6
+    Total Sprint:                  6
+  [Medium Priority]
+    Done:                          3
+    Done + To Do + In Progress:     6
+    Total Sprint:                  9
 
-Caleb Garnica: 5 total
-    Done: 2
-    In Progress: 3
+Caleb Garnica:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     0
+    Total Sprint:                  0
+  [Medium Priority]
+    Done:                          2
+    Done + To Do + In Progress:     5
+    Total Sprint:                  5
 
-Fan Yang: 10 total
-    Done: 7
-    In Progress: 2
-    On Hold: 1
+Fan Yang:
+  [High Priority]
+    Done:                          2
+    Done + To Do + In Progress:     3
+    Total Sprint:                  3
+  [Medium Priority]
+    Done:                          5
+    Done + To Do + In Progress:     6
+    Total Sprint:                  7
 
-Jayden Zundel: 20 total
-    Done: 12
-    In Progress: 2
-    On Hold: 2
-    Review: 2
-    To Do: 2
+Jayden Zundel:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     0
+    Total Sprint:                  0
+  [Medium Priority]
+    Done:                          12
+    Done + To Do + In Progress:     16
+    Total Sprint:                  20
 
-Jerry Gray: 12 total
-    Done: 11
-    To Do: 1
+Jerry Gray:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     0
+    Total Sprint:                  0
+  [Medium Priority]
+    Done:                          11
+    Done + To Do + In Progress:     12
+    Total Sprint:                  12
 
 ============================================================
 END OF STATISTICS

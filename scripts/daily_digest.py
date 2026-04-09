@@ -6,6 +6,7 @@ Each technology area with emails gets its own digest based on its description.
 
 UPDATED: Now processes ALL solicitations (not just research category)
 UPDATED: Now includes solicitation description summary in email
+UPDATED: Enhanced filtering to exclude irrelevant agencies and topics
 
 Required env vars:
   SUPABASE_DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD
@@ -66,7 +67,6 @@ PREFILTER_CANDIDATES = 25
 KIP_MEME_URL = None
 
 
-
 def _load_config():
     """Load configuration from environment variables"""
     global DB_URL, OPENAI_API_KEY, GMAIL_EMAIL, GMAIL_PASSWORD, FROM_EMAIL, APP_BASE_URL
@@ -99,45 +99,427 @@ logging.basicConfig(
 engine = None
 oai = None
 
-# Healthcare keywords to filter out
-HEALTHCARE_KEYWORDS = [
-    "healthcare", "health care", "medical", "hospital", "clinical",
-    "pharmaceutical", "pharmacy", "nursing", "patient care", "medicare",
-    "medicaid", "hhs", "nih", "cdc", "fda", "cms", "veterans health",
-    "mental health", "dental", "laboratory services", "biomedical",
-    "health services", "healthcare services", "medical supplies",
-    "medical equipment", "ambulance", "emergency medical"
+# ============================================================================
+# COMPREHENSIVE EXCLUSION FILTERS - STRICT MODE
+# ============================================================================
+
+# Agencies to exclude entirely (DOT and DHHS are consistently irrelevant)
+EXCLUDED_AGENCY_KEYWORDS = [
+    # Department of Transportation
+    "department of transportation", "dept of transportation", "dot ", " dot",
+    "federal aviation administration", "faa ", " faa",
+    "federal highway administration", "fhwa",
+    "federal transit administration", "fta ",
+    "federal railroad administration", "fra ",
+    "federal motor carrier", "fmcsa",
+    "national highway traffic safety", "nhtsa",
+    "pipeline and hazardous materials",
+
+    # Department of Health and Human Services
+    "department of health and human services", "dept of health and human services",
+    "dhhs", "hhs ", " hhs",
+    "centers for medicare", "cms ",
+    "food and drug administration", "fda ",
+    "centers for disease control", "cdc ",
+    "national institutes of health", "nih ",
+    "health resources and services", "hrsa",
+    "substance abuse and mental health", "samhsa",
+    "administration for children and families", "acf ",
+    "indian health service", "ihs ",
+
+    # Department of Agriculture (nutrition/food programs)
+    "usda", "department of agriculture",
+    "food and nutrition service", "fns ",
+
+    # *** NEW: Department of the Interior ***
+    "department of the interior", "dept of the interior",
+    "department of interior", "dept of interior",
+    "interior department",
+    "bureau of land management", "blm ",
+    "bureau of reclamation",
+    "national park service", "nps ",
+    "u.s. geological survey", "us geological survey", "usgs",
+    "bureau of indian affairs", "bia ",
+    "fish and wildlife service", "usfws", "fws ",
+    "office of surface mining",
+    "minerals management service",
+    "bureau of ocean energy management", "boem",
+    "bureau of safety and environmental enforcement", "bsee",
 ]
 
+# Healthcare and biological/medical keywords (STRICT - expanded)
+HEALTHCARE_KEYWORDS = [
+    # General healthcare terms
+    "healthcare", "health care", "medical", "hospital", "clinical",
+    "pharmaceutical", "pharmacy", "nursing", "patient care", "medicare",
+    "medicaid", "veterans health", "mental health", "dental",
+    "laboratory services", "biomedical", "health services",
+    "healthcare services", "medical supplies", "medical equipment",
+    "ambulance", "emergency medical", "telemedicine", "telehealth",
+    "electronic health record", "ehr ", " ehr", "emr ",
+    "health information", "hipaa", "patient data", "clinical trial",
+    "drug development", "therapeutic", "diagnostics", "pathology",
+    "radiology", "oncology", "cardiology", "pediatric", "geriatric",
+    "rehabilitation", "physical therapy", "occupational therapy",
+    "behavioral health", "psychiatric", "epidemiology", "public health",
 
-def _filter_out_healthcare(notices: pd.DataFrame) -> pd.DataFrame:
-    """Remove healthcare-related solicitations from consideration"""
+    # Biological data and life sciences (not defense R&D)
+    "biological data", "biologic data", "biodata", "bio-data",
+    "biological information", "bioinformatics", "genomic data",
+    "genetic data", "dna sequencing", "rna sequencing",
+    "biological sample", "specimen management", "biospecimen",
+    "life sciences data", "biological research data",
+    "biological database", "biology data management",
+
+    # Nutrition and food services
+    "nutrition", "nutritional", "dietetic", "dietary",
+    "food service", "food preparation", "meal service", "catering",
+    "cafeteria", "dining facility", "food program",
+    "nutrition analysis", "dietary analysis", "meal planning",
+    "nutrition support", "nutritional support",
+    "food assistance", "feeding program",
+
+    # AI/ML in healthcare context
+    "healthcare ai", "medical ai", "clinical ai", "health ai",
+    "healthcare machine learning", "medical machine learning",
+    "clinical decision support", "medical imaging ai",
+    "healthcare analytics", "clinical analytics",
+    "patient outcome prediction", "disease prediction",
+    "medical diagnosis", "diagnostic ai", "health prediction",
+    "precision medicine", "personalized medicine",
+    "drug discovery ai", "pharmaceutical ai",
+    "healthcare nlp", "clinical nlp", "medical nlp",
+    "biomedical informatics", "health informatics",
+]
+
+# Events, demonstrations, workshops, and trade shows (STRICT - expanded)
+EVENTS_KEYWORDS = [
+    # Trade shows and exhibitions
+    "trade show", "tradeshow", "exhibition", "expo ",
+    "exhibit space", "display setup", "booth ",
+
+    # Conferences and meetings
+    "conference support", "conference planning", "conference services",
+    "symposium", "convention", "forum support", "seminar support",
+    "meeting support", "meeting planning", "meeting services",
+
+    # Workshops and training events
+    "workshop", "workshops", "training event", "training session",
+    "educational event", "learning event", "instruction session",
+
+    # Event management and support
+    "event support", "event management", "event planning",
+    "event coordination", "event logistics", "event services",
+    "event facilitation", "facilitating event", "facilitate event",
+    "event production", "event execution",
+
+    # Demonstrations (non-R&D)
+    "demonstration event", "demo event", "public demonstration",
+    "product demonstration", "technology demonstration",
+    "demonstration project", "demonstration program",
+    "pilot demonstration", "showcase event",
+
+    # Outreach and public events
+    "outreach event", "community event", "awareness event",
+    "promotional event", "marketing event", "publicity event",
+    "public affairs event", "media event", "press event",
+    "ribbon cutting", "grand opening", "ceremony",
+    "open house", "public meeting",
+]
+
+# Building installations and facilities (static systems, not R&D)
+FACILITIES_KEYWORDS = [
+    "building installation", "facility installation",
+    "hvac installation", "hvac system", "hvac maintenance",
+    "plumbing installation", "electrical installation",
+    "fire suppression system", "fire alarm system", "sprinkler system",
+    "security system installation", "access control installation",
+    "building automation", "building management system",
+    "elevator installation", "elevator maintenance",
+    "roofing installation", "roofing repair", "roof replacement",
+    "flooring installation", "carpet installation",
+    "window installation", "door installation",
+    "painting services", "interior painting", "exterior painting",
+    "janitorial", "custodial", "cleaning services",
+    "grounds maintenance", "landscaping", "lawn care",
+    "pest control", "extermination",
+    "parking lot", "paving", "asphalt",
+    "fencing installation", "gate installation",
+    "signage installation", "wayfinding",
+    "furniture installation", "office furniture",
+    "moving services", "relocation services",
+    "warehouse space", "storage space",
+]
+
+# Paleontological and archaeological research (not relevant to tech R&D)
+PALEO_ARCH_KEYWORDS = [
+    "paleontological", "paleontology", "fossil",
+    "archaeological", "archaeology", "archeological", "archeology",
+    "excavation site", "dig site", "artifact",
+    "prehistoric", "ancient remains", "cultural resources",
+    "historic preservation", "historical preservation",
+    "heritage site", "cultural heritage",
+]
+
+# Generic IT/data systems support (STRICT - greatly expanded)
+GENERIC_IT_KEYWORDS = [
+    # Help desk and desktop support
+    "help desk", "helpdesk", "service desk",
+    "desktop support", "end user support", "user support",
+    "technical support", "tech support", "it support",
+    "tier 1 support", "tier 2 support", "tier 3 support",
+    "customer support", "support services",
+
+    # Hardware and equipment support
+    "computer refresh", "pc refresh", "hardware refresh",
+    "laptop support", "workstation support",
+    "printer support", "print services", "copier",
+    "hardware maintenance", "equipment maintenance",
+
+    # Business systems and enterprise IT
+    "business system", "business systems", "enterprise system",
+    "erp system", "erp support", "erp implementation",
+    "sap support", "oracle support", "peoplesoft",
+    "financial system", "accounting system", "hr system",
+    "payroll system", "timekeeping system",
+    "enterprise resource planning",
+
+    # Generic IT services
+    "it services", "information technology services",
+    "managed services", "msp services", "it outsourcing",
+    "it operations", "it maintenance", "it administration",
+    "network support", "network maintenance", "network administration",
+    "system administration", "systems administration",
+    "email support", "email migration", "office 365",
+    "microsoft 365", "email services",
+    "password reset", "account management", "user provisioning",
+
+    # Generic data management (not R&D data science)
+    "data management", "data handling", "data entry",
+    "data processing", "data services", "data support",
+    "database administration", "database support", "dba services",
+    "data migration", "data conversion", "data cleanup",
+    "data storage", "data archiving", "records management",
+    "document management", "content management",
+    "information management", "data governance",
+    "data center", "data centre", "hosting services",
+
+    # Software support (not development)
+    "software support", "application support", "app support",
+    "software maintenance", "application maintenance",
+    "software licensing", "license management",
+    "software updates", "patch management",
+]
+
+# Shuttle and transit demonstrations (DOT-related) - expanded
+TRANSIT_DEMO_KEYWORDS = [
+    "shuttle demonstration", "shuttle demo", "automated shuttle",
+    "autonomous shuttle", "self-driving shuttle", "driverless shuttle",
+    "transit demonstration", "bus demonstration",
+    "vehicle demonstration", "mobility demonstration",
+    "transportation demonstration", "connected vehicle demo",
+    "smart city demonstration", "smart transportation",
+    "av demonstration", "autonomous vehicle demonstration",
+    "transit pilot", "mobility pilot", "shuttle pilot",
+    "transit project", "public transit",
+]
+
+# Packaging and logistics support (not R&D)
+PACKAGING_KEYWORDS = [
+    "packaging support", "packaging services", "packaging material",
+    "packing services", "packing support", "crating",
+    "shipping support", "shipping services", "freight",
+    "logistics support", "logistics services",
+    "warehousing", "distribution services", "fulfillment",
+    "mail services", "mailing services", "postage",
+    "courier services", "delivery services",
+]
+
+# Sources sought that are typically not actionable
+SOURCES_SOUGHT_EXCLUSIONS = [
+    "sources sought for event",
+    "sources sought for demonstration",
+    "market research for event",
+    "rfi for event", "rfi for demonstration",
+    "sources sought for workshop",
+    "sources sought for conference",
+]
+
+# Administrative and clerical support (not R&D)
+ADMIN_SUPPORT_KEYWORDS = [
+    "administrative support", "admin support", "clerical",
+    "secretarial", "receptionist", "front desk",
+    "office support", "office services", "office management",
+    "mailroom", "mail handling", "correspondence",
+    "scheduling", "calendar management", "travel arrangement",
+    "document preparation", "word processing", "typing",
+    "data entry", "filing", "records clerk",
+]
+
+# NAICS codes to exclude
+EXCLUDED_NAICS_PREFIXES = [
+    "621", "622", "623", "624",  # Healthcare
+    "485",  # Transit
+    "237",  # Heavy construction
+    "561720",  # Janitorial services
+    "561730",  # Landscaping services
+    "561210",  # Facilities support services
+    "561110",  # Office administrative services
+    "561320",  # Temporary help services
+    "493",  # Warehousing and storage
+    "488",  # Support activities for transportation
+    "722",  # Food services and drinking places
+]
+
+# *** NEW: 8(a) set-aside filtering ***
+EXCLUDED_SET_ASIDE_CODES = {
+    "8A",
+    "8AN",
+}
+
+EXCLUDED_SET_ASIDE_KEYWORDS = [
+    "8(a) set-aside",
+    "8(a) sole source",
+    "8a set-aside",
+    "8a sole source",
+    "set aside 8(a)",
+    "set-aside: 8(a)",
+]
+
+def _filter_irrelevant_solicitations(notices: pd.DataFrame) -> pd.DataFrame:
+    """
+    STRICT comprehensive filter to remove solicitations outside our area of expertise.
+
+    Filters out:
+    - DOT (Department of Transportation) solicitations
+    - DHHS (Department of Health and Human Services) solicitations
+    - Healthcare-related solicitations (including AI/ML in healthcare, biological data, nutrition)
+    - Events, demonstrations, workshops, trade shows
+    - Building installations and facilities management
+    - Paleontological/archaeological research
+    - Generic IT/data system support (help desk, data management, business systems)
+    - Transit/shuttle demonstrations
+    - Packaging and logistics support
+    - Administrative/clerical support
+
+    Returns filtered DataFrame.
+    """
     if notices.empty:
         return notices
 
-    def is_healthcare(row):
+    original_count = len(notices)
+
+    # Track removal reasons for logging
+    removal_stats = {
+        "agency": 0,
+        "healthcare": 0,
+        "events": 0,
+        "facilities": 0,
+        "paleo_arch": 0,
+        "generic_it": 0,
+        "transit_demo": 0,
+        "packaging": 0,
+        "admin_support": 0,
+        "naics": 0,
+        "sources_sought": 0,
+        "set_aside": 0,
+    }
+
+    def should_exclude(row):
         title = (row.get("title", "") or "").lower()
         description = (row.get("description", "") or "").lower()
         naics = str(row.get("naics_code", "") or "")
+        set_aside = str(row.get("set_aside_code", "") or "").strip().upper()
         combined = f"{title} {description}"
 
-        # Check keywords
-        for keyword in HEALTHCARE_KEYWORDS:
+        # *** NEW: 8(a) set-aside code check ***
+        if set_aside in EXCLUDED_SET_ASIDE_CODES:
+            removal_stats["set_aside"] += 1
+            return True
+
+        for keyword in EXCLUDED_SET_ASIDE_KEYWORDS:
             if keyword in combined:
+                removal_stats["set_aside"] += 1
                 return True
 
-        # Healthcare NAICS codes (621xxx, 622xxx, 623xxx, 624xxx are health/social services)
-        if naics.startswith(("621", "622", "623", "624")):
-            return True
+        # Check for excluded agencies
+        for keyword in EXCLUDED_AGENCY_KEYWORDS:
+            if keyword in combined:
+                removal_stats["agency"] += 1
+                return True
+
+        # Check healthcare keywords (includes biological data, nutrition)
+        for keyword in HEALTHCARE_KEYWORDS:
+            if keyword in combined:
+                removal_stats["healthcare"] += 1
+                return True
+
+        # Check events/demonstrations/workshops/trade shows
+        for keyword in EVENTS_KEYWORDS:
+            if keyword in combined:
+                removal_stats["events"] += 1
+                return True
+
+        # Check facilities/building installations
+        for keyword in FACILITIES_KEYWORDS:
+            if keyword in combined:
+                removal_stats["facilities"] += 1
+                return True
+
+        # Check paleontological/archaeological
+        for keyword in PALEO_ARCH_KEYWORDS:
+            if keyword in combined:
+                removal_stats["paleo_arch"] += 1
+                return True
+
+        # Check generic IT/business systems/data management support
+        for keyword in GENERIC_IT_KEYWORDS:
+            if keyword in combined:
+                removal_stats["generic_it"] += 1
+                return True
+
+        # Check transit/shuttle demonstrations
+        for keyword in TRANSIT_DEMO_KEYWORDS:
+            if keyword in combined:
+                removal_stats["transit_demo"] += 1
+                return True
+
+        # Check packaging and logistics
+        for keyword in PACKAGING_KEYWORDS:
+            if keyword in combined:
+                removal_stats["packaging"] += 1
+                return True
+
+        # Check administrative/clerical support
+        for keyword in ADMIN_SUPPORT_KEYWORDS:
+            if keyword in combined:
+                removal_stats["admin_support"] += 1
+                return True
+
+        # Check sources sought exclusions
+        for keyword in SOURCES_SOUGHT_EXCLUSIONS:
+            if keyword in combined:
+                removal_stats["sources_sought"] += 1
+                return True
+
+        # Check NAICS code prefixes
+        for prefix in EXCLUDED_NAICS_PREFIXES:
+            if naics.startswith(prefix):
+                removal_stats["naics"] += 1
+                return True
 
         return False
 
-    original_count = len(notices)
-    filtered = notices[~notices.apply(is_healthcare, axis=1)]
+    # Apply filter
+    filtered = notices[~notices.apply(should_exclude, axis=1)]
+
     removed_count = original_count - len(filtered)
 
     if removed_count > 0:
-        logging.info(f"Filtered out {removed_count} healthcare-related solicitations")
+        logging.info(f"Filtered out {removed_count} irrelevant solicitations:")
+        for reason, count in removal_stats.items():
+            if count > 0:
+                logging.info(f"  - {reason}: {count}")
 
     return filtered.reset_index(drop=True)
 
@@ -775,10 +1157,14 @@ def main():
             return
 
         notices = _fetch_today_notices(conn, today_date)
-        notices = _filter_out_healthcare(notices)
+
+        # Apply comprehensive filtering (replaces old _filter_out_healthcare)
+        notices = _filter_irrelevant_solicitations(notices)
+
         if notices.empty:
             logging.info(
-                "No notices pulled today (%s). Sending 'no matches' to all technology areas.", today_date)
+                "No notices pulled today (%s) after filtering. Sending 'no matches' to all technology areas.",
+                today_date)
             for _, tech_area in tech_areas.iterrows():
                 emails = _parse_email_addresses(tech_area["emails"])
                 for email in emails:
@@ -788,7 +1174,7 @@ def main():
                     _send_email(email, subject, html)
             return
 
-        logging.info("Found %d notices pulled today (%s), processing %d technology areas...", len(
+        logging.info("Found %d notices pulled today (%s) after filtering, processing %d technology areas...", len(
             notices), today_date, len(tech_areas))
 
         # Process each technology area separately

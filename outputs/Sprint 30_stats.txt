@@ -1,0 +1,123 @@
+g============================================================
+TASK STATISTICS
+============================================================
+
+Total Tasks: 125
+Total Assignees: 10
+
+------------------------------------------------------------
+OVERALL STATUS BREAKDOWN
+------------------------------------------------------------
+  Done: 87 (69.6%)
+  In Progress: 18 (14.4%)
+  On Hold: 1 (0.8%)
+  Review: 3 (2.4%)
+  To Do: 16 (12.8%)
+
+------------------------------------------------------------
+TASKS BY ASSIGNEE (Priority Breakdown)
+------------------------------------------------------------
+
+Anthony Pearson:
+  [High Priority]
+    Done:                          2
+    Done + To Do + In Progress:     8
+    Total Sprint:                  8
+  [Medium Priority]
+    Done:                          6
+    Done + To Do + In Progress:     6
+    Total Sprint:                  6
+
+Bob Dawson:
+  [High Priority]
+    Done:                          3
+    Done + To Do + In Progress:     6
+    Total Sprint:                  6
+  [Medium Priority]
+    Done:                          7
+    Done + To Do + In Progress:     8
+    Total Sprint:                  8
+
+Brandon G:
+  [High Priority]
+    Done:                          2
+    Done + To Do + In Progress:     5
+    Total Sprint:                  5
+  [Medium Priority]
+    Done:                          2
+    Done + To Do + In Progress:     4
+    Total Sprint:                  4
+
+Caleb Garnica:
+  [High Priority]
+    Done:                          2
+    Done + To Do + In Progress:     5
+    Total Sprint:                  5
+  [Medium Priority]
+    Done:                          0
+    Done + To Do + In Progress:     3
+    Total Sprint:                  3
+
+Fan Yang:
+  [High Priority]
+    Done:                          2
+    Done + To Do + In Progress:     4
+    Total Sprint:                  4
+  [Medium Priority]
+    Done:                          0
+    Done + To Do + In Progress:     3
+    Total Sprint:                  3
+
+Jayden Zundel:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     0
+    Total Sprint:                  1
+  [Medium Priority]
+    Done:                          12
+    Done + To Do + In Progress:     12
+    Total Sprint:                  15
+
+Jerry Gray:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     0
+    Total Sprint:                  0
+  [Medium Priority]
+    Done:                          18
+    Done + To Do + In Progress:     19
+    Total Sprint:                  19
+
+Joshua Riley:
+  [High Priority]
+    Done:                          1
+    Done + To Do + In Progress:     1
+    Total Sprint:                  1
+  [Medium Priority]
+    Done:                          7
+    Done + To Do + In Progress:     9
+    Total Sprint:                  9
+
+Kira Schulz:
+  [High Priority]
+    Done:                          0
+    Done + To Do + In Progress:     3
+    Total Sprint:                  3
+  [Medium Priority]
+    Done:                          3
+    Done + To Do + In Progress:     5
+    Total Sprint:                  5
+
+Tawny Bonzo:
+  [High Priority]
+    Done:                          1
+    Done + To Do + In Progress:     1
+    Total Sprint:                  1
+  [Medium Priority]
+    Done:                          19
+    Done + To Do + In Progress:     19
+    Total Sprint:                  19
+
+============================================================
+END OF STATISTICS
+============================================================

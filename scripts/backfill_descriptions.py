@@ -202,12 +202,13 @@ def fetch_sam_description(notice_id: str, debug: bool = False) -> Tuple[str, Opt
 def fetch_missing(limit: int) -> pd.DataFrame:
     """
     Fetch solicitations that need descriptions backfilled.
-    Orders by most recently pulled first (records with pulled_at dates come first).
+    Only fetches solicitations pulled TODAY to avoid processing old records.
     """
     sql = sqltext("""
         SELECT notice_id, title, link, naics_code, pulled_at
         FROM solicitationraw
         WHERE (description IS NULL OR description = '' OR description LIKE 'http%')
+          AND DATE(pulled_at) = CURRENT_DATE
         ORDER BY pulled_at DESC NULLS LAST, posted_date DESC NULLS LAST
         LIMIT :lim
     """)
@@ -232,9 +233,9 @@ def update_descriptions_batch(updates: list):
 
 def main():
     print("=" * 70)
-    print("📝 Solicitation Description Backfill v3")
+    print("📝 Solicitation Description Backfill v3 (TODAY ONLY)")
     print("=" * 70)
-    print("Backfilling ALL missing descriptions (most recent first)")
+    print("Backfilling descriptions for solicitations pulled TODAY only")
     print(f"Config: BATCH={BATCH_SIZE}, WORKERS={WORKERS}, MAX={MAX_UPDATES}")
     print("=" * 70)
     print()
@@ -253,7 +254,7 @@ def main():
             sys.exit(2)
 
         if df.empty:
-            print(f"✅ No more solicitations need descriptions")
+            print(f"✅ No more solicitations from today need descriptions")
             break
 
         print(f"\nBatch {batches + 1}: Processing {len(df)} solicitations...")

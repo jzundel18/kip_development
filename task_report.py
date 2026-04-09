@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Task Report Generator
-Processes a CSV file with Summary, Status, and Assignee columns and creates
-a formatted text report organized by assignee and status priority.
+Processes a CSV file with Summary, Status, Assignee, and Priority columns and creates
+a formatted text report organized by assignee, priority, and status.
 """
 
 import csv
@@ -10,6 +10,17 @@ import sys
 import os
 from collections import defaultdict
 from pathlib import Path
+
+
+def normalize_priority(priority):
+    """Normalize priority into High or Medium buckets."""
+    p = priority.strip().lower() if priority else ''
+    if p in ('highest', 'high'):
+        return 'High'
+    elif p in ('medium',):
+        return 'Medium'
+    else:
+        return 'Other'
 
 
 def read_csv_file(filepath):
@@ -21,7 +32,7 @@ def read_csv_file(filepath):
             reader = csv.DictReader(f)
 
             # Check if required columns exist
-            required_cols = ['Summary', 'Status', 'Assignee', 'Parent summary']
+            required_cols = ['Summary', 'Status', 'Assignee', 'Parent summary', 'Priority']
             if not all(col in reader.fieldnames for col in required_cols):
                 print(f"Error: CSV must contain {required_cols} columns")
                 print(f"\nAvailable columns in your CSV: {reader.fieldnames}")
@@ -32,7 +43,8 @@ def read_csv_file(filepath):
                     'summary': row['Summary'],
                     'status': row['Status'],
                     'assignee': row['Assignee'],
-                    'parent_summary': row['Parent summary']
+                    'parent_summary': row['Parent summary'],
+                    'priority': row['Priority']
                 })
 
     except FileNotFoundError:
@@ -46,22 +58,22 @@ def read_csv_file(filepath):
 
 
 def organize_tasks_by_assignee(tasks):
-    """Organize tasks by assignee and status."""
-    organized = defaultdict(lambda: defaultdict(list))
+    """Organize tasks by assignee, priority, and status."""
+    # Structure: assignee -> priority_bucket -> status -> [tasks]
+    organized = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     for task in tasks:
         assignee = task['assignee'].strip() if task['assignee'] else 'Unassigned'
         status = task['status'].strip() if task['status'] else 'No Status'
         parent = task['parent_summary'].strip() if task['parent_summary'] else ''
+        priority_bucket = normalize_priority(task['priority'])
 
-        # Create task entry with parent summary
         task_entry = {
             'summary': task['summary'],
             'parent_summary': parent
         }
 
-        # Keep the original status category
-        organized[assignee][status].append(task_entry)
+        organized[assignee][priority_bucket][status].append(task_entry)
 
     return organized
 
@@ -74,29 +86,39 @@ def generate_report(organized_tasks):
     report_lines.append("=" * 80)
     report_lines.append("")
 
+    priority_order = ['High', 'Medium', 'Other']
+
     # Sort assignees alphabetically
     for assignee in sorted(organized_tasks.keys()):
-        statuses = organized_tasks[assignee]
+        priorities = organized_tasks[assignee]
 
         report_lines.append("-" * 80)
         report_lines.append(f"ASSIGNEE: {assignee}")
         report_lines.append("-" * 80)
         report_lines.append("")
 
-        # Sort statuses alphabetically and display each
-        for status in sorted(statuses.keys()):
-            tasks = statuses[status]
-            if tasks:
-                report_lines.append(f"● {status.upper()}:")
-                for i, task in enumerate(tasks, 1):
-                    if task['parent_summary']:
-                        report_lines.append(f"  {i}. ({task['parent_summary']}) {task['summary']}")
-                    else:
-                        report_lines.append(f"  {i}. {task['summary']}")
-                report_lines.append("")
+        for priority in priority_order:
+            if priority not in priorities:
+                continue
+
+            statuses = priorities[priority]
+            label = f"{priority} Priority" if priority != 'Other' else "Other Priority"
+            report_lines.append(f"  ┌─ {label.upper()} ─┐")
+            report_lines.append("")
+
+            for status in sorted(statuses.keys()):
+                tasks = statuses[status]
+                if tasks:
+                    report_lines.append(f"  ● {status.upper()}:")
+                    for i, task in enumerate(tasks, 1):
+                        if task['parent_summary']:
+                            report_lines.append(f"    {i}. ({task['parent_summary']}) {task['summary']}")
+                        else:
+                            report_lines.append(f"    {i}. {task['summary']}")
+                    report_lines.append("")
 
         # If assignee has no tasks in any category
-        if not statuses:
+        if not priorities:
             report_lines.append("  No tasks assigned")
             report_lines.append("")
 
