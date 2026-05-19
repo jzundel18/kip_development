@@ -56,7 +56,13 @@ try:
 except ImportError:
     pass
 
+import find_relevant_suppliers as _frs
 from find_relevant_suppliers import find_vendors_for_notice
+
+# Loosen the upstream filter: drop govtribe vendor pages and similar from
+# the blocklist so any plausible candidate makes it into the doc. We still
+# skip raw sam.gov opportunity listings since those aren't vendors.
+_frs.AGGREGATOR_DOMAINS = {"sam.gov", "beta.sam.gov", "fbo.gov"}
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
@@ -283,19 +289,10 @@ def main() -> int:
         )
 
         if not vendors:
-            log.warning("  → no automated supplier hits at any scope; including with manual-research placeholder")
-            placeholder_loc = ", ".join(p for p in [(sol.get("pop_city") or "").strip(),
-                                                     (sol.get("pop_state") or "").strip()] if p) or "—"
-            vendors = [{
-                "name": "[Manual research needed]",
-                "website": "",
-                "location": placeholder_loc,
-                "reason": ("Automated search returned no usable vendors (likely Google CSE quota "
-                           "or only aggregator results). Recommend a manual lookup using the "
-                           "solicitation's NAICS and place of performance."),
-            }]
-            scope = "manual"
+            log.info("  → no suppliers found at any scope, skipping")
             skipped_no_vendors += 1
+            time.sleep(0.3)
+            continue
 
         results.append({
             "notice_id": sol["notice_id"],
@@ -311,10 +308,7 @@ def main() -> int:
         log.info(f"  → {len(vendors)} vendor(s) via {scope} [match {len(results)}/{args.max_results}]")
         time.sleep(0.5)
 
-    automated = len(results) - skipped_no_vendors
-    log.info(f"Done. {len(results)} solicitation(s) in doc — "
-             f"{automated} with automated supplier matches, "
-             f"{skipped_no_vendors} flagged for manual research")
+    log.info(f"Done. Matched {len(results)}; skipped {skipped_no_vendors} for lack of suppliers")
 
     out_root = _main_repo_root()
 
