@@ -36,6 +36,7 @@ import csv
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -58,6 +59,25 @@ except ImportError:
 from find_relevant_suppliers import find_vendors_for_notice
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+def _main_repo_root() -> Path:
+    """
+    Return the main repo's working tree, even when running inside a git
+    worktree. Falls back to SCRIPT_DIR if git can't be queried.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=SCRIPT_DIR, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        gitdir = Path(out)
+        if not gitdir.is_absolute():
+            gitdir = (SCRIPT_DIR / gitdir).resolve()
+        # gitdir is the main repo's .git directory; its parent is the working tree
+        return gitdir.parent
+    except Exception:
+        return SCRIPT_DIR
 
 
 def _find_vendors_with_fallback(
@@ -276,9 +296,11 @@ def main() -> int:
 
     log.info(f"Done. Matched {len(results)}; skipped {skipped_no_vendors} for lack of suppliers")
 
+    out_root = _main_repo_root()
+
     def _resolve(p: str) -> Path:
         path = Path(p)
-        return path if path.is_absolute() else (SCRIPT_DIR / path).resolve()
+        return path if path.is_absolute() else (out_root / path).resolve()
 
     if not results:
         log.warning("No solicitations had supplier matches at any scope — no document written.")
