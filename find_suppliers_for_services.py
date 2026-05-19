@@ -57,6 +57,53 @@ except ImportError:
 
 from find_relevant_suppliers import find_vendors_for_notice
 
+SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+def _find_vendors_with_fallback(
+    sol: dict[str, Any],
+    google_key: str,
+    google_cx: str,
+    openai_key: str,
+    max_google: int,
+    top_n: int,
+) -> tuple[list[dict[str, Any]], str]:
+    """
+    Try the local search first; if it returns nothing, progressively widen scope
+    so every solicitation gets at least one vendor.
+
+    Returns (vendors, scope_label).
+    """
+    city = (sol.get("pop_city") or "").strip()
+    state = (sol.get("pop_state") or "").strip()
+
+    attempts: list[tuple[str, dict[str, Any]]] = []
+    if city and state:
+        attempts.append((f"{city}, {state}", {**sol, "pop_city": city, "pop_state": state}))
+        attempts.append((f"{state} (statewide)", {**sol, "pop_city": "", "pop_state": state}))
+    elif state:
+        attempts.append((f"{state} (statewide)", {**sol, "pop_city": "", "pop_state": state}))
+    attempts.append(("national", {**sol, "pop_city": "", "pop_state": ""}))
+
+    for label, payload in attempts:
+        try:
+            df, _ = find_vendors_for_notice(
+                payload,
+                google_api_key=google_key,
+                google_cx=google_cx,
+                openai_api_key=openai_key,
+                max_google=max_google,
+                top_n=top_n,
+            )
+            vendors = df.to_dict(orient="records") if not df.empty else []
+        except Exception as exc:
+            log.warning(f"  attempt '{label}' raised: {exc}")
+            vendors = []
+        if vendors:
+            return vendors, label
+
+    return [], "none"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -111,6 +158,12 @@ def write_docx(results: list[dict[str, Any]], out_path: Path, generated_at: str)
         city = (sol.get("pop_city") or "").strip()
         state = (sol.get("pop_state") or "").strip()
         loc.add_run(", ".join(p for p in [city, state] if p) or "—")
+
+        scope = sol.get("match_scope") or ""
+        if scope and scope != f"{city}, {state}":
+            note = doc.add_paragraph()
+            run = note.add_run(f"Note: no on-site providers found — showing matches at scope: {scope}.")
+            run.italic = True
 
         if sol.get("link"):
             link_p = doc.add_paragraph()
@@ -197,22 +250,12 @@ def main() -> int:
 
         title = (sol.get("title") or "")[:80]
         log.info(f"[scan {i}/{len(sols)} | matched {len(results)}/{args.max_results}] {sol['notice_id']} — {title}")
-        try:
-            df, _ = find_vendors_for_notice(
-                sol,
-                google_api_key=google_key,
-                google_cx=google_cx,
-                openai_api_key=openai_key,
-                max_google=args.max_google,
-                top_n=args.top_n,
-            )
-            vendors = df.to_dict(orient="records") if not df.empty else []
-        except Exception as exc:
-            log.warning(f"  vendor lookup failed: {exc}")
-            vendors = []
+        vendors, scope = _find_vendors_with_fallback(
+            sol, google_key, google_cx, openai_key, args.max_google, args.top_n
+        )
 
         if not vendors:
-            log.info("  → no suppliers found, skipping")
+            log.info("  → no suppliers found at any scope, skipping")
             skipped_no_vendors += 1
             time.sleep(0.3)
             continue
@@ -225,27 +268,35 @@ def main() -> int:
             "pop_state": sol.get("pop_state"),
             "response_date": sol.get("response_date"),
             "link": sol.get("link"),
+            "match_scope": scope,
             "vendors": vendors,
         })
-        log.info(f"  → {len(vendors)} vendor(s) [match {len(results)}/{args.max_results}]")
+        log.info(f"  → {len(vendors)} vendor(s) via {scope} [match {len(results)}/{args.max_results}]")
         time.sleep(0.5)
 
     log.info(f"Done. Matched {len(results)}; skipped {skipped_no_vendors} for lack of suppliers")
 
+    def _resolve(p: str) -> Path:
+        path = Path(p)
+        return path if path.is_absolute() else (SCRIPT_DIR / path).resolve()
+
     if not results:
-        log.warning("No solicitations had supplier matches — no document written")
+        log.warning("No solicitations had supplier matches at any scope — no document written.")
+        log.warning("Check that GOOGLE_API_KEY / GOOGLE_CX are valid and that the daily quota isn't exhausted.")
         return 0
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    out_path = Path(args.output)
+    out_path = _resolve(args.output)
     write_docx(results, out_path, generated_at)
-    log.info(f"Wrote {out_path}")
+    log.info(f"Wrote Word doc → {out_path}")
 
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2, default=str))
-        log.info(f"Wrote {args.json}")
+        json_path = _resolve(args.json)
+        json_path.write_text(json.dumps(results, indent=2, default=str))
+        log.info(f"Wrote JSON     → {json_path}")
 
     if args.csv:
+        csv_path = _resolve(args.csv)
         csv_rows = []
         for sol in results:
             for v in sol["vendors"]:
@@ -254,16 +305,17 @@ def main() -> int:
                     "solicitation_title": sol.get("title"),
                     "pop_city": sol.get("pop_city"),
                     "pop_state": sol.get("pop_state"),
+                    "match_scope": sol.get("match_scope"),
                     "vendor_name": v.get("name"),
                     "vendor_website": v.get("website"),
                     "vendor_location": v.get("location"),
                     "reason": v.get("reason"),
                 })
-        with open(args.csv, "w", newline="") as f:
+        with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
             writer.writeheader()
             writer.writerows(csv_rows)
-        log.info(f"Wrote {args.csv} ({len(csv_rows)} rows)")
+        log.info(f"Wrote CSV      → {csv_path} ({len(csv_rows)} rows)")
 
     return 0
 
