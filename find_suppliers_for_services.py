@@ -2,21 +2,25 @@
 """
 find_suppliers_for_services.py
 
-Loops over every solicitation in the database categorized as 'services'
-and uses find_relevant_suppliers.find_vendors_for_notice to discover local
-suppliers in that solicitation's place of performance.
+Loops over solicitations categorized as 'services' and uses
+find_relevant_suppliers.find_vendors_for_notice to discover local suppliers
+in each solicitation's place of performance. Writes a Word doc listing up to
+--max-results solicitations that have at least one supplier match. Optional
+JSON/CSV sidecars for downstream tooling.
 
 Usage:
     python find_suppliers_for_services.py [options]
 
 Options:
-    --limit N           Max solicitations to process (default: all)
+    --max-results N     Stop after collecting N matches with vendors (default: 10)
     --state XX          Filter by place-of-performance state (e.g. CA)
     --top-n N           Vendors to return per solicitation (default: 3)
     --max-google N      Google results per query (default: 10)
-    --output FILE       Write results JSON here (default: services_suppliers.json)
-    --csv FILE          Also write a flat CSV (one row per vendor)
-    --dry-run           List matching solicitations but skip supplier search
+    --scan-cap N        Max solicitations to scan when searching for matches (default: 200)
+    --output FILE       Word doc output (default: services_suppliers.docx)
+    --json FILE         Also write JSON (no default)
+    --csv FILE          Also write a flat CSV (no default)
+    --dry-run           List candidate solicitations and exit
 
 Environment variables (required):
     SUPABASE_DB_URL     PostgreSQL connection string
@@ -34,9 +38,13 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from docx import Document
+from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.shared import Pt, RGBColor
 from sqlalchemy import create_engine, text
 
 try:
@@ -57,7 +65,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def load_services_solicitations(db_url: str, state: str | None, limit: int | None) -> list[dict[str, Any]]:
+def load_services_solicitations(db_url: str, state: str | None, scan_cap: int) -> list[dict[str, Any]]:
     engine = create_engine(db_url, pool_pre_ping=True)
     sql = """
         SELECT notice_id, title, description, naics_code,
@@ -69,23 +77,86 @@ def load_services_solicitations(db_url: str, state: str | None, limit: int | Non
     if state:
         sql += " AND UPPER(pop_state) = :state"
         params["state"] = state.upper()
-    sql += " ORDER BY response_date NULLS LAST"
-    if limit:
-        sql += " LIMIT :limit"
-        params["limit"] = limit
+    sql += " ORDER BY response_date NULLS LAST LIMIT :scan_cap"
+    params["scan_cap"] = scan_cap
 
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
     return [dict(r) for r in rows]
 
 
+def write_docx(results: list[dict[str, Any]], out_path: Path, generated_at: str) -> None:
+    doc = Document()
+
+    title = doc.add_heading("Services Solicitations — Local Supplier Matches", level=0)
+    for run in title.runs:
+        run.font.color.rgb = RGBColor(0x1F, 0x3A, 0x5F)
+
+    sub = doc.add_paragraph()
+    sub.add_run(f"Generated {generated_at}  •  {len(results)} solicitation(s)").italic = True
+
+    for idx, sol in enumerate(results, 1):
+        doc.add_heading(f"{idx}. {sol.get('title') or '(no title)'}", level=1)
+
+        meta = doc.add_paragraph()
+        meta.add_run("Notice ID: ").bold = True
+        meta.add_run(str(sol.get("notice_id") or "—"))
+        meta.add_run("    NAICS: ").bold = True
+        meta.add_run(str(sol.get("naics_code") or "—"))
+        meta.add_run("    Response due: ").bold = True
+        meta.add_run(str(sol.get("response_date") or "—"))
+
+        loc = doc.add_paragraph()
+        loc.add_run("Place of performance: ").bold = True
+        city = (sol.get("pop_city") or "").strip()
+        state = (sol.get("pop_state") or "").strip()
+        loc.add_run(", ".join(p for p in [city, state] if p) or "—")
+
+        if sol.get("link"):
+            link_p = doc.add_paragraph()
+            link_p.add_run("Link: ").bold = True
+            link_p.add_run(str(sol["link"]))
+
+        doc.add_paragraph("Recommended local suppliers:").runs[0].bold = True
+        table = doc.add_table(rows=1, cols=4)
+        table.style = "Light Grid Accent 1"
+        hdr = table.rows[0].cells
+        for cell, label in zip(hdr, ["#", "Supplier", "Website / Location", "Why"]):
+            cell.text = ""
+            run = cell.paragraphs[0].add_run(label)
+            run.bold = True
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+        for rank, vendor in enumerate(sol.get("vendors", []), 1):
+            row = table.add_row().cells
+            row[0].text = str(rank)
+            row[1].text = vendor.get("name") or "—"
+            web = vendor.get("website") or ""
+            vloc = vendor.get("location") or ""
+            row[2].text = "\n".join(p for p in [web, vloc] if p) or "—"
+            row[3].text = vendor.get("reason") or ""
+
+        # readable font in tables
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(10)
+
+        doc.add_paragraph()  # spacer
+
+    doc.save(out_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--max-results", type=int, default=10)
     parser.add_argument("--state", type=str, default=None)
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--max-google", type=int, default=10)
-    parser.add_argument("--output", type=str, default="services_suppliers.json")
+    parser.add_argument("--scan-cap", type=int, default=200)
+    parser.add_argument("--output", type=str, default="services_suppliers.docx")
+    parser.add_argument("--json", type=str, default=None)
     parser.add_argument("--csv", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -108,8 +179,8 @@ def main() -> int:
         log.error("SUPABASE_DB_URL required")
         return 1
 
-    sols = load_services_solicitations(db_url, args.state, args.limit)
-    log.info(f"Found {len(sols)} services solicitations")
+    sols = load_services_solicitations(db_url, args.state, args.scan_cap)
+    log.info(f"Scanning {len(sols)} services solicitation(s); target {args.max_results} matches with vendors")
 
     if args.dry_run:
         for s in sols:
@@ -117,11 +188,15 @@ def main() -> int:
         return 0
 
     results: list[dict[str, Any]] = []
-    csv_rows: list[dict[str, Any]] = []
+    skipped_no_vendors = 0
 
     for i, sol in enumerate(sols, 1):
+        if len(results) >= args.max_results:
+            log.info(f"Reached --max-results={args.max_results}; stopping scan")
+            break
+
         title = (sol.get("title") or "")[:80]
-        log.info(f"[{i}/{len(sols)}] {sol['notice_id']} — {title}")
+        log.info(f"[scan {i}/{len(sols)} | matched {len(results)}/{args.max_results}] {sol['notice_id']} — {title}")
         try:
             df, _ = find_vendors_for_notice(
                 sol,
@@ -136,6 +211,12 @@ def main() -> int:
             log.warning(f"  vendor lookup failed: {exc}")
             vendors = []
 
+        if not vendors:
+            log.info("  → no suppliers found, skipping")
+            skipped_no_vendors += 1
+            time.sleep(0.3)
+            continue
+
         results.append({
             "notice_id": sol["notice_id"],
             "title": sol.get("title"),
@@ -146,36 +227,43 @@ def main() -> int:
             "link": sol.get("link"),
             "vendors": vendors,
         })
-
-        for v in vendors:
-            csv_rows.append({
-                "notice_id": sol["notice_id"],
-                "solicitation_title": sol.get("title"),
-                "pop_city": sol.get("pop_city"),
-                "pop_state": sol.get("pop_state"),
-                "vendor_name": v.get("name"),
-                "vendor_website": v.get("website"),
-                "vendor_location": v.get("location"),
-                "reason": v.get("reason"),
-            })
-
-        log.info(f"  → {len(vendors)} vendor(s)")
+        log.info(f"  → {len(vendors)} vendor(s) [match {len(results)}/{args.max_results}]")
         time.sleep(0.5)
 
+    log.info(f"Done. Matched {len(results)}; skipped {skipped_no_vendors} for lack of suppliers")
+
+    if not results:
+        log.warning("No solicitations had supplier matches — no document written")
+        return 0
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
     out_path = Path(args.output)
-    out_path.write_text(json.dumps(results, indent=2, default=str))
+    write_docx(results, out_path, generated_at)
     log.info(f"Wrote {out_path}")
 
+    if args.json:
+        Path(args.json).write_text(json.dumps(results, indent=2, default=str))
+        log.info(f"Wrote {args.json}")
+
     if args.csv:
-        csv_path = Path(args.csv)
-        if csv_rows:
-            with csv_path.open("w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
-                writer.writeheader()
-                writer.writerows(csv_rows)
-            log.info(f"Wrote {csv_path} ({len(csv_rows)} rows)")
-        else:
-            log.info("No vendors found — skipping CSV")
+        csv_rows = []
+        for sol in results:
+            for v in sol["vendors"]:
+                csv_rows.append({
+                    "notice_id": sol["notice_id"],
+                    "solicitation_title": sol.get("title"),
+                    "pop_city": sol.get("pop_city"),
+                    "pop_state": sol.get("pop_state"),
+                    "vendor_name": v.get("name"),
+                    "vendor_website": v.get("website"),
+                    "vendor_location": v.get("location"),
+                    "reason": v.get("reason"),
+                })
+        with open(args.csv, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(csv_rows)
+        log.info(f"Wrote {args.csv} ({len(csv_rows)} rows)")
 
     return 0
 

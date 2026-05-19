@@ -5,8 +5,10 @@ run_services_pipeline.py
 End-to-end pipeline:
   1. Pull fresh solicitations from SAM.gov   (run_auto_refresh.py)
   2. Categorize them by NAICS                (categorize_solicitations.py)
-  3. Find local suppliers for every services
-     solicitation and write CSV + JSON       (find_suppliers_for_services.py)
+  3. Find local suppliers for services-
+     category contracts and write a Word doc
+     of up to --max-results matches that
+     have at least one supplier              (find_suppliers_for_services.py)
 
 Usage:
     python run_services_pipeline.py [options]
@@ -15,10 +17,12 @@ Options:
     --skip-refresh        Skip step 1 (use existing DB rows)
     --skip-categorize     Skip step 2
     --state XX            Limit step 3 to a single POP state
-    --limit N             Limit step 3 to N solicitations
+    --max-results N       Final cap on matches in the doc (default: 10)
+    --scan-cap N          Max solicitations to scan in step 3 (default: 200)
     --top-n N             Suppliers per solicitation (default: 3)
-    --output-json FILE    JSON output (default: services_suppliers.json)
-    --output-csv FILE     CSV output  (default: services_suppliers.csv)
+    --output-docx FILE    Word doc output (default: services_suppliers.docx)
+    --output-json FILE    Optional JSON sidecar
+    --output-csv FILE     Optional CSV sidecar
 
 Environment variables (required):
     SUPABASE_DB_URL, SAM_KEYS, GOOGLE_API_KEY, GOOGLE_CX, OPENAI_API_KEY
@@ -104,10 +108,16 @@ def main() -> int:
     parser.add_argument("--skip-refresh", action="store_true")
     parser.add_argument("--skip-categorize", action="store_true")
     parser.add_argument("--state", type=str, default=None)
-    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--max-results", type=int, default=10,
+                        help="Stop after collecting N solicitations with vendor matches (default: 10)")
+    parser.add_argument("--scan-cap", type=int, default=200,
+                        help="Max solicitations to scan in step 3 (default: 200)")
     parser.add_argument("--top-n", type=int, default=3)
-    parser.add_argument("--output-json", type=str, default="services_suppliers.json")
-    parser.add_argument("--output-csv", type=str, default="services_suppliers.csv")
+    parser.add_argument("--output-docx", type=str, default="services_suppliers.docx")
+    parser.add_argument("--output-json", type=str, default=None,
+                        help="Optional JSON sidecar")
+    parser.add_argument("--output-csv", type=str, default=None,
+                        help="Optional CSV sidecar")
     args = parser.parse_args()
 
     print(f"\n{C.BOLD}{C.HEADER}")
@@ -143,20 +153,26 @@ def main() -> int:
     # Step 3 — find suppliers for services
     cmd = [
         py, "find_suppliers_for_services.py",
+        "--max-results", str(args.max_results),
+        "--scan-cap", str(args.scan_cap),
         "--top-n", str(args.top_n),
-        "--output", args.output_json,
-        "--csv", args.output_csv,
+        "--output", args.output_docx,
     ]
     if args.state:
         cmd += ["--state", args.state]
-    if args.limit is not None:
-        cmd += ["--limit", str(args.limit)]
+    if args.output_json:
+        cmd += ["--json", args.output_json]
+    if args.output_csv:
+        cmd += ["--csv", args.output_csv]
     if not run_step("Step 3 — Find Local Suppliers (services only)", cmd):
         return 1
 
     header("Pipeline complete")
-    ok(f"JSON: {args.output_json}")
-    ok(f"CSV:  {args.output_csv}")
+    ok(f"Word doc: {args.output_docx}")
+    if args.output_json:
+        ok(f"JSON:     {args.output_json}")
+    if args.output_csv:
+        ok(f"CSV:      {args.output_csv}")
     return 0
 
 
