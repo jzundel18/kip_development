@@ -105,22 +105,30 @@ def _find_vendors_with_fallback(
         attempts.append((f"{state} (statewide)", {**sol, "pop_city": "", "pop_state": state}))
     attempts.append(("national", {**sol, "pop_city": "", "pop_state": ""}))
 
+    last_debug: dict[str, Any] | None = None
     for label, payload in attempts:
         try:
-            df, _ = find_vendors_for_notice(
+            df, dbg = find_vendors_for_notice(
                 payload,
                 google_api_key=google_key,
                 google_cx=google_cx,
                 openai_api_key=openai_key,
                 max_google=max_google,
                 top_n=top_n,
+                return_debug=True,
             )
             vendors = df.to_dict(orient="records") if not df.empty else []
+            last_debug = dbg
         except Exception as exc:
             log.warning(f"  attempt '{label}' raised: {exc}")
             vendors = []
         if vendors:
             return vendors, label
+        # Diagnostic: how many raw hits did Google return for this attempt?
+        if last_debug and last_debug.get("raw"):
+            totals = [(r.get("query", "")[:50], r.get("hits", 0)) for r in last_debug["raw"]]
+            zero_hit = sum(1 for _, h in totals if h == 0)
+            log.info(f"  attempt '{label}': {zero_hit}/{len(totals)} queries returned 0 hits from Google")
 
     return [], "none"
 
@@ -275,10 +283,19 @@ def main() -> int:
         )
 
         if not vendors:
-            log.info("  → no suppliers found at any scope, skipping")
+            log.warning("  → no automated supplier hits at any scope; including with manual-research placeholder")
+            placeholder_loc = ", ".join(p for p in [(sol.get("pop_city") or "").strip(),
+                                                     (sol.get("pop_state") or "").strip()] if p) or "—"
+            vendors = [{
+                "name": "[Manual research needed]",
+                "website": "",
+                "location": placeholder_loc,
+                "reason": ("Automated search returned no usable vendors (likely Google CSE quota "
+                           "or only aggregator results). Recommend a manual lookup using the "
+                           "solicitation's NAICS and place of performance."),
+            }]
+            scope = "manual"
             skipped_no_vendors += 1
-            time.sleep(0.3)
-            continue
 
         results.append({
             "notice_id": sol["notice_id"],
@@ -294,7 +311,10 @@ def main() -> int:
         log.info(f"  → {len(vendors)} vendor(s) via {scope} [match {len(results)}/{args.max_results}]")
         time.sleep(0.5)
 
-    log.info(f"Done. Matched {len(results)}; skipped {skipped_no_vendors} for lack of suppliers")
+    automated = len(results) - skipped_no_vendors
+    log.info(f"Done. {len(results)} solicitation(s) in doc — "
+             f"{automated} with automated supplier matches, "
+             f"{skipped_no_vendors} flagged for manual research")
 
     out_root = _main_repo_root()
 
