@@ -112,6 +112,10 @@ def main() -> int:
                         help="Stop after collecting N solicitations with vendor matches (default: 10)")
     parser.add_argument("--scan-cap", type=int, default=200,
                         help="Max solicitations to scan in step 3 (default: 200)")
+    parser.add_argument("--pulled-on", type=str, default=None,
+                        help="Pin step 3 to rows pulled on YYYY-MM-DD (default: today)")
+    parser.add_argument("--include-closed", action="store_true",
+                        help="Include solicitations whose response_date has already passed")
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--output-docx", type=str, default="services_suppliers.docx")
     parser.add_argument("--output-json", type=str, default=None,
@@ -160,6 +164,10 @@ def main() -> int:
     ]
     if args.state:
         cmd += ["--state", args.state]
+    if args.pulled_on:
+        cmd += ["--pulled-on", args.pulled_on]
+    if args.include_closed:
+        cmd += ["--include-closed"]
     if args.output_json:
         cmd += ["--json", args.output_json]
     if args.output_csv:

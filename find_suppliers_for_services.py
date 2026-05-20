@@ -17,6 +17,8 @@ Options:
     --top-n N           Vendors to return per solicitation (default: 3)
     --max-google N      Google results per query (default: 10)
     --scan-cap N        Max solicitations to scan when searching for matches (default: 200)
+    --pulled-on DATE    Pin to rows pulled on YYYY-MM-DD (default: today)
+    --include-closed    Also include solicitations whose response_date has passed
     --output FILE       Word doc output (default: services_suppliers.docx)
     --json FILE         Also write JSON (no default)
     --csv FILE          Also write a flat CSV (no default)
@@ -146,18 +148,54 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def load_services_solicitations(db_url: str, state: str | None, scan_cap: int) -> list[dict[str, Any]]:
+def load_services_solicitations(
+    db_url: str,
+    state: str | None,
+    scan_cap: int,
+    pulled_on: str | None = None,
+    include_closed: bool = False,
+) -> list[dict[str, Any]]:
+    """
+    Load services solicitations from the database.
+
+    Defaults:
+        - Only rows pulled today (latest SAM.gov refresh).
+        - Only rows whose response_date is today or later, or null.
+
+    Use pulled_on='YYYY-MM-DD' to pin a specific pull date, or pass
+    include_closed=True to ignore the response-date cutoff.
+    """
     engine = create_engine(db_url, pool_pre_ping=True)
     sql = """
         SELECT notice_id, title, description, naics_code,
-               pop_city, pop_state, response_date, link
+               pop_city, pop_state, response_date, pulled_at, link
         FROM solicitationraw
         WHERE category = 'services'
     """
     params: dict[str, Any] = {}
+
+    if pulled_on:
+        sql += " AND DATE(pulled_at) = :pulled_on"
+        params["pulled_on"] = pulled_on
+    else:
+        sql += " AND DATE(pulled_at) = CURRENT_DATE"
+
+    if not include_closed:
+        # response_date is text — keep rows that are clearly in the future
+        # (ISO format compares lexicographically) or unknown/missing.
+        sql += """
+            AND (
+                response_date IS NULL
+                OR LOWER(response_date) IN ('none', 'n/a', 'na', 'null', '')
+                OR response_date >= :today
+            )
+        """
+        params["today"] = datetime.now().strftime("%Y-%m-%d")
+
     if state:
         sql += " AND UPPER(pop_state) = :state"
         params["state"] = state.upper()
+
     sql += " ORDER BY response_date NULLS LAST LIMIT :scan_cap"
     params["scan_cap"] = scan_cap
 
@@ -242,6 +280,10 @@ def main() -> int:
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--max-google", type=int, default=10)
     parser.add_argument("--scan-cap", type=int, default=200)
+    parser.add_argument("--pulled-on", type=str, default=None,
+                        help="Pin scan to rows pulled on this YYYY-MM-DD (default: today)")
+    parser.add_argument("--include-closed", action="store_true",
+                        help="Also include solicitations whose response_date has already passed")
     parser.add_argument("--output", type=str, default="services_suppliers.docx")
     parser.add_argument("--json", type=str, default=None)
     parser.add_argument("--csv", type=str, default=None)
@@ -266,8 +308,17 @@ def main() -> int:
         log.error("SUPABASE_DB_URL required")
         return 1
 
-    sols = load_services_solicitations(db_url, args.state, args.scan_cap)
-    log.info(f"Scanning {len(sols)} services solicitation(s); target {args.max_results} matches with vendors")
+    sols = load_services_solicitations(
+        db_url,
+        args.state,
+        args.scan_cap,
+        pulled_on=args.pulled_on,
+        include_closed=args.include_closed,
+    )
+    pull_label = args.pulled_on or "today"
+    closed_label = "" if args.include_closed else " (open only)"
+    log.info(f"Scanning {len(sols)} services solicitation(s) pulled {pull_label}{closed_label}; "
+             f"target {args.max_results} matches with vendors")
 
     if args.dry_run:
         for s in sols:
