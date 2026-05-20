@@ -23,14 +23,19 @@ import sqlalchemy as sa
 from sqlalchemy import text, create_engine
 
 # ========= CONFIG =========
-# Put your SAM.gov API keys here (rotation order)
-SAM_KEYS: List[str] = [
-    "2WWQnuvYVj7cI3qozS5xC0Y2SgGITC7NGWtmqebq",
-    "qV4oW8tKis4kinR7oXIBlnTDlJx9Tyf4Se8Tmmmx"
-]
+# Load .env if present so local runs pick up secrets without exporting them.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-# DB connection: use env if present, else local SQLite
-DB_URL = "postgresql+psycopg2://postgres.ceemspukffoygxazsvix:Moolah123%21%21%21@aws-1-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
+# SAM.gov API keys come from the SAM_KEYS env var (comma-separated, in
+# rotation order). Matches the pattern used in scripts/auto_refresh.py.
+SAM_KEYS: List[str] = [k.strip() for k in os.getenv("SAM_KEYS", "").split(",") if k.strip()]
+
+# DB connection: pull from SUPABASE_DB_URL / DB_URL, fall back to local SQLite.
+DB_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DB_URL") or "sqlite:///app.db"
 
 # How many blank rows to process this run
 MAX_ROWS_TO_BACKFILL: int = 400
@@ -385,7 +390,8 @@ def update_pop(conn, notice_id: str, pop: Dict[str, str]) -> int:
 
 def backfill_once():
     if not SAM_KEYS:
-        print("ERROR: SAM_KEYS is empty. Edit backfill_pop.py and add your keys to SAM_KEYS[].")
+        print("ERROR: SAM_KEYS env var is empty. Set SAM_KEYS=\"key1,key2\" in your .env "
+              "or shell environment.")
         return
 
     engine = get_engine()
