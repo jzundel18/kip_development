@@ -58,14 +58,6 @@ DB_URL = os.getenv("SUPABASE_DB_URL") or os.getenv(
 SAM_KEYS_RAW = os.getenv("SAM_KEYS", "")
 SAM_KEYS = [k.strip() for k in SAM_KEYS_RAW.split(",") if k.strip()]
 
-# R&D NAICS codes to filter for
-# 541711: R&D in Biotechnology
-# 541712: R&D in Physical, Engineering, and Life Sciences (except Nanotechnology and Biotechnology)
-# 541713: R&D in Nanotechnology
-# 541714: R&D in Biotechnology (except Nanobiotechnology)
-# 541715: R&D in the Physical, Engineering, and Life Sciences (except Nanotechnology and Biotechnology)
-# 541720: R&D in the Social Sciences and Humanities
-RD_NAICS_CODES = ["541711", "541712", "541713", "541714", "541715", "541720"]
 
 # ============================================================================
 # COMPREHENSIVE EXCLUSION FILTERS - STRICT MODE (same as daily_digest.py)
@@ -479,18 +471,6 @@ def _is_response_date_past(response_date_str: str) -> bool:
     return parsed_date < today
 
 
-def _is_rd_naics(naics_code: str) -> bool:
-    """
-    Check if a NAICS code is in the R&D category (5417xx).
-    Returns True if it matches any R&D NAICS code.
-    """
-    if not naics_code:
-        return False
-    naics_str = str(naics_code).strip()
-    # Check if it starts with any of our R&D codes
-    return any(naics_str.startswith(code) for code in RD_NAICS_CODES)
-
-
 # ---------------- Existing Helper Functions ----------------
 REQUIRED_COLS = [
     "notice_id", "solicitation_number", "title", "notice_type",
@@ -703,7 +683,6 @@ def main():
     print(f"SAM_KEYS configured: {len(SAM_KEYS)} key(s)")
     print(f"DAYS_BACK = {DAYS_BACK}")
     print(f"Paging: PAGE_SIZE={PAGE_SIZE}, MAX_RECORDS={MAX_RECORDS}")
-    print(f"Filtering: R&D NAICS codes ({', '.join(RD_NAICS_CODES)}) - CLIENT-SIDE FILTERING")
     print(f"Filtering: Will skip solicitations with past response dates")
     print(f"Filtering: Comprehensive exclusions (DOT, DHHS, healthcare, events, facilities, etc.)")
 
@@ -741,7 +720,6 @@ def main():
     total_inserted = 0
     total_seen = 0
     total_skipped_expired = 0
-    total_skipped_non_rd = 0
     total_skipped_excluded = 0
     exclusion_stats = {}  # Track reasons for exclusions
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -799,11 +777,7 @@ def main():
                     if not nid or nid in existing:
                         continue
 
-                    # NEW: Client-side NAICS filtering for R&D codes
                     naics_code = m.get("naics_code", "")
-                    if not _is_rd_naics(naics_code):
-                        total_skipped_non_rd += 1
-                        continue
 
                     # NEW: Check if response date has passed
                     response_date_str = m.get("response_date", "")
@@ -866,8 +840,7 @@ def main():
                     break
 
         print(f"\n=== Auto refresh complete ===")
-        print(f"Inserted {total_inserted} new R&D notices.")
-        print(f"Skipped {total_skipped_non_rd} non-R&D notices (wrong NAICS).")
+        print(f"Inserted {total_inserted} new notices.")
         print(f"Skipped {total_skipped_expired} notices with expired response dates.")
         print(f"Skipped {total_skipped_excluded} notices due to comprehensive exclusion filters:")
         for reason, count in sorted(exclusion_stats.items(), key=lambda x: -x[1]):
