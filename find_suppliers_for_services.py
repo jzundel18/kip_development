@@ -17,7 +17,7 @@ Options:
     --top-n N           Vendors to return per solicitation (default: 3)
     --max-google N      Google results per query (default: 10)
     --scan-cap N        Max solicitations to scan when searching for matches (default: 200)
-    --pulled-on DATE    Pin to rows pulled on YYYY-MM-DD (default: today)
+    --posted-on DATE    Pin to rows posted on YYYY-MM-DD (default: today)
     --include-closed    Also include solicitations whose response_date has passed
     --output FILE       Word doc output (default: services_suppliers.docx)
     --json FILE         Also write JSON (no default)
@@ -152,33 +152,33 @@ def load_services_solicitations(
     db_url: str,
     state: str | None,
     scan_cap: int,
-    pulled_on: str | None = None,
+    posted_on: str | None = None,
     include_closed: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Load services solicitations from the database.
 
     Defaults:
-        - Only rows pulled today (latest SAM.gov refresh).
+        - Only rows posted today (posted_date = CURRENT_DATE).
         - Only rows whose response_date is today or later, or null.
 
-    Use pulled_on='YYYY-MM-DD' to pin a specific pull date, or pass
+    Use posted_on='YYYY-MM-DD' to pin a specific posted date, or pass
     include_closed=True to ignore the response-date cutoff.
     """
     engine = create_engine(db_url, pool_pre_ping=True)
     sql = """
         SELECT notice_id, title, description, naics_code,
-               pop_city, pop_state, response_date, pulled_at, link
+               pop_city, pop_state, posted_date, response_date, link
         FROM solicitationraw
         WHERE category = 'services'
     """
     params: dict[str, Any] = {}
 
-    if pulled_on:
-        sql += " AND DATE(pulled_at) = :pulled_on"
-        params["pulled_on"] = pulled_on
+    if posted_on:
+        sql += " AND DATE(posted_date) = :posted_on"
+        params["posted_on"] = posted_on
     else:
-        sql += " AND DATE(pulled_at) = CURRENT_DATE"
+        sql += " AND DATE(posted_date) = CURRENT_DATE"
 
     if not include_closed:
         # response_date is text — keep rows that are clearly in the future
@@ -280,8 +280,8 @@ def main() -> int:
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--max-google", type=int, default=10)
     parser.add_argument("--scan-cap", type=int, default=200)
-    parser.add_argument("--pulled-on", type=str, default=None,
-                        help="Pin scan to rows pulled on this YYYY-MM-DD (default: today)")
+    parser.add_argument("--posted-on", type=str, default=None,
+                        help="Pin scan to rows posted on this YYYY-MM-DD (default: today)")
     parser.add_argument("--include-closed", action="store_true",
                         help="Also include solicitations whose response_date has already passed")
     parser.add_argument("--output", type=str, default="services_suppliers.docx")
@@ -312,12 +312,12 @@ def main() -> int:
         db_url,
         args.state,
         args.scan_cap,
-        pulled_on=args.pulled_on,
+        posted_on=args.posted_on,
         include_closed=args.include_closed,
     )
-    pull_label = args.pulled_on or "today"
+    posted_label = args.posted_on or "today"
     closed_label = "" if args.include_closed else " (open only)"
-    log.info(f"Scanning {len(sols)} services solicitation(s) pulled {pull_label}{closed_label}; "
+    log.info(f"Scanning {len(sols)} services solicitation(s) posted {posted_label}{closed_label}; "
              f"target {args.max_results} matches with vendors")
 
     if args.dry_run:
