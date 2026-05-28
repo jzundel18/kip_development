@@ -20,6 +20,9 @@ Options:
     --max-results N       Final cap on matches in the doc (default: 10)
     --scan-cap N          Max solicitations to scan in step 3 (default: 200)
     --top-n N             Suppliers per solicitation (default: 3)
+    --posted-on DATE      Pin step 3 to rows posted on YYYY-MM-DD (default: today)
+    --min-days-out N      Require N days of runway before due (default: 3)
+    --include-closed      Disable the response_date filter entirely
     --output-docx FILE    Word doc output (default: services_suppliers.docx)
     --output-json FILE    Optional JSON sidecar
     --output-csv FILE     Optional CSV sidecar
@@ -116,6 +119,8 @@ def main() -> int:
                         help="Pin step 3 to rows posted on YYYY-MM-DD (default: today)")
     parser.add_argument("--include-closed", action="store_true",
                         help="Include solicitations whose response_date has already passed")
+    parser.add_argument("--min-days-out", type=int, default=3,
+                        help="Require N days of runway before due (default: 3)")
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--output-docx", type=str, default="services_suppliers.docx")
     parser.add_argument("--output-json", type=str, default=None,
@@ -160,6 +165,7 @@ def main() -> int:
         "--max-results", str(args.max_results),
         "--scan-cap", str(args.scan_cap),
         "--top-n", str(args.top_n),
+        "--min-days-out", str(args.min_days_out),
         "--output", args.output_docx,
     ]
     if args.state:

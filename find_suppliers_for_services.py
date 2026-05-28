@@ -18,7 +18,8 @@ Options:
     --max-google N      Google results per query (default: 10)
     --scan-cap N        Max solicitations to scan when searching for matches (default: 200)
     --posted-on DATE    Pin to rows posted on YYYY-MM-DD (default: today)
-    --include-closed    Also include solicitations whose response_date has passed
+    --min-days-out N    Require N days of runway before due (default: 3)
+    --include-closed    Disable the response_date filter entirely
     --output FILE       Word doc output (default: services_suppliers.docx)
     --json FILE         Also write JSON (no default)
     --csv FILE          Also write a flat CSV (no default)
@@ -41,7 +42,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -154,16 +155,20 @@ def load_services_solicitations(
     scan_cap: int,
     posted_on: str | None = None,
     include_closed: bool = False,
+    min_days_out: int = 3,
 ) -> list[dict[str, Any]]:
     """
     Load services solicitations from the database.
 
     Defaults:
         - Only rows posted today (posted_date = CURRENT_DATE).
-        - Only rows whose response_date is today or later, or null.
+        - Only rows whose response_date is at least min_days_out days
+          from today, so the operator has time to respond. Rows with
+          missing/unknown response_date are excluded by default —
+          can't guarantee lead time if the due date is unknown.
 
-    Use posted_on='YYYY-MM-DD' to pin a specific posted date, or pass
-    include_closed=True to ignore the response-date cutoff.
+    Pass include_closed=True to disable the response-date filter
+    entirely (overrides min_days_out).
     """
     engine = create_engine(db_url, pool_pre_ping=True)
     sql = """
@@ -181,16 +186,16 @@ def load_services_solicitations(
         sql += " AND DATE(posted_date) = CURRENT_DATE"
 
     if not include_closed:
-        # response_date is text — keep rows that are clearly in the future
-        # (ISO format compares lexicographically) or unknown/missing.
+        # response_date is text — compare lexicographically against ISO date.
+        # Require at least min_days_out days of runway before the due date,
+        # and drop rows whose response_date is missing/unknown.
+        cutoff = (datetime.now() + timedelta(days=max(0, min_days_out))).strftime("%Y-%m-%d")
         sql += """
-            AND (
-                response_date IS NULL
-                OR LOWER(response_date) IN ('none', 'n/a', 'na', 'null', '')
-                OR response_date >= :today
-            )
+            AND response_date IS NOT NULL
+            AND LOWER(response_date) NOT IN ('none', 'n/a', 'na', 'null', '')
+            AND response_date >= :cutoff
         """
-        params["today"] = datetime.now().strftime("%Y-%m-%d")
+        params["cutoff"] = cutoff
 
     if state:
         sql += " AND UPPER(pop_state) = :state"
@@ -282,6 +287,9 @@ def main() -> int:
     parser.add_argument("--scan-cap", type=int, default=200)
     parser.add_argument("--posted-on", type=str, default=None,
                         help="Pin scan to rows posted on this YYYY-MM-DD (default: today)")
+    parser.add_argument("--min-days-out", type=int, default=3,
+                        help="Require N days of runway before the response is due (default: 3). "
+                             "Rows with missing response_date are excluded.")
     parser.add_argument("--include-closed", action="store_true",
                         help="Also include solicitations whose response_date has already passed")
     parser.add_argument("--output", type=str, default="services_suppliers.docx")
@@ -314,10 +322,14 @@ def main() -> int:
         args.scan_cap,
         posted_on=args.posted_on,
         include_closed=args.include_closed,
+        min_days_out=args.min_days_out,
     )
     posted_label = args.posted_on or "today"
-    closed_label = "" if args.include_closed else " (open only)"
-    log.info(f"Scanning {len(sols)} services solicitation(s) posted {posted_label}{closed_label}; "
+    if args.include_closed:
+        runway_label = " (response_date filter disabled)"
+    else:
+        runway_label = f" (≥{args.min_days_out} day(s) until due)"
+    log.info(f"Scanning {len(sols)} services solicitation(s) posted {posted_label}{runway_label}; "
              f"target {args.max_results} matches with vendors")
 
     if args.dry_run:
